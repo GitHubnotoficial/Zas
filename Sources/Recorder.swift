@@ -1,0 +1,151 @@
+import AVFoundation
+import CoreMedia
+import ScreenCaptureKit
+
+enum RecorderError: LocalizedError {
+    case displayNotFound
+    case writerSetupFailed
+
+    var errorDescription: String? {
+        switch self {
+        case .displayNotFound: return "No se encontró la pantalla a grabar."
+        case .writerSetupFailed: return "No se pudo crear el archivo de video."
+        }
+    }
+}
+
+/// Graba un área de la pantalla a MP4 (H.264, 30 fps, máximo 1920 px de lado).
+/// El tamaño está pensado para que el archivo sea liviano y fácil de subir.
+final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
+    /// Se llama si la grabación se corta sola (por ejemplo, si se desconecta la pantalla).
+    var onUnexpectedStop: (@MainActor (Error) -> Void)?
+
+    private let queue = DispatchQueue(label: "zas.recorder")
+    private var stream: SCStream?
+    private var writer: AVAssetWriter?
+    private var input: AVAssetWriterInput?
+    private var outputURL: URL?
+    private var sessionStarted = false
+    private var lastTime = CMTime.zero
+
+    func start(displayID: CGDirectDisplayID, rect: CGRect, scale: CGFloat, to url: URL) async throws {
+        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+        guard let display = content.displays.first(where: { $0.displayID == displayID }) else {
+            throw RecorderError.displayNotFound
+        }
+
+        // Excluye las ventanas de Zas, como el marco rojo de grabación.
+        let ownApp = content.applications.filter { $0.bundleIdentifier == Bundle.main.bundleIdentifier }
+        let filter = SCContentFilter(display: display, excludingApplications: ownApp, exceptingWindows: [])
+
+        let fullWidth = rect.width * scale
+        let fullHeight = rect.height * scale
+        let downscale = min(1, 1920 / max(fullWidth, fullHeight))
+        let width = max(2, Int(fullWidth * downscale) & ~1)
+        let height = max(2, Int(fullHeight * downscale) & ~1)
+
+        let configuration = SCStreamConfiguration()
+        configuration.sourceRect = rect
+        configuration.width = width
+        configuration.height = height
+        configuration.minimumFrameInterval = CMTime(value: 1, timescale: 30)
+        configuration.pixelFormat = kCVPixelFormatType_32BGRA
+        configuration.queueDepth = 6
+        configuration.showsCursor = true
+
+        let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
+        let settings: [String: Any] = [
+            AVVideoCodecKey: AVVideoCodecType.h264,
+            AVVideoWidthKey: width,
+            AVVideoHeightKey: height,
+            AVVideoCompressionPropertiesKey: [
+                AVVideoAverageBitRateKey: width * height * 2,
+                AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel,
+            ] as [String: Any],
+        ]
+        let input = AVAssetWriterInput(mediaType: .video, outputSettings: settings)
+        input.expectsMediaDataInRealTime = true
+        guard writer.canAdd(input) else {
+            throw RecorderError.writerSetupFailed
+        }
+        writer.add(input)
+        guard writer.startWriting() else {
+            throw writer.error ?? RecorderError.writerSetupFailed
+        }
+
+        self.writer = writer
+        self.input = input
+        self.outputURL = url
+
+        let stream = SCStream(filter: filter, configuration: configuration, delegate: self)
+        try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: queue)
+        try await stream.startCapture()
+        self.stream = stream
+    }
+
+    /// Detiene la grabación y devuelve el archivo final, o `nil` si no quedó nada.
+    func stop() async -> URL? {
+        if let stream {
+            try? await stream.stopCapture()
+        }
+        stream = nil
+
+        return await withCheckedContinuation { (continuation: CheckedContinuation<URL?, Never>) in
+            queue.async { [self] in
+                guard let writer, let input, let outputURL, sessionStarted else {
+                    self.writer?.cancelWriting()
+                    continuation.resume(returning: nil)
+                    return
+                }
+                input.markAsFinished()
+                // Si la pantalla quedó quieta al final, el último cuadro cubre ese tiempo.
+                let now = CMClockGetTime(CMClockGetHostTimeClock())
+                writer.endSession(atSourceTime: CMTimeMaximum(lastTime, now))
+                writer.finishWriting {
+                    continuation.resume(returning: writer.status == .completed ? outputURL : nil)
+                }
+            }
+        }
+    }
+
+    func stream(
+        _ stream: SCStream,
+        didOutputSampleBuffer sampleBuffer: CMSampleBuffer,
+        of type: SCStreamOutputType
+    ) {
+        guard type == .screen,
+              sampleBuffer.isValid,
+              let writer,
+              let input,
+              Self.isCompleteFrame(sampleBuffer)
+        else { return }
+
+        let time = sampleBuffer.presentationTimeStamp
+        if !sessionStarted {
+            writer.startSession(atSourceTime: time)
+            sessionStarted = true
+        }
+        if input.isReadyForMoreMediaData, input.append(sampleBuffer) {
+            lastTime = time
+        }
+    }
+
+    func stream(_ stream: SCStream, didStopWithError error: Error) {
+        let handler = onUnexpectedStop
+        Task { @MainActor in
+            handler?(error)
+        }
+    }
+
+    /// ScreenCaptureKit también entrega muestras vacías cuando la pantalla no cambia.
+    private static func isCompleteFrame(_ sampleBuffer: CMSampleBuffer) -> Bool {
+        guard let attachments = CMSampleBufferGetSampleAttachmentsArray(
+            sampleBuffer,
+            createIfNecessary: false
+        ) as? [[SCStreamFrameInfo: Any]],
+            let rawStatus = attachments.first?[.status] as? Int,
+            let status = SCFrameStatus(rawValue: rawStatus)
+        else { return false }
+        return status == .complete
+    }
+}

@@ -1,0 +1,90 @@
+import AppKit
+
+/// Capturas fijadas: flotan sobre todo, se mueven arrastrando y se cierran con la ×.
+@MainActor
+final class PinController: NSObject {
+    private var panels: [NSPanel] = []
+
+    func pin(_ image: NSImage) {
+        let visible = NSScreen.underMouse.visibleFrame
+        let ratio = min(
+            1,
+            visible.width * 0.5 / max(image.size.width, 1),
+            visible.height * 0.5 / max(image.size.height, 1)
+        )
+        let size = CGSize(
+            width: max((image.size.width * ratio).rounded(), 80),
+            height: max((image.size.height * ratio).rounded(), 60)
+        )
+        // Cada nueva se corre un poco para que no tape exacto a la anterior.
+        let offset = CGFloat(panels.count % 6) * 24
+        let frame = CGRect(
+            x: visible.midX - size.width / 2 + offset,
+            y: visible.midY - size.height / 2 - offset,
+            width: size.width,
+            height: size.height
+        )
+
+        let panel = NSPanel(
+            contentRect: frame,
+            styleMask: [.borderless, .nonactivatingPanel, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        panel.level = .floating
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = true
+        panel.hidesOnDeactivate = false
+        panel.isReleasedWhenClosed = false
+        panel.isMovableByWindowBackground = true
+        panel.contentAspectRatio = size
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
+
+        let view = PinView(frame: CGRect(origin: .zero, size: size), image: image)
+        view.autoresizingMask = [.width, .height]
+
+        let close = NSButton(
+            image: NSImage(systemSymbolName: "xmark.circle.fill", accessibilityDescription: "Cerrar") ?? NSImage(),
+            target: self,
+            action: #selector(closePin(_:))
+        )
+        close.isBordered = false
+        close.contentTintColor = .white
+        close.frame = CGRect(x: 6, y: size.height - 26, width: 20, height: 20)
+        close.autoresizingMask = [.maxXMargin, .minYMargin]
+        view.addSubview(close)
+
+        panel.contentView = view
+        panel.orderFrontRegardless()
+        panels.append(panel)
+    }
+
+    @objc private func closePin(_ sender: NSButton) {
+        guard let window = sender.window else { return }
+        window.orderOut(nil)
+        panels.removeAll { $0 === window }
+    }
+}
+
+private final class PinView: NSView {
+    private let image: NSImage
+
+    init(frame: CGRect, image: NSImage) {
+        self.image = image
+        super.init(frame: frame)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) no se usa")
+    }
+
+    override var mouseDownCanMoveWindow: Bool { true }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func draw(_ dirtyRect: NSRect) {
+        NSBezierPath(roundedRect: bounds, xRadius: 8, yRadius: 8).addClip()
+        image.draw(in: bounds)
+    }
+}

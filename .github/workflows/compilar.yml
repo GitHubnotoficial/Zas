@@ -1,0 +1,33 @@
+name: Compilar
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  macos:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Versiones
+        run: |
+          sw_vers
+          uname -m
+          xcrun swiftc --version
+
+      - name: Compilar
+        run: bash compilar.sh
+
+      - name: Empaquetar
+        run: |
+          ditto -c -k --keepParent build/Zas.app build/Zas-app.zip
+          lipo -info build/Zas.app/Contents/MacOS/Zas
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Zas-app
+          path: build/Zas-app.zip
+          if-no-files-found: error
