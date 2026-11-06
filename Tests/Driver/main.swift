@@ -435,6 +435,8 @@ let video = newFile("mp4", timeout: 10) {
     wait(0.7)
     drag(from: CGPoint(x: 120, y: 120), to: CGPoint(x: 620, y: 420))
     wait(1.5)
+    click(at: CGPoint(x: 300, y: 260))
+    wait(0.15)
     shot("e2e-10-grabando")
     hotKey(kVK_ANSI_2)
     wait(0.5)

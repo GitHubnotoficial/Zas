@@ -5,7 +5,7 @@ set -euo pipefail
 APP_NAME="Zas"
 BUNDLE_ID="local.zas.app"
 MIN_MACOS="13.0"
-VERSION="0.9.0"
+VERSION="0.9.5"
 
 cd "$(dirname "$0")"
 
@@ -53,6 +53,20 @@ cat > "$BUNDLE/Contents/Info.plist" <<PLIST
     <key>LSUIElement</key><true/>
     <key>NSHighResolutionCapable</key><true/>
     <key>NSScreenCaptureUsageDescription</key><string>Zas necesita ver la pantalla para tomar capturas y grabar video.</string>
+    <key>NSCameraUsageDescription</key><string>Zas usa la cámara solo cuando activas mostrarla en los videos.</string>
+    <key>CFBundleDocumentTypes</key>
+    <array><dict>
+        <key>CFBundleTypeName</key><string>Proyecto de Zas</string>
+        <key>CFBundleTypeRole</key><string>Editor</string>
+        <key>LSItemContentTypes</key><array><string>local.zas.project</string></array>
+    </dict></array>
+    <key>UTExportedTypeDeclarations</key>
+    <array><dict>
+        <key>UTTypeIdentifier</key><string>local.zas.project</string>
+        <key>UTTypeDescription</key><string>Proyecto de Zas</string>
+        <key>UTTypeConformsTo</key><array><string>public.json</string></array>
+        <key>UTTypeTagSpecification</key><dict><key>public.filename-extension</key><array><string>zas</string></array></dict>
+    </dict></array>
     <key>NSMicrophoneUsageDescription</key><string>Zas usa el micrófono solo cuando activas grabar tu voz en los videos.</string>
 </dict>
 </plist>

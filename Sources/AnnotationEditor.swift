@@ -763,6 +763,7 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
         menu.addItem(withTitle: "Reemplazar el original", action: #selector(replaceOriginal), keyEquivalent: "").target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: "Guardar como…", action: #selector(saveAs), keyEquivalent: "").target = self
+        menu.addItem(withTitle: "Guardar proyecto editable…", action: #selector(saveProject), keyEquivalent: "").target = self
         menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.height + 6), in: sender)
     }
 
@@ -818,6 +819,24 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
                 if self.write(to: url) {
                     self.announce(url)
                 }
+            }
+        }
+    }
+
+    @objc private func saveProject() {
+        canvas.commitText()
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [ZasProject.fileType]
+        panel.directoryURL = Capture.folder
+        panel.nameFieldStringValue = "\(Self.baseName(of: file)).zas"
+        panel.beginSheetModal(for: window) { [weak self] response in
+            let url = panel.url
+            Task { @MainActor in
+                guard response == .OK, let url, let self, let data = self.canvas.projectData(),
+                      (try? data.write(to: url)) != nil
+                else { return }
+                self.savedHistoryCount = self.canvas.historyCount
+                self.announce(url)
             }
         }
     }

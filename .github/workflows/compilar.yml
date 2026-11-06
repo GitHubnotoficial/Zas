@@ -100,6 +100,7 @@ jobs:
           defaults write local.zas.app welcomed -bool true
           # El aviso de macOS puede tardar: la tarjeta no debe vencer antes de usarla.
           defaults write local.zas.app thumbnailSeconds -float 30
+          defaults write local.zas.app videoClicks -bool true
           # Sin esto, un clic en el fondo esconde todas las ventanas.
           defaults write com.apple.WindowManager EnableStandardClickToShowDesktop -bool false
           open /Applications/Zas.app

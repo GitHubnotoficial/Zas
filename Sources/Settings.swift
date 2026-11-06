@@ -119,6 +119,9 @@ final class Settings: ObservableObject {
         static let systemAudio = "systemAudio"
         static let videoFPS = "videoFPS"
         static let videoCursor = "videoCursor"
+        static let videoClicks = "videoClicks"
+        static let videoKeys = "videoKeys"
+        static let videoCamera = "videoCamera"
         static let loginItemConfigured = "loginItemConfigured"
     }
 
@@ -168,6 +171,18 @@ final class Settings: ObservableObject {
         didSet { defaults.set(videoCursor, forKey: Key.videoCursor) }
     }
 
+    @Published var videoClicks: Bool {
+        didSet { defaults.set(videoClicks, forKey: Key.videoClicks) }
+    }
+
+    @Published var videoKeys: Bool {
+        didSet { defaults.set(videoKeys, forKey: Key.videoKeys) }
+    }
+
+    @Published var videoCamera: Bool {
+        didSet { defaults.set(videoCamera, forKey: Key.videoCamera) }
+    }
+
     @Published var saveFolder: URL {
         didSet { defaults.set(saveFolder.path, forKey: Key.saveFolder) }
     }
@@ -213,6 +228,9 @@ final class Settings: ObservableObject {
         systemAudio = defaults.bool(forKey: Key.systemAudio)
         videoFPS = defaults.integer(forKey: Key.videoFPS)
         videoCursor = defaults.bool(forKey: Key.videoCursor)
+        videoClicks = defaults.bool(forKey: Key.videoClicks)
+        videoKeys = defaults.bool(forKey: Key.videoKeys)
+        videoCamera = defaults.bool(forKey: Key.videoCamera)
 
         if let path = defaults.string(forKey: Key.saveFolder) {
             saveFolder = URL(fileURLWithPath: path, isDirectory: true)

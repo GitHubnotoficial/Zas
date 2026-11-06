@@ -126,7 +126,7 @@ private struct SettingsView: View {
             shortcuts.tabItem { Label("Atajos", systemImage: "command") }
             video.tabItem { Label("Video", systemImage: "video") }
         }
-        .frame(width: 480, height: 470)
+        .frame(width: 480, height: 560)
     }
 
     private var general: some View {
@@ -215,6 +215,9 @@ private struct SettingsView: View {
                 Text("60 cuadros por segundo").tag(60)
             }
             Toggle("Mostrar el cursor", isOn: $settings.videoCursor)
+            Toggle("Mostrar los clics", isOn: $settings.videoClicks)
+            Toggle("Mostrar las teclas", isOn: $settings.videoKeys)
+            Toggle("Mostrar la cámara", isOn: $settings.videoCamera)
             Toggle("Grabar el sonido del Mac", isOn: $settings.systemAudio)
             Toggle("Grabar con micrófono", isOn: $settings.recordMicrophone)
                 .disabled(!ScreenRecorder.supportsMicrophone)

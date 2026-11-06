@@ -50,7 +50,8 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
         to url: URL,
         systemAudio: Bool = false,
         fps: Int = 30,
-        showsCursor: Bool = true
+        showsCursor: Bool = true,
+        visibleWindows: [CGWindowID] = []
     ) async throws {
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
         guard let display = content.displays.first(where: { $0.displayID == displayID }) else {
@@ -59,7 +60,9 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
 
         // Excluye las ventanas de Zas, como el marco rojo de grabación.
         let ownApp = content.applications.filter { $0.bundleIdentifier == Bundle.main.bundleIdentifier }
-        let filter = SCContentFilter(display: display, excludingApplications: ownApp, exceptingWindows: [])
+        // Clics, teclas y cámara son de Zas, pero sí deben salir en el video.
+        let shown = content.windows.filter { visibleWindows.contains($0.windowID) }
+        let filter = SCContentFilter(display: display, excludingApplications: ownApp, exceptingWindows: shown)
 
         let fullWidth = rect.width * scale
         let fullHeight = rect.height * scale

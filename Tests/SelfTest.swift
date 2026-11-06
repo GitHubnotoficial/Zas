@@ -335,6 +335,17 @@ enum SelfTest {
         picture.addPicture(demoImage(scale: 1, width: 80, height: 60))
         check(picture.document.annotations.first?.tool == .picture, "se puede añadir otra imagen")
 
+        // Proyecto editable: se guarda y se recupera con todas sus marcas.
+        let projectCanvas = AnnotationCanvas(frame: CGRect(x: 0, y: 0, width: 300, height: 200), image: tall)
+        projectCanvas.add(Annotation(tool: .text, color: .systemBlue, lineWidth: 6, points: [CGPoint(x: 20, y: 30)], text: "Hola"))
+        projectCanvas.add(Annotation(tool: .rectangle, color: .systemRed, lineWidth: 3, points: [.zero, CGPoint(x: 40, y: 40)], filled: true))
+        let projectData = projectCanvas.projectData()
+        let restored = projectData.flatMap { try? JSONDecoder().decode(ZasProject.self, from: $0) }
+        check(restored?.document().annotations.count == 2, "un proyecto guarda sus marcas")
+        check(restored?.document().annotations[0].text == "Hola", "un proyecto recupera el texto")
+        check(restored?.document().annotations[1].filled == true, "un proyecto recupera las opciones")
+        check(restored?.baseImage()?.size == tall.size, "un proyecto conserva el tamaño")
+
         // Física de la interfaz.
         check(abs(Spring.value(at: 2, response: 0.42, damping: 0.86) - 1) < 0.001, "el resorte se asienta en su destino")
         let peak = stride(from: 0.0, to: 1.0, by: 0.01).map { Spring.value(at: $0, response: 0.42, damping: 0.86) }.max() ?? 0

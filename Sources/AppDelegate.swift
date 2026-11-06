@@ -28,6 +28,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var captureInFlight = false
 
     private var recorder: ScreenRecorder?
+    private var effects: RecordingEffects?
     private var isStopping = false
     private var recordingStart = Date()
     private var recordingTimer: Timer?
@@ -201,6 +202,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.delegate = self
         menu.addItem(.separator())
         addItem("Ver historial…", symbol: nil, #selector(openHistory))
+        addItem("Abrir proyecto…", symbol: nil, #selector(chooseProject))
         let settings = addItem("Ajustes…", symbol: nil, #selector(openSettings))
         settings.keyEquivalent = ","
         menu.addItem(.separator())
@@ -533,6 +535,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
+    @objc private func chooseProject() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [ZasProject.fileType]
+        NSApp.activate(ignoringOtherApps: true)
+        if panel.runModal() == .OK, let url = panel.url {
+            openProject(url)
+        }
+    }
+
+    func application(_ application: NSApplication, open urls: [URL]) {
+        urls.forEach(openProject)
+    }
+
+    private func openProject(_ url: URL) {
+        guard let data = try? Data(contentsOf: url),
+              let project = try? JSONDecoder().decode(ZasProject.self, from: data),
+              let image = project.baseImage()
+        else {
+            Toast.shared.show("No se pudo abrir ese proyecto.")
+            return
+        }
+        openEditor(image: image, file: url, document: project.document())
+    }
+
     @objc private func openHistory() {
         windows.showHistory { [weak self] file in
             self?.reopenRecent(file)
@@ -577,8 +603,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
-    private func openEditor(image: NSImage, file: URL, selectingText: Bool = false) {
+    private func openEditor(image: NSImage, file: URL, selectingText: Bool = false, document: AnnotationDocument? = nil) {
         let editor = AnnotationEditor(image: image, file: file)
+        if let document {
+            editor.canvas.load(document)
+        }
         editor.onFinish = { [weak self] newImage, newFile in
             Capture.playSound()
             self?.thumbnail.show(image: newImage, file: newFile, kind: .screenshot)
@@ -622,8 +651,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let scale = selection.screen.backingScaleFactor
         let microphone = Settings.shared.recordMicrophone
         let url = Capture.newFileURL(extension: "mp4")
+        let settings = Settings.shared
+        let overlayEffects = RecordingEffects(screen: selection.screen)
+        effects = overlayEffects
 
         Task { @MainActor in
+            await overlayEffects.start(clicks: settings.videoClicks, keys: settings.videoKeys, showsCamera: settings.videoCamera)
             do {
                 try await newRecorder.start(
                     displayID: displayID,
@@ -633,10 +666,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     to: url,
                     systemAudio: Settings.shared.systemAudio,
                     fps: Settings.shared.videoFPS,
-                    showsCursor: Settings.shared.videoCursor
+                    showsCursor: Settings.shared.videoCursor,
+                    visibleWindows: overlayEffects.windowIDs
                 )
                 self.showRecordingUI(selection)
             } catch {
+                overlayEffects.stop()
+                self.effects = nil
                 self.recorder = nil
                 self.thumbnail.resume()
                 self.showError("No se pudo iniciar la grabación", error.localizedDescription)
@@ -756,6 +792,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func hideRecordingUI() {
+        effects?.stop()
+        effects = nil
         if let recordingActivity {
             ProcessInfo.processInfo.endActivity(recordingActivity)
             self.recordingActivity = nil

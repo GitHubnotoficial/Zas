@@ -240,6 +240,17 @@ final class AnnotationCanvas: NSView {
 
     var selectionForTesting: Int? { selectedIndex }
 
+    func load(_ saved: AnnotationDocument) {
+        document = saved
+        documentGeometryChanged()
+    }
+
+    /// Proyecto editable con la imagen y cada marca por separado.
+    func projectData() -> Data? {
+        guard let project = ZasProject(image: image, document: document) else { return nil }
+        return try? JSONEncoder().encode(project)
+    }
+
     /// Cambia la imagen entera con las marcas ya integradas. Se puede deshacer.
     func applyImage(_ transform: (NSImage) -> NSImage?) {
         commitText()
