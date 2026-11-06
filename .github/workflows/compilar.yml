@@ -119,6 +119,23 @@ jobs:
           sleep 3
           exit $STATUS
 
+      # No frena una publicación: solo sirve para ver la app funcionando sin tener un Mac.
+      - name: Grabar video demo
+        continue-on-error: true
+        timeout-minutes: 6
+        run: |
+          pkill -x Calculator || true
+          mkdir -p escenas/demo
+          open /Applications/Zas.app
+          sleep 4
+          screencapture -V 170 -C -x build/demo.mov &
+          GRABADOR=$!
+          sleep 1
+          ZAS_PAUSA=1.2 ./build/ZasConductor "$PWD/escenas/demo" || true
+          wait $GRABADOR
+          avconvert --preset Preset1280x720 --source build/demo.mov --output escenas/zas-demo.mp4 --replace
+          ls -la escenas/zas-demo.mp4
+
       - name: Empaquetar
         run: |
           ditto -c -k --keepParent build/Zas.app build/Zas-app.zip

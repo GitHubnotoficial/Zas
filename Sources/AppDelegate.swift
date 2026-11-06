@@ -5,10 +5,11 @@ import Combine
 import ServiceManagement
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem!
     private var menu: NSMenu!
     private var actionItems: [HotKeyAction: NSMenuItem] = [:]
+    private let recentsMenu = NSMenu()
     private var settingsObserver: AnyCancellable?
 
     private let overlay = SelectionOverlay()
@@ -43,6 +44,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         thumbnail.onPin = { [weak self] image in
             self?.pins.pin(image)
+        }
+        thumbnail.onSummarize = { [weak self] video in
+            self?.copySummary(of: video)
         }
 
         // Los atajos se aplican en cuanto cambian en Ajustes.
@@ -169,10 +173,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu = NSMenu()
         addActionItem(.region, #selector(captureRegion))
         addActionItem(.fullScreen, #selector(captureFullScreen))
+        addActionItem(.timed, #selector(captureTimed))
         addActionItem(.text, #selector(captureText))
         menu.addItem(.separator())
         addActionItem(.record, #selector(toggleRecording))
         menu.addItem(.separator())
+        let recents = addItem("Capturas recientes", symbol: "clock", #selector(openFolder))
+        recentsMenu.delegate = self
+        recents.submenu = recentsMenu
         addItem("Abrir carpeta de capturas", symbol: "folder", #selector(openFolder))
         let settings = addItem("Ajustes…", symbol: "gearshape", #selector(openSettings))
         settings.keyEquivalent = ","
@@ -233,6 +241,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         switch action {
         case .region: captureRegion()
         case .fullScreen: captureFullScreen()
+        case .timed: captureTimed()
         case .text: captureText()
         case .record: toggleRecording()
         }
@@ -322,6 +331,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 return
             }
             self.readText(selection)
+        }
+    }
+
+    /// Primero se elige el área y después corre el tiempo: da margen para abrir un menú o un aviso.
+    @objc private func captureTimed() {
+        guard canStartCapture(), ensurePermission() else { return }
+        thumbnail.suspend()
+        overlay.begin(mode: .screenshot) { [weak self] selection in
+            guard let self else { return }
+            guard let selection else {
+                self.thumbnail.resume()
+                return
+            }
+            self.captureInFlight = true
+            Task { @MainActor in
+                for second in [3, 2, 1] {
+                    Toast.shared.show("\(second)", seconds: 2)
+                    try? await Task.sleep(nanoseconds: 1_000_000_000)
+                }
+                // El aviso no debe salir en la imagen.
+                Toast.shared.hide()
+                self.snap(selection)
+            }
         }
     }
 
@@ -499,7 +531,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func finishVideo(_ url: URL) {
         Capture.copyFile(at: url)
         Capture.playSound()
+        let copiesSummary = Settings.shared.videoCopiesSummary
+        showVideoThumbnail(url, inClipboard: !copiesSummary)
+        if copiesSummary {
+            copySummary(of: url)
+        }
+    }
 
+    /// Crea la imagen con los momentos clave del video y la deja lista para pegar en Claude.
+    private func copySummary(of video: URL) {
+        Task { @MainActor in
+            let output = Capture.imageFolder.appendingPathComponent(VideoSheet.outputName(for: video))
+            let moments = await VideoSheet.make(from: video, to: output)
+            guard moments > 0, Capture.copyImage(at: output) != nil else {
+                Toast.shared.show("No se pudo crear el resumen. El video sigue guardado.")
+                return
+            }
+            self.thumbnail.clipboardChanged()
+            Toast.shared.show("Resumen de \(moments) imágenes copiado. Pégalo en Claude.")
+        }
+    }
+
+    private func showVideoThumbnail(_ url: URL, inClipboard: Bool) {
         let generator = AVAssetImageGenerator(asset: AVURLAsset(url: url))
         generator.appliesPreferredTrackTransform = true
         generator.maximumSize = CGSize(width: 560, height: 400)
@@ -514,7 +567,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 } else {
                     image = NSImage(systemSymbolName: "film", accessibilityDescription: "Video") ?? NSImage()
                 }
-                self?.thumbnail.show(image: image, file: url, kind: .video)
+                self?.thumbnail.show(image: image, file: url, kind: .video, inClipboard: inClipboard)
                 self?.imageGenerator = nil
             }
         }
@@ -598,6 +651,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.contentView = view
         panel.orderFrontRegardless()
         recordingBorder = panel
+    }
+
+    // MARK: - Capturas recientes
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        guard menu === recentsMenu else { return }
+        menu.removeAllItems()
+        let files = Recents.files()
+        guard !files.isEmpty else {
+            menu.addItem(withTitle: "Aún no hay capturas", action: nil, keyEquivalent: "")
+            return
+        }
+        for file in files {
+            let item = NSMenuItem(title: Recents.title(for: file), action: #selector(reopenRecent(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = file
+            item.image = NSImage(systemSymbolName: file.pathExtension == "mp4" ? "film" : "photo", accessibilityDescription: nil)
+            menu.addItem(item)
+        }
+    }
+
+    @objc private func reopenRecent(_ sender: NSMenuItem) {
+        guard let file = sender.representedObject as? URL else { return }
+        if file.pathExtension == "mp4" {
+            Capture.copyFile(at: file)
+            Capture.playSound()
+            showVideoThumbnail(file, inClipboard: true)
+        } else if let image = Capture.copyImage(at: file) {
+            Capture.playSound()
+            thumbnail.show(image: image, file: file, kind: .screenshot)
+        } else {
+            Toast.shared.show("Ese archivo ya no existe.")
+        }
     }
 
     // MARK: - Otras acciones

@@ -169,6 +169,10 @@ private struct SettingsView: View {
             }
 
             Section("Video") {
+                Picker("Al terminar, copiar", selection: $settings.videoCopiesSummary) {
+                    Text("Resumen en imágenes").tag(true)
+                    Text("Archivo de video").tag(false)
+                }
                 Toggle("Grabar con micrófono", isOn: $settings.recordMicrophone)
                     .disabled(!ScreenRecorder.supportsMicrophone)
                 if !ScreenRecorder.supportsMicrophone {
@@ -192,7 +196,7 @@ private struct SettingsView: View {
         .frame(width: 480, height: min(Self.idealHeight, NSScreen.underMouse.visibleFrame.height - 24))
     }
 
-    private static let idealHeight: CGFloat = 836
+    private static let idealHeight: CGFloat = 924
 
     private static let updateCommand =
         "curl -fsSL https://raw.githubusercontent.com/GitHubnotoficial/Zas/main/instalar-rapido.sh | bash"

@@ -71,6 +71,12 @@ final class Toast {
         }
     }
 
+    func hide() {
+        hideTask?.cancel()
+        panel?.orderOut(nil)
+        panel = nil
+    }
+
     private func fade(_ panel: NSPanel, to alpha: CGFloat, duration: TimeInterval) {
         NSAnimationContext.beginGrouping()
         NSAnimationContext.current.duration = duration

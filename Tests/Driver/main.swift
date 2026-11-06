@@ -71,7 +71,11 @@ func click(at point: CGPoint) {
     }
 }
 
+/// En la grabación demo se hace una pausa en cada paso para poder seguirlo.
+let pace = Double(ProcessInfo.processInfo.environment["ZAS_PAUSA"] ?? "") ?? 0
+
 func shot(_ name: String) {
+    defer { wait(pace) }
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
     process.arguments = ["-x", output.appendingPathComponent("\(name).png").path]
@@ -188,6 +192,17 @@ let types = NSPasteboard.general.types ?? []
 check(types.contains(.png), "la captura queda en el portapapeles")
 check(NSPasteboard.general.data(forType: .png)?.count ?? 0 > 1000, "el portapapeles tiene la imagen")
 check(NSPasteboard.general.data(forType: .tiff)?.count ?? 0 > 1000, "el TIFF se genera cuando otra app lo pide")
+
+// Lee el portapapeles desde otro proceso, con un comando de macOS, como PNG.
+let reader = Process()
+let readerOutput = Pipe()
+reader.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+reader.arguments = ["-e", "the clipboard as «class PNGf»"]
+reader.standardOutput = readerOutput
+try? reader.run()
+let pasted = readerOutput.fileHandleForReading.readDataToEndOfFile()
+reader.waitUntilExit()
+check(pasted.count > 1000, "otro proceso lee la captura como PNG (\(pasted.count) bytes)")
 shot("e2e-02-miniatura")
 
 // 2. Miniatura: pasar el cursor y abrir el editor.
@@ -306,6 +321,20 @@ if let size = pixelSize(full) {
 wait(0.6)
 shot("e2e-09-pila")
 
+// Temporizador: se elige el área y la captura llega tres segundos después.
+let timed = newFile("png", timeout: 6) {
+    hotKey(kVK_ANSI_8)
+    wait(0.6)
+    drag(from: CGPoint(x: 200, y: 200), to: CGPoint(x: 500, y: 400))
+    wait(1)
+    shot("e2e-09b-cuenta-atras")
+}
+if let size = pixelSize(timed) {
+    check(size == (300 * scale, 200 * scale), "⇧⌘8 captura el área elegida (\(size))")
+} else {
+    check(false, "⇧⌘8 captura el área elegida")
+}
+
 // 7. Texto: la barra de menú siempre tiene texto.
 NSPasteboard.general.clearContents()
 hotKey(kVK_ANSI_7)
@@ -339,7 +368,9 @@ if let video {
     check(((try? FileManager.default.attributesOfItem(atPath: video.path)[.size] as? Int) ?? 0) > 2000, "el video tiene contenido")
 }
 wait(1)
-check((NSPasteboard.general.readObjects(forClasses: [NSURL.self]) as? [URL])?.first?.pathExtension == "mp4", "el video queda copiado como archivo")
+wait(2.5)
+check(NSPasteboard.general.data(forType: .png)?.count ?? 0 > 1000, "al terminar, el resumen del video queda copiado")
+check(files("png").contains { $0.hasSuffix(" resumen.png") }, "el resumen queda guardado junto al video")
 shot("e2e-11-video-listo")
 
 // 9. Cerrar la app mientras graba no debe perder el video.

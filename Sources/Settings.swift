@@ -4,12 +4,13 @@ import SwiftUI
 
 /// Las acciones que se disparan con un atajo global.
 enum HotKeyAction: String, CaseIterable, Codable {
-    case region, fullScreen, text, record
+    case region, fullScreen, timed, text, record
 
     var title: String {
         switch self {
         case .region: return "Capturar área o ventana"
         case .fullScreen: return "Capturar pantalla"
+        case .timed: return "Capturar en 3 segundos"
         case .text: return "Copiar texto de la pantalla"
         case .record: return "Grabar video"
         }
@@ -19,6 +20,7 @@ enum HotKeyAction: String, CaseIterable, Codable {
         switch self {
         case .region: return "viewfinder"
         case .fullScreen: return "macwindow"
+        case .timed: return "timer"
         case .text: return "text.viewfinder"
         case .record: return "record.circle"
         }
@@ -29,6 +31,7 @@ enum HotKeyAction: String, CaseIterable, Codable {
         switch self {
         case .region: return Shortcut(keyCode: UInt32(kVK_ANSI_2), modifiers: modifiers)
         case .fullScreen: return Shortcut(keyCode: UInt32(kVK_ANSI_1), modifiers: modifiers)
+        case .timed: return Shortcut(keyCode: UInt32(kVK_ANSI_8), modifiers: modifiers)
         case .text: return Shortcut(keyCode: UInt32(kVK_ANSI_7), modifiers: modifiers)
         case .record: return Shortcut(keyCode: UInt32(kVK_ANSI_6), modifiers: modifiers)
         }
@@ -107,6 +110,7 @@ final class Settings: ObservableObject {
         static let saveFolder = "saveFolder"
         static let welcomed = "welcomed"
         static let saveCaptures = "saveCaptures"
+        static let videoCopiesSummary = "videoCopiesSummary"
         static let loginItemConfigured = "loginItemConfigured"
     }
 
@@ -127,6 +131,11 @@ final class Settings: ObservableObject {
     /// Si es falso, las imágenes solo pasan por el portapapeles y un archivo temporal.
     @Published var saveCaptures: Bool {
         didSet { defaults.set(saveCaptures, forKey: Key.saveCaptures) }
+    }
+
+    /// Al terminar un video se copia una imagen con sus momentos clave, que Claude sí puede leer.
+    @Published var videoCopiesSummary: Bool {
+        didSet { defaults.set(videoCopiesSummary, forKey: Key.videoCopiesSummary) }
     }
 
     @Published var saveFolder: URL {
@@ -162,12 +171,13 @@ final class Settings: ObservableObject {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        defaults.register(defaults: [Key.playSound: true, Key.thumbnailSeconds: 6.0, Key.saveCaptures: true])
+        defaults.register(defaults: [Key.playSound: true, Key.thumbnailSeconds: 6.0, Key.saveCaptures: true, Key.videoCopiesSummary: true])
 
         playSound = defaults.bool(forKey: Key.playSound)
         thumbnailSeconds = defaults.double(forKey: Key.thumbnailSeconds)
         recordMicrophone = defaults.bool(forKey: Key.recordMicrophone)
         saveCaptures = defaults.bool(forKey: Key.saveCaptures)
+        videoCopiesSummary = defaults.bool(forKey: Key.videoCopiesSummary)
 
         if let path = defaults.string(forKey: Key.saveFolder) {
             saveFolder = URL(fileURLWithPath: path, isDirectory: true)

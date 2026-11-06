@@ -239,6 +239,14 @@ enum SelfTest {
         check(AnnotationEditor.baseName(of: edited) == "Zas 2026", "editar dos veces no acumula \"anotada\" en el nombre")
         check(AnnotationEditor.baseName(of: URL(fileURLWithPath: "/x/Zas 2026.png")) == "Zas 2026", "el nombre original no cambia")
 
+        // Resumen de video para Claude.
+        check(VideoSheet.frameTimes(duration: 0) == [0], "un video vacío no rompe el resumen")
+        check(VideoSheet.frameTimes(duration: 3).count == 2, "un video corto da dos momentos")
+        check(VideoSheet.frameTimes(duration: 600).count == 12, "un video largo no pasa de doce momentos")
+        check((VideoSheet.frameTimes(duration: 60).last ?? 99) < 60, "el último momento cae dentro del video")
+        check(VideoSheet.timeLabel(83) == "1:23", "el minuto se escribe bien")
+        check(VideoSheet.outputName(for: URL(fileURLWithPath: "/x/Zas 1.mp4")) == "Zas 1 resumen.png", "nombre del resumen")
+
         // Copiar sin guardar.
         Settings.shared.saveCaptures = false
         check(Capture.isScratch(Capture.newFileURL(extension: "png")), "sin guardar, la imagen va a un archivo temporal")
@@ -283,7 +291,7 @@ enum SelfTest {
         thumbs.show(image: demoImage(), file: file, kind: .screenshot)
         thumbs.show(image: demoImage(), file: file, kind: .screenshot)
         await wait(0.4)
-        check(thumbs.testActionCount(index: 0) == 4, "la miniatura ofrece copiar, anotar, fijar y Finder")
+        check(thumbs.testActionCount(index: 0) == 5, "la miniatura ofrece copiar, ruta, anotar, fijar y Finder")
         check(thumbs.testBadge(index: 0) == "Copiado", "la última miniatura dice Copiado")
         check(thumbs.testBadge(index: 1) == nil, "las anteriores no dicen Copiado, porque ya no lo están")
 
@@ -541,6 +549,18 @@ enum SelfTest {
 
         let result = await recorder.stop()
         check(result == url, "la grabación genera archivo")
+
+        let sheet = Capture.newFileURL(extension: "png")
+        let moments = await VideoSheet.make(from: url, to: sheet)
+        check(moments >= 2, "el video se convierte en imágenes (\(moments))")
+        let sheetRep = (try? Data(contentsOf: sheet)).flatMap { NSBitmapImageRep(data: $0) }
+        check(max(sheetRep?.pixelsWide ?? 9999, sheetRep?.pixelsHigh ?? 9999) <= 1568, "el resumen no supera el tamaño que Claude lee sin reducir")
+        try? FileManager.default.copyItem(at: sheet, to: output.appendingPathComponent("resumen-video.png"))
+
+        // Las capturas recientes incluyen lo último y salen en orden.
+        let recent = Recents.files()
+        check(recent.first == sheet, "las recientes empiezan por lo último")
+        check(recent.contains(url), "las recientes incluyen videos")
         let asset = AVURLAsset(url: url)
         let duration = (try? await asset.load(.duration))?.seconds ?? 0
         check(duration >= 2.5, "el video dura lo esperado (\(String(format: "%.1f", duration)) s)")

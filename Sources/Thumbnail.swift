@@ -12,6 +12,7 @@ enum ThumbnailKind {
 final class ThumbnailController {
     var onAnnotate: ((NSImage, URL) -> Void)?
     var onPin: ((NSImage) -> Void)?
+    var onSummarize: ((URL) -> Void)?
 
     private final class Item: @unchecked Sendable {
         let panel: NSPanel
@@ -32,7 +33,7 @@ final class ThumbnailController {
     private var isSuspended = false
     private var screen: NSScreen?
 
-    func show(image: NSImage, file: URL, kind: ThumbnailKind, text: String? = nil) {
+    func show(image: NSImage, file: URL, kind: ThumbnailKind, text: String? = nil, inClipboard: Bool = true) {
         screen = NSScreen.underMouse
 
         let imageSize = image.size
@@ -91,13 +92,23 @@ final class ThumbnailController {
             guard let self, let item else { return }
             self.markCopied(item)
         }
+        view.onCopyPath = { [weak self, weak item] in
+            guard let self, let item else { return }
+            Capture.copyText(file.path)
+            self.items.forEach { $0.view.isInClipboard = false }
+            Capture.playSound()
+            item.view.flashCopied("Ruta copiada")
+        }
+        view.onSummarize = { [weak self] in
+            self?.onSummarize?(file)
+        }
         view.onDragEnded = { [weak self] in
             self?.syncHover()
         }
 
         // Solo la captura más reciente está en el portapapeles.
         items.forEach { $0.view.isInClipboard = false }
-        view.isInClipboard = true
+        view.isInClipboard = inClipboard
 
         items.insert(item, at: 0)
         while items.count > maximumItems, let oldest = items.last {
@@ -148,7 +159,12 @@ final class ThumbnailController {
         }
         items.forEach { $0.view.isInClipboard = $0 === item }
         Capture.playSound()
-        view.flashCopied()
+        view.flashCopied("Copiado")
+    }
+
+    /// Otra cosa entró al portapapeles: ninguna miniatura debe decir "Copiado".
+    func clipboardChanged() {
+        items.forEach { $0.view.isInClipboard = false }
     }
 
     func dismissAll() {
@@ -304,6 +320,8 @@ private final class ThumbnailView: NSView, NSDraggingSource {
     var onAnnotate: (() -> Void)?
     var onPin: (() -> Void)?
     var onCopy: (() -> Void)?
+    var onCopyPath: (() -> Void)?
+    var onSummarize: (() -> Void)?
     var onDragEnded: (() -> Void)?
 
     var isInClipboard = false {
@@ -318,7 +336,7 @@ private final class ThumbnailView: NSView, NSDraggingSource {
     private var hovering = false
     var isHovering: Bool { hovering }
     private(set) var isDragging = false
-    private var justCopied = false
+    private var flashText: String?
     private var mouseDownPoint: NSPoint?
     private var dragged = false
     private var trackingArea: NSTrackingArea?
@@ -346,11 +364,15 @@ private final class ThumbnailView: NSView, NSDraggingSource {
         var buttons: [NSButton] = [
             OverlayIconButton(symbol: "doc.on.doc", tooltip: "Copiar otra vez", target: self, action: #selector(copyAgain)),
         ]
+        if kind != .text {
+            buttons.append(OverlayIconButton(symbol: "terminal", tooltip: "Copiar la ruta para un agente", target: self, action: #selector(copyPath)))
+        }
         switch kind {
         case .screenshot:
             buttons.append(OverlayIconButton(symbol: "pencil.tip", tooltip: "Anotar", target: self, action: #selector(annotate)))
             buttons.append(OverlayIconButton(symbol: "pin.fill", tooltip: "Fijar en pantalla", target: self, action: #selector(pin)))
         case .video:
+            buttons.append(OverlayIconButton(symbol: "square.grid.2x2", tooltip: "Copiar resumen en imágenes para Claude", target: self, action: #selector(summarize)))
             buttons.append(OverlayIconButton(symbol: "play.fill", tooltip: "Reproducir", target: self, action: #selector(open)))
         case .text:
             break
@@ -360,7 +382,7 @@ private final class ThumbnailView: NSView, NSDraggingSource {
             buttons.append(OverlayIconButton(symbol: "folder", tooltip: "Mostrar en Finder", target: self, action: #selector(reveal)))
         }
 
-        let gap: CGFloat = 8
+        let gap: CGFloat = 6
         let total = CGFloat(buttons.count) * 34 + CGFloat(max(buttons.count - 1, 0)) * gap
         var x = (bounds.width - total) / 2
         for button in buttons {
@@ -385,6 +407,8 @@ private final class ThumbnailView: NSView, NSDraggingSource {
     @objc private func pin() { onPin?() }
     @objc private func closeThumbnail() { onClose?() }
     @objc private func copyAgain() { onCopy?() }
+    @objc private func copyPath() { onCopyPath?() }
+    @objc private func summarize() { onSummarize?() }
 
     /// Vuelve a poner esta captura en el portapapeles. Sirve para pegar una de las anteriores.
     @MainActor
@@ -403,12 +427,12 @@ private final class ThumbnailView: NSView, NSDraggingSource {
     }
 
     @MainActor
-    func flashCopied() {
-        justCopied = true
+    func flashCopied(_ text: String) {
+        flashText = text
         needsDisplay = true
         Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 1_300_000_000)
-            self?.justCopied = false
+            self?.flashText = nil
             self?.needsDisplay = true
         }
     }
@@ -546,8 +570,8 @@ private final class ThumbnailView: NSView, NSDraggingSource {
 
     /// "Copiado" solo en lo que de verdad está en el portapapeles.
     var badgeText: String? {
-        if justCopied {
-            return "Copiado"
+        if let flashText {
+            return flashText
         }
         switch kind {
         case .screenshot:
