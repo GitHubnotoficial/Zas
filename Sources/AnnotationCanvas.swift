@@ -26,7 +26,29 @@ final class AnnotationCanvas: NSView {
     var onToolShortcut: ((AnnotationTool) -> Void)?
 
     private let image: NSImage
-    private lazy var pixelated: NSImage? = AnnotationRenderer.makePixelated(image)
+    /// Una versión pixelada por cada intensidad usada.
+    private var pixelatedVersions: [CGFloat: NSImage] = [:]
+
+    private func pixelated(block: CGFloat) -> NSImage? {
+        if let cached = pixelatedVersions[block] {
+            return cached
+        }
+        let version = AnnotationRenderer.makePixelated(image, block: block)
+        pixelatedVersions[block] = version
+        return version
+    }
+
+    private enum DragMode {
+        case none
+        case move(last: CGPoint)
+        case resize(anchor: CGPoint, original: Annotation, start: CGPoint)
+    }
+
+    var pixelBrush = false
+    var blockSize: CGFloat = 14 {
+        didSet { applyToSelection { $0.blockSize = blockSize } }
+    }
+    private var dragMode = DragMode.none
 
     private(set) var document = AnnotationDocument()
     private var undoStack: [AnnotationDocument] = []
@@ -37,7 +59,6 @@ final class AnnotationCanvas: NSView {
     private var selectedIndex: Int?
     private var dragOrigin: CGPoint?
     private var dragStartDocument: AnnotationDocument?
-    private var dragStartPoint: CGPoint?
 
     private var textField: NSTextField?
     private var textPoint: CGPoint = .zero
@@ -202,9 +223,15 @@ final class AnnotationCanvas: NSView {
         mutate { $0.annotations.remove(at: index) }
     }
 
+    /// Lo recién creado queda seleccionado para moverlo o cambiarle el tamaño.
     func add(_ annotation: Annotation) {
         mutate { $0.annotations.append(annotation) }
+        if !annotation.isFreehand || annotation.tool == .pixelate {
+            selectedIndex = document.annotations.count - 1
+        }
     }
+
+    var selectionForTesting: Int? { selectedIndex }
 
     func applyCrop(_ rect: CGRect) {
         mutate { $0.crop = rect }
@@ -218,13 +245,23 @@ final class AnnotationCanvas: NSView {
         window?.makeFirstResponder(self)
         let point = imagePoint(for: event)
 
+        // Doble clic en un texto: se vuelve a escribir.
+        if event.clickCount == 2, let index = document.annotations.indices.last(where: {
+            document.annotations[$0].tool == .text && document.annotations[$0].hitTest(point)
+        }) {
+            editText(at: index)
+            return
+        }
+        if beginDrag(at: point) {
+            return
+        }
+
+        selectedIndex = nil
+        needsDisplay = true
+
         switch tool {
         case .select:
-            selectedIndex = document.annotations.indices.last { document.annotations[$0].hitTest(point) }
-            dragOrigin = point
-            dragStartPoint = point
-            dragStartDocument = document
-            needsDisplay = true
+            break
         case .text:
             beginText(at: point)
         case .counter:
@@ -239,18 +276,105 @@ final class AnnotationCanvas: NSView {
             cropDraft = CGRect(origin: point, size: .zero)
             dragOrigin = point
         default:
-            current = Annotation(tool: tool, color: color, lineWidth: lineWidth, points: [point])
+            current = Annotation(
+                tool: tool,
+                color: color,
+                lineWidth: lineWidth,
+                points: [point],
+                pixelBrush: tool == .pixelate && pixelBrush,
+                blockSize: blockSize
+            )
         }
+    }
+
+    /// Empieza a mover o a cambiar de tamaño. Devuelve `false` si no había nada bajo el cursor.
+    /// Como en los estados de WhatsApp: lo último que se creó queda listo para acomodarlo.
+    @discardableResult
+    func beginDrag(at point: CGPoint) -> Bool {
+        if let index = selectedIndex, document.annotations.indices.contains(index) {
+            let mark = document.annotations[index]
+            let corners = Self.corners(of: mark.bounds)
+            if let corner = corners.indices.first(where: { hypot(corners[$0].x - point.x, corners[$0].y - point.y) <= handleReach }) {
+                dragMode = .resize(anchor: corners[(corner + 2) % 4], original: mark, start: corners[corner])
+                dragStartDocument = document
+                return true
+            }
+            if mark.bounds.insetBy(dx: -6, dy: -6).contains(point) {
+                dragMode = .move(last: point)
+                dragStartDocument = document
+                return true
+            }
+        }
+        guard tool == .select,
+              let hit = document.annotations.indices.last(where: { document.annotations[$0].hitTest(point) })
+        else { return false }
+        selectedIndex = hit
+        dragMode = .move(last: point)
+        dragStartDocument = document
+        needsDisplay = true
+        return true
+    }
+
+    func continueDrag(to point: CGPoint) {
+        guard let index = selectedIndex, document.annotations.indices.contains(index) else { return }
+        switch dragMode {
+        case .none:
+            return
+        case .move(let last):
+            document.annotations[index].translate(dx: point.x - last.x, dy: point.y - last.y)
+            dragMode = .move(last: point)
+        case .resize(let anchor, let original, let start):
+            var updated = original
+            let width = start.x - anchor.x
+            let height = start.y - anchor.y
+            updated.scale(
+                from: anchor,
+                x: abs(width) > 1 ? (point.x - anchor.x) / width : 1,
+                y: abs(height) > 1 ? (point.y - anchor.y) / height : 1
+            )
+            document.annotations[index] = updated
+        }
+        needsDisplay = true
+    }
+
+    func endDrag() {
+        if let before = dragStartDocument, document != before {
+            pushUndo(before)
+        }
+        dragStartDocument = nil
+        dragMode = .none
+    }
+
+    private var handleReach: CGFloat { 9 / max(displayScale, 0.01) }
+
+    private static func corners(of rect: CGRect) -> [CGPoint] {
+        [
+            CGPoint(x: rect.minX, y: rect.minY), CGPoint(x: rect.maxX, y: rect.minY),
+            CGPoint(x: rect.maxX, y: rect.maxY), CGPoint(x: rect.minX, y: rect.maxY),
+        ]
+    }
+
+    private func editText(at index: Int) {
+        let mark = document.annotations[index]
+        mutate { $0.annotations.remove(at: index) }
+        selectedIndex = nil
+        let previousWidth = lineWidth
+        let previousColor = color
+        lineWidth = mark.lineWidth
+        color = mark.color
+        beginText(at: mark.points.first ?? .zero)
+        textField?.stringValue = mark.text
+        lineWidth = previousWidth
+        color = previousColor
     }
 
     override func mouseDragged(with event: NSEvent) {
         var point = imagePoint(for: event)
 
-        if tool == .select {
-            guard let selectedIndex, let origin = dragOrigin else { return }
-            document.annotations[selectedIndex].translate(dx: point.x - origin.x, dy: point.y - origin.y)
-            dragOrigin = point
-            needsDisplay = true
+        if case .none = dragMode {
+            // Nada que mover: sigue el dibujo normal.
+        } else {
+            continueDrag(to: point)
             return
         }
 
@@ -267,7 +391,7 @@ final class AnnotationCanvas: NSView {
         }
 
         guard var annotation = current, let first = annotation.points.first else { return }
-        let freehand = annotation.tool == .pencil || annotation.tool == .highlight || annotation.tool == .eraser
+        let freehand = annotation.isFreehand
         if event.modifierFlags.contains(.shift), !freehand {
             point = Self.constrained(point, from: first, tool: annotation.tool)
         }
@@ -277,14 +401,10 @@ final class AnnotationCanvas: NSView {
     }
 
     override func mouseUp(with event: NSEvent) {
-        if tool == .select {
-            if let before = dragStartDocument, let start = dragStartPoint,
-               imagePoint(for: event) != start, document != before {
-                pushUndo(before)
-            }
-            dragStartDocument = nil
-            dragStartPoint = nil
-            dragOrigin = nil
+        if case .none = dragMode {
+            // Sigue abajo.
+        } else {
+            endDrag()
             return
         }
 
@@ -303,10 +423,9 @@ final class AnnotationCanvas: NSView {
         guard let annotation = current else { return }
         current = nil
         let isMeaningful: Bool
-        switch annotation.tool {
-        case .pencil, .highlight, .eraser:
+        if annotation.isFreehand {
             isMeaningful = annotation.points.count > 1
-        default:
+        } else {
             let rect = annotation.rect
             isMeaningful = annotation.points.count > 1 && max(rect.width, rect.height) >= 3
         }
@@ -450,21 +569,26 @@ final class AnnotationCanvas: NSView {
         image.draw(in: CGRect(origin: .zero, size: image.size))
         guard let context = NSGraphicsContext.current?.cgContext else { return }
         context.beginTransparencyLayer(auxiliaryInfo: nil)
-        for annotation in document.annotations {
-            AnnotationRenderer.draw(annotation, pixelated: pixelated, imageSize: image.size)
-        }
-        if let draft {
-            AnnotationRenderer.draw(draft, pixelated: pixelated, imageSize: image.size)
+        for annotation in document.annotations + (draft.map { [$0] } ?? []) {
+            let version = annotation.tool == .pixelate ? pixelated(block: annotation.blockSize) : nil
+            AnnotationRenderer.draw(annotation, pixelated: version, imageSize: image.size)
         }
         context.endTransparencyLayer()
     }
 
     private func drawSelection(_ annotation: Annotation, scale: CGFloat) {
-        let path = NSBezierPath(rect: annotation.bounds.insetBy(dx: -6, dy: -6))
+        let path = NSBezierPath(rect: annotation.bounds)
         path.lineWidth = 1.5 / scale
-        path.setLineDash([5 / scale, 4 / scale], count: 2, phase: 0)
         NSColor.controlAccentColor.setStroke()
         path.stroke()
+        let radius = 5 / scale
+        for corner in Self.corners(of: annotation.bounds) {
+            let handle = NSBezierPath(ovalIn: CGRect(x: corner.x - radius, y: corner.y - radius, width: radius * 2, height: radius * 2))
+            NSColor.white.setFill()
+            handle.fill()
+            handle.lineWidth = 1.5 / scale
+            handle.stroke()
+        }
     }
 
     private func drawCropDraft(_ draft: CGRect, content: CGRect, scale: CGFloat) {

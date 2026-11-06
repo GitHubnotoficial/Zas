@@ -235,6 +235,31 @@ enum SelfTest {
         canvas.undo(nil)
         check(canvas.document.crop == nil, "deshacer quita el recorte")
 
+        // Mover y cambiar de tamaño, como en los estados de WhatsApp.
+        let moveCanvas = AnnotationCanvas(frame: CGRect(x: 0, y: 0, width: 900, height: 560), image: image)
+        moveCanvas.add(Annotation(tool: .rectangle, color: .red, lineWidth: 6, points: [CGPoint(x: 100, y: 100), CGPoint(x: 300, y: 200)]))
+        check(moveCanvas.selectionForTesting == 0, "lo recién dibujado queda seleccionado")
+        check(moveCanvas.beginDrag(at: CGPoint(x: 200, y: 150)), "se puede agarrar una marca")
+        moveCanvas.continueDrag(to: CGPoint(x: 250, y: 190))
+        moveCanvas.endDrag()
+        check(moveCanvas.document.annotations[0].points[0] == CGPoint(x: 150, y: 140), "mover lleva la marca al sitio nuevo")
+        moveCanvas.undo(nil)
+        check(moveCanvas.document.annotations[0].points[0] == CGPoint(x: 100, y: 100), "mover se puede deshacer")
+        moveCanvas.redo(nil)
+        moveCanvas.add(Annotation(tool: .ellipse, color: .blue, lineWidth: 4, points: [CGPoint(x: 400, y: 100), CGPoint(x: 500, y: 200)]))
+        check(moveCanvas.beginDrag(at: CGPoint(x: 500, y: 200)), "se puede agarrar una esquina")
+        moveCanvas.continueDrag(to: CGPoint(x: 600, y: 300))
+        moveCanvas.endDrag()
+        check(moveCanvas.document.annotations[1].points[1] == CGPoint(x: 600, y: 300), "la esquina cambia el tamaño")
+        var bigger = Annotation(tool: .text, color: .red, lineWidth: 5, points: [CGPoint(x: 10, y: 10)], text: "hola")
+        bigger.scale(from: .zero, x: 2, y: 2)
+        check(bigger.lineWidth == 10, "el texto crece sin deformarse")
+
+        // Censura con pincel: solo toca el trazo.
+        let brushCanvas = AnnotationCanvas(frame: CGRect(x: 0, y: 0, width: 900, height: 560), image: image)
+        brushCanvas.add(Annotation(tool: .pixelate, color: .red, lineWidth: 40, points: [CGPoint(x: 220, y: 300), CGPoint(x: 420, y: 300), CGPoint(x: 700, y: 300)], pixelBrush: true, blockSize: 20))
+        check(brushCanvas.exportPNG() != plain, "el pincel de censura cambia la imagen")
+
         // Borrador: quita lo dibujado y deja intacta la captura.
         let eraseCanvas = AnnotationCanvas(frame: CGRect(x: 0, y: 0, width: 900, height: 560), image: image)
         eraseCanvas.add(Annotation(tool: .rectangle, color: NSColor(srgbRed: 1, green: 0, blue: 0, alpha: 1), lineWidth: 10, points: [CGPoint(x: 100, y: 100), CGPoint(x: 300, y: 300)]))
@@ -279,7 +304,7 @@ enum SelfTest {
         // Resumen de video para Claude.
         check(VideoSheet.frameTimes(duration: 0) == [0], "un video vacío no rompe el resumen")
         check(VideoSheet.frameTimes(duration: 3).count == 2, "un video corto da dos momentos")
-        check(VideoSheet.frameTimes(duration: 10, every: 1).count == 10, "se puede pedir una imagen por segundo")
+        check(VideoSheet.frameTimes(duration: 10, every: 1).count == 11, "se puede pedir una imagen por segundo")
         check(VideoSheet.frameTimes(duration: 600, every: 60).count == 11, "se puede pedir una imagen por minuto")
         check(VideoSheet.frameTimes(duration: 7200, every: 1).count == 120, "un video largo no pasa del tope")
         check(VideoSheet.outputName(for: URL(fileURLWithPath: "/x/Zas 1.mp4"), page: 2) == "Zas 1 resumen 2.png", "nombre de la segunda hoja")
@@ -681,9 +706,21 @@ enum SelfTest {
             editor.testOpenPalette()
             await shoot("\(label)-07b-mini-paleta")
             editor.testOpenPalette()
+            editor.testSelect(tool: .pixelate)
+            await shoot("\(label)-07e-censura")
+            editor.testSelect(tool: .eraser)
+            await shoot("\(label)-07f-borrador")
+            editor.testSelect(tool: .highlight)
+            editor.testOpenPalette()
+            editor.testOpenPalette()
             check(editor.testZoom() == 2, "el editor hace zoom")
             await shoot("\(label)-07c-zoom")
             editor.testResetZoom()
+            let foundText = await editor.testLiveTextFindsText()
+            print("Live Text: \(foundText ? "encontró texto" : "sin resultado en este Mac")")
+            if label == "claro" {
+                check(foundText, "Live Text encuentra el texto de la captura")
+            }
             editor.testTextMode()
             await wait(1.5)
             await shoot("\(label)-07d-seleccion-texto")

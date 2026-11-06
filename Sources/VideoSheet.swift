@@ -16,7 +16,7 @@ enum VideoSheet {
         guard duration > 0.1 else { return [0] }
         let last = max(duration - 0.1, 0)
         var times = Array(stride(from: 0, to: last, by: max(every, 0.5)))
-        if last - (times.last ?? 0) > 0.4 || times.count < 2 {
+        if last - (times.last ?? 0) >= every / 2 || times.count < 2 {
             times.append(last)
         }
         guard times.count > maximumMoments else { return times }

@@ -63,7 +63,7 @@ Haz clic en una miniatura para abrirlo. Enter copia el resultado y cierra.
 | Tecla | Herramienta |
 | --- | --- |
 | E | Borrador |
-| V | Mover o borrar una marca |
+| V | Mover, cambiar de tamaño o borrar una marca |
 | A | Flecha |
 | R | Cuadro |
 | O | Círculo |
@@ -74,7 +74,7 @@ Haz clic en una miniatura para abrirlo. Enter copia el resultado y cierra.
 | X | Pixelar |
 | C | Recortar |
 
-El punto de color abre la mini paleta: color, cualquier otro color y tamaño. ⌘+ y ⌘- hacen zoom, y también se puede pellizcar el trackpad. ⌘C copia sin cerrar, ⌘S guarda una copia y el botón de guardar deja reemplazar el original o guardar como. El botón de texto copia todo el texto y deja seleccionarlo sobre la imagen. ⌘Z deshace y ⇧⌘Z rehace. Mayúsculas alinea las flechas y hace cuadros y círculos perfectos. Supr borra la marca seleccionada. Esc cierra el editor y, si dibujaste algo, pregunta antes de perderlo.
+Lo que dibujas queda seleccionado: arrástralo para moverlo o usa sus esquinas para cambiarle el tamaño. Doble clic en un texto lo vuelve a editar. Censurar funciona con recuadro o con pincel, y pincel, borrador y resaltador muestran su tamaño a la vista. El punto de color abre la mini paleta: color, cualquier otro color y tamaño. ⌘+ y ⌘- hacen zoom, y también se puede pellizcar el trackpad. ⌘C copia sin cerrar, ⌘S guarda una copia y el botón de guardar deja reemplazar el original o guardar como. El botón de texto copia todo el texto y deja seleccionarlo sobre la imagen. ⌘Z deshace y ⇧⌘Z rehace. Mayúsculas alinea las flechas y hace cuadros y círculos perfectos. Supr borra la marca seleccionada. Esc cierra el editor y, si dibujaste algo, pregunta antes de perderlo.
 
 ## Video
 

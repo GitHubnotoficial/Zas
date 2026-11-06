@@ -119,6 +119,7 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
     private static let sizes: [AnnotationTool: (CGFloat, CGFloat, CGFloat)] = [
         .arrow: (2, 24, 5), .rectangle: (1, 24, 4), .ellipse: (1, 24, 4), .pencil: (1, 40, 5),
         .highlight: (6, 60, 22), .text: (1, 24, 5), .counter: (1, 24, 5), .eraser: (6, 90, 28),
+        .pixelate: (8, 90, 30),
     ]
 
     private let image: NSImage
@@ -137,6 +138,7 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
     private var saveButton: GlassButton?
     private var textButton: GlassButton?
     private var zoomLabel: NSTextField?
+    private var subBar: GlassView?
     private var liveText: LiveTextPane?
 
     private var penColor: NSColor = .systemRed
@@ -234,10 +236,10 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
         refreshHistoryButtons()
     }
 
-    /// Barra de vidrio flotante. V (mover) sigue en el teclado, sin ocupar sitio.
+    /// Barra de vidrio flotante.
     private func buildToolbar(in content: NSView) {
         let tools: [AnnotationTool] = [
-            .arrow, .rectangle, .ellipse, .pencil, .highlight, .text, .counter, .pixelate, .eraser, .crop,
+            .select, .arrow, .rectangle, .ellipse, .pencil, .highlight, .text, .counter, .pixelate, .eraser, .crop,
         ]
         let padding: CGFloat = 6
         let barHeight = Design.actionSize + padding * 2
@@ -358,6 +360,89 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
         for (candidate, button) in toolButtons {
             button.isActive = candidate == tool
         }
+        buildSubBar()
+    }
+
+    /// Las herramientas de pincel muestran su tamaño a la vista, sin abrir nada.
+    private func buildSubBar() {
+        subBar?.removeFromSuperview()
+        subBar = nil
+        let tool = canvas.tool
+        guard [.pencil, .highlight, .eraser, .pixelate].contains(tool),
+              let size = Self.sizes[tool], let content = window.contentView
+        else { return }
+
+        let bar = GlassView(frame: .zero, radius: 12)
+        var x: CGFloat = 12
+        if tool == .pixelate {
+            let mode = NSSegmentedControl(
+                labels: ["Recuadro", "Pincel"],
+                trackingMode: .selectOne,
+                target: self,
+                action: #selector(pixelModeChanged(_:))
+            )
+            mode.selectedSegment = canvas.pixelBrush ? 1 : 0
+            mode.controlSize = .small
+            mode.sizeToFit()
+            mode.frame.origin = CGPoint(x: x, y: 9)
+            bar.addSubview(mode)
+            x += mode.frame.width + 12
+        }
+
+        let sizeEnabled = tool != .pixelate || canvas.pixelBrush
+        let label = NSTextField(labelWithString: "Tamaño")
+        label.font = .systemFont(ofSize: 12, weight: .medium)
+        label.textColor = sizeEnabled ? .labelColor : .tertiaryLabelColor
+        label.sizeToFit()
+        label.frame.origin = CGPoint(x: x, y: 11)
+        bar.addSubview(label)
+        x += label.frame.width + 8
+
+        let slider = NSSlider(value: Double(canvas.lineWidth), minValue: Double(size.0), maxValue: Double(size.1), target: self, action: #selector(sizeChanged(_:)))
+        slider.isEnabled = sizeEnabled
+        slider.frame = CGRect(x: x, y: 8, width: 120, height: 22)
+        bar.addSubview(slider)
+        x += 128
+
+        let value = NSTextField(labelWithString: "\(Int(canvas.lineWidth))")
+        value.font = .monospacedDigitSystemFont(ofSize: 12, weight: .medium)
+        value.alignment = .right
+        value.frame = CGRect(x: x, y: 11, width: 24, height: 16)
+        value.tag = 77
+        bar.addSubview(value)
+        x += 34
+
+        if tool == .pixelate {
+            let strength = NSTextField(labelWithString: "Intensidad")
+            strength.font = .systemFont(ofSize: 12, weight: .medium)
+            strength.sizeToFit()
+            strength.frame.origin = CGPoint(x: x, y: 11)
+            bar.addSubview(strength)
+            x += strength.frame.width + 8
+            let blocks = NSSlider(value: Double(canvas.blockSize), minValue: 6, maxValue: 40, target: self, action: #selector(blockChanged(_:)))
+            blocks.frame = CGRect(x: x, y: 8, width: 100, height: 22)
+            bar.addSubview(blocks)
+            x += 112
+        }
+
+        bar.frame = CGRect(
+            x: ((content.bounds.width - x) / 2).rounded(),
+            y: content.bounds.height - 62 - 44,
+            width: x,
+            height: 38
+        )
+        bar.autoresizingMask = [.minXMargin, .maxXMargin, .minYMargin]
+        content.addSubview(bar)
+        subBar = bar
+    }
+
+    @objc private func pixelModeChanged(_ sender: NSSegmentedControl) {
+        canvas.pixelBrush = sender.selectedSegment == 1
+        buildSubBar()
+    }
+
+    @objc private func blockChanged(_ sender: NSSlider) {
+        canvas.blockSize = CGFloat(sender.doubleValue.rounded())
     }
 
     private func setColor(_ color: NSColor) {
@@ -393,7 +478,7 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
     /// Cada herramienta muestra solo lo que le sirve.
     private func buildPalette() -> NSView {
         let tool = canvas.tool
-        let showsColor = tool != .eraser && tool != .pixelate && tool != .crop && tool != .select
+        let showsColor = tool != .eraser && tool != .pixelate && tool != .crop
         let colors = tool == .highlight ? Self.markers : Self.palette
         let size = Self.sizes[tool]
 
@@ -719,6 +804,20 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
 
     func testTextMode() {
         toggleTextMode()
+    }
+
+    /// Prueba real de Live Text: detecta texto en una imagen y dice si lo encontró.
+    func testLiveTextFindsText() async -> Bool {
+        guard ImageAnalyzer.isSupported, let data = canvas.exportPNG(), let snapshot = NSImage(data: data) else {
+            return false
+        }
+        let analyzer = ImageAnalyzer()
+        guard let analysis = try? await analyzer.analyze(
+            snapshot,
+            orientation: .up,
+            configuration: ImageAnalyzer.Configuration([.text])
+        ) else { return false }
+        return analysis.hasResults(for: .text)
     }
     #endif
 }

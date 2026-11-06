@@ -61,6 +61,15 @@ struct Annotation {
     var points: [CGPoint]
     var text: String = ""
     var number: Int = 0
+    /// Censurar con pincel en vez de con un recuadro.
+    var pixelBrush = false
+    /// Tamaño de los bloques al censurar: más grande, más ilegible.
+    var blockSize: CGFloat = 14
+
+    /// Se dibuja siguiendo el cursor, no entre dos puntos.
+    var isFreehand: Bool {
+        tool == .pencil || tool == .highlight || tool == .eraser || (tool == .pixelate && pixelBrush)
+    }
 
     var rect: CGRect {
         guard let first = points.first, let last = points.last else { return .zero }
@@ -100,7 +109,7 @@ struct Annotation {
                 width: counterRadius * 2,
                 height: counterRadius * 2
             )
-        case .pencil, .highlight, .eraser:
+        case .pencil, .highlight, .eraser, .pixelate where isFreehand:
             let xs = points.map(\.x)
             let ys = points.map(\.y)
             guard let minX = xs.min(), let maxX = xs.max(), let minY = ys.min(), let maxY = ys.max() else {
@@ -126,7 +135,7 @@ struct Annotation {
             return inner.isEmpty || !inner.contains(point)
         case .eraser:
             return false
-        case .pencil, .highlight:
+        case .pencil, .highlight, .pixelate where isFreehand:
             guard points.count > 1 else { return false }
             for index in 1..<points.count
             where Annotation.distance(from: point, toSegment: points[index - 1], points[index]) <= slack + lineWidth {
@@ -145,6 +154,20 @@ struct Annotation {
         guard lengthSquared > 0 else { return hypot(point.x - a.x, point.y - a.y) }
         let t = max(0, min(1, ((point.x - a.x) * dx + (point.y - a.y) * dy) / lengthSquared))
         return hypot(point.x - (a.x + t * dx), point.y - (a.y + t * dy))
+    }
+
+    /// Cambia el tamaño desde un punto fijo. Texto y números crecen sin deformarse.
+    mutating func scale(from anchor: CGPoint, x: CGFloat, y: CGFloat) {
+        if tool == .text || tool == .counter {
+            let factor = max(abs(x), abs(y), 0.2)
+            let start = points.first ?? .zero
+            points = [CGPoint(x: anchor.x + (start.x - anchor.x) * factor, y: anchor.y + (start.y - anchor.y) * factor)]
+            lineWidth = max(lineWidth * factor, 0.5)
+            return
+        }
+        points = points.map {
+            CGPoint(x: anchor.x + ($0.x - anchor.x) * x, y: anchor.y + ($0.y - anchor.y) * y)
+        }
     }
 
     mutating func translate(dx: CGFloat, dy: CGFloat) {
@@ -208,9 +231,17 @@ enum AnnotationRenderer {
         case .counter:
             drawCounter(annotation)
         case .pixelate:
-            guard let pixelated else { return }
+            guard let pixelated, let context = NSGraphicsContext.current?.cgContext else { return }
             NSGraphicsContext.saveGraphicsState()
-            NSBezierPath(rect: annotation.rect).addClip()
+            if annotation.pixelBrush {
+                // El pincel recorta lo pixelado con la forma del trazo.
+                let path = CGMutablePath()
+                path.addLines(between: annotation.points)
+                context.addPath(path.copy(strokingWithWidth: annotation.lineWidth, lineCap: .round, lineJoin: .round, miterLimit: 10))
+                context.clip()
+            } else {
+                NSBezierPath(rect: annotation.rect).addClip()
+            }
             pixelated.draw(in: CGRect(origin: .zero, size: imageSize))
             NSGraphicsContext.restoreGraphicsState()
         }
@@ -303,12 +334,12 @@ enum AnnotationRenderer {
     }
 
     /// Versión de toda la imagen en bloques, de la que se recorta cada zona pixelada.
-    static func makePixelated(_ image: NSImage) -> NSImage? {
+    static func makePixelated(_ image: NSImage, block: CGFloat = 14) -> NSImage? {
         guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
             return nil
         }
         let source = CIImage(cgImage: cgImage)
-        let blockSize = max(CGFloat(cgImage.width) / max(image.size.width, 1), 1) * 12
+        let blockSize = max(CGFloat(cgImage.width) / max(image.size.width, 1), 1) * block
         guard let filter = CIFilter(
             name: "CIPixellate",
             parameters: [kCIInputImageKey: source, kCIInputScaleKey: blockSize]
