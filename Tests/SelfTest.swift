@@ -666,10 +666,10 @@ enum SelfTest {
         try? FileManager.default.copyItem(at: sheet, to: output.appendingPathComponent("resumen-video.png"))
 
         // GIF y recorte, sobre el video recién grabado.
-        let gif = Capture.temporaryFileURL().deletingPathExtension().appendingPathExtension("gif")
+        let gif = FileManager.default.temporaryDirectory.appendingPathComponent("(UUID().uuidString).gif")
         let gifOK = await GifExporter.export(video: url, to: gif)
         check(gifOK && NSImage(contentsOf: gif) != nil, "se puede crear un GIF")
-        let trimmed = Capture.temporaryFileURL().deletingPathExtension().appendingPathExtension("mp4")
+        let trimmed = FileManager.default.temporaryDirectory.appendingPathComponent("(UUID().uuidString).mp4")
         let trimOK = await VideoTrimmer.export(video: url, from: .zero, to: CMTime(seconds: 1, preferredTimescale: 600), output: trimmed)
         let trimmedLength = (try? await AVURLAsset(url: trimmed).load(.duration))?.seconds ?? 0
         check(trimOK && trimmedLength < 1.6, "se puede recortar un video (\(String(format: "%.1f", trimmedLength)) s)")

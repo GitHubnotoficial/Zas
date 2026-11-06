@@ -51,8 +51,11 @@ enum VideoTrimmer {
         session.outputURL = output
         session.outputFileType = .mp4
         session.timeRange = CMTimeRange(start: start, end: end)
-        await session.export()
-        return session.status == .completed
+        return await withCheckedContinuation { continuation in
+            session.exportAsynchronously {
+                continuation.resume(returning: session.status == .completed)
+            }
+        }
     }
 
     static func outputName(for video: URL) -> String {
