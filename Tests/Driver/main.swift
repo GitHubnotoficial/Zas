@@ -142,6 +142,60 @@ func zasWindowCount(minimumWidth: CGFloat) -> Int {
     }.count
 }
 
+/// Marcos de las tarjetas. Flotan, y miden como mucho 224 × 168.
+func cardFrames() -> [CGRect] {
+    let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]]
+    return (list ?? []).compactMap { info -> CGRect? in
+        guard (info[kCGWindowOwnerName as String] as? String) == "Zas",
+              (info[kCGWindowLayer as String] as? Int) == NSWindow.Level.floating.rawValue,
+              let bounds = info[kCGWindowBounds as String] as? NSDictionary,
+              let rect = CGRect(dictionaryRepresentation: bounds),
+              rect.width <= 224, rect.height >= 84, rect.height <= 168
+        else { return nil }
+        return rect
+    }
+}
+
+/// La más reciente es la de más abajo en la pantalla.
+func newestCard() -> CGRect? {
+    cardFrames().max { $0.maxY < $1.maxY }
+}
+
+/// Un sitio de la tarjeta donde no hay botones: las píldoras y los círculos dejan libre el borde del centro.
+func freeSpot(in card: CGRect) -> CGPoint { CGPoint(x: card.minX + 16, y: card.midY) }
+func copyButton(in card: CGRect) -> CGPoint { CGPoint(x: card.midX, y: card.midY - 15) }
+func saveButton(in card: CGRect) -> CGPoint { CGPoint(x: card.midX, y: card.midY + 15) }
+func closeButton(in card: CGRect) -> CGPoint { CGPoint(x: card.minX + 18, y: card.minY + 18) }
+func pinButton(in card: CGRect) -> CGPoint { CGPoint(x: card.maxX - 18, y: card.minY + 18) }
+func annotateButton(in card: CGRect) -> CGPoint { CGPoint(x: card.minX + 18, y: card.maxY - 18) }
+func pathButton(in card: CGRect) -> CGPoint { CGPoint(x: card.maxX - 18, y: card.maxY - 18) }
+
+/// Una captura fijada de la región de 300 × 250.
+func pinnedFrame() -> CGRect? {
+    let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]]
+    for info in list ?? [] where (info[kCGWindowOwnerName as String] as? String) == "Zas" {
+        guard let bounds = info[kCGWindowBounds as String] as? NSDictionary,
+              let rect = CGRect(dictionaryRepresentation: bounds),
+              abs(rect.width - 300) < 2, abs(rect.height - 250) < 2
+        else { continue }
+        return rect
+    }
+    return nil
+}
+
+/// El panel de guardar del sistema. Según la versión de macOS lo dibuja la app o un servicio aparte.
+func savePanelVisible() -> Bool {
+    let owners: Set<String> = ["Zas", "Open and Save Panel Service"]
+    let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]]
+    return (list ?? []).contains { info in
+        guard let owner = info[kCGWindowOwnerName as String] as? String, owners.contains(owner),
+              let bounds = info[kCGWindowBounds as String] as? NSDictionary,
+              let rect = CGRect(dictionaryRepresentation: bounds)
+        else { return false }
+        return rect.width >= 400 && rect.height >= 120 && rect.height < 900
+    }
+}
+
 /// El icono de Zas en la barra de menú.
 func menuBarItem() -> CGRect? {
     let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]]
@@ -185,9 +239,31 @@ let screen = NSScreen.screens[0]
 let scale = Int(screen.backingScaleFactor)
 print("pantalla \(screen.frame.size) escala \(scale)")
 
+/// Mueve la primera ventana de una app con el permiso de Accesibilidad.
+func moveWindow(of app: NSRunningApplication?, to point: CGPoint) {
+    guard let app else { return }
+    let element = AXUIElementCreateApplication(app.processIdentifier)
+    var value: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(element, kAXWindowsAttribute as CFString, &value) == .success,
+          let window = (value as? [AXUIElement])?.first
+    else { return }
+    var position = point
+    if let axPosition = AXValueCreate(.cgPoint, &position) {
+        AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, axPosition)
+    }
+}
+
 // Una app ajena con ventana, para probar la captura de ventana.
 NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/Calculator.app"))
 wait(3)
+// Las tarjetas viven abajo a la izquierda: la ventana ajena no debe quedar debajo.
+if let frame = windowFrame(owner: "Calculator"), frame.minX < screen.visibleFrame.minX + 262 {
+    moveWindow(
+        of: NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.calculator").first,
+        to: CGPoint(x: screen.frame.maxX - frame.width - 80, y: 120)
+    )
+    wait(0.5)
+}
 let calculator = windowFrame(owner: "Calculator")
 check(calculator != nil, "hay una ventana ajena en pantalla")
 
@@ -236,13 +312,40 @@ if let item = menuBarItem() {
     wait(0.4)
 }
 
-// 2. Miniatura: pasar el cursor y abrir el editor.
+// 2. Tarjeta: abajo a la izquierda. Pasar el cursor, usar sus botones y abrir el editor.
 let visible = screen.visibleFrame
-let thumbnailPoint = CGPoint(x: visible.maxX - 16 - 112, y: screen.frame.height - visible.minY - 16 - 40)
+let cardBottom = screen.frame.height - visible.minY - 18
+let foundCard = newestCard()
+check(foundCard != nil, "la tarjeta aparece tras capturar")
+let firstCard = foundCard ?? CGRect(x: visible.minX + 18, y: cardBottom - 168, width: 202, height: 168)
+check(abs(firstCard.minX - visible.minX - 18) < 2 && abs(firstCard.maxY - cardBottom) < 2, "la tarjeta queda abajo a la izquierda (\(firstCard))")
+let thumbnailPoint = freeSpot(in: firstCard)
 moveMouse(to: thumbnailPoint)
 wait(0.5)
 shot("e2e-03-miniatura-hover")
-click(at: CGPoint(x: thumbnailPoint.x - 70, y: thumbnailPoint.y - 30))
+
+NSPasteboard.general.clearContents()
+click(at: copyButton(in: firstCard))
+wait(0.5)
+check(NSPasteboard.general.data(forType: .png)?.count ?? 0 > 1000, "el botón Copiar deja la imagen en el portapapeles")
+shot("e2e-03a-tarjeta-copiada")
+
+click(at: pathButton(in: firstCard))
+wait(0.5)
+check(region != nil && NSPasteboard.general.string(forType: .string) == region?.path, "el botón de terminal copia la ruta")
+
+click(at: saveButton(in: firstCard))
+wait(1.2)
+shot("e2e-03b-guardar-como")
+check(savePanelVisible(), "el botón Guardar abre el panel de guardar")
+press(kVK_Escape)
+wait(0.8)
+check(!savePanelVisible(), "Esc cierra el panel de guardar")
+check(newestCard() != nil, "tras cancelar el guardado la tarjeta sigue ahí")
+
+moveMouse(to: thumbnailPoint)
+wait(0.3)
+click(at: thumbnailPoint)
 wait(1.2)
 check(zasWindowCount(minimumWidth: 700) >= 1, "clic en la miniatura abre el editor")
 shot("e2e-04-editor")
@@ -320,6 +423,61 @@ if let size = pixelSize(repeated) {
     check(false, "⇧⌘9 repite la última área")
 }
 wait(0.8)
+
+// Cada ⇧⌘9 deja una tarjeta nueva abajo del todo para probar un botón más.
+func withFreshCard(_ name: String, _ action: (CGRect) -> Void) {
+    moveMouse(to: CGPoint(x: screen.frame.midX, y: 200))
+    _ = newFile("png", timeout: 6) {
+        hotKey(kVK_ANSI_9)
+    }
+    wait(1.2)
+    guard let card = newestCard() else {
+        check(false, "\(name): hay una tarjeta")
+        return
+    }
+    moveMouse(to: freeSpot(in: card))
+    wait(0.4)
+    action(card)
+}
+
+withFreshCard("Fijar") { card in
+    let before = cardFrames().count
+    click(at: pinButton(in: card))
+    wait(0.8)
+    check(cardFrames().count < before, "Fijar quita la tarjeta")
+    guard let pinned = pinnedFrame() else {
+        check(false, "Fijar deja la captura en pantalla")
+        return
+    }
+    check(true, "Fijar deja la captura en pantalla")
+    moveMouse(to: CGPoint(x: pinned.midX, y: pinned.midY))
+    wait(0.4)
+    shot("e2e-07b-fijada")
+    click(at: CGPoint(x: pinned.minX + 19, y: pinned.minY + 19))
+    wait(0.5)
+    check(pinnedFrame() == nil, "la captura fijada se cierra con su ×")
+}
+
+withFreshCard("Anotar") { card in
+    click(at: annotateButton(in: card))
+    wait(1.2)
+    check(zasWindowCount(minimumWidth: 700) >= 1, "el botón Anotar abre el editor")
+    shot("e2e-07c-anotar")
+    if let editor = windowFrame(owner: "Zas") {
+        click(at: CGPoint(x: editor.midX, y: editor.maxY - 8))
+        wait(0.2)
+    }
+    press(kVK_Escape)
+    wait(0.8)
+    check(zasWindowCount(minimumWidth: 700) == 0, "sin marcas, Esc cierra el editor")
+}
+
+withFreshCard("Cerrar") { card in
+    let before = cardFrames().count
+    click(at: closeButton(in: card))
+    wait(0.8)
+    check(cardFrames().count < before, "el botón Cerrar quita la tarjeta")
+}
 
 // Congelar: se esconde la Calculadora después de congelar, y debe seguir saliendo en la imagen.
 if let calculator {
@@ -423,14 +581,18 @@ check(!recognized.isEmpty, "⇧⌘7 copia texto de la pantalla")
 
 // Selección de texto sobre la imagen: la tarjeta de texto abre el editor con Live Text.
 if !recognized.isEmpty {
-    moveMouse(to: thumbnailPoint)
+    // La de texto es otra tarjeta, más baja: se busca su sitio libre de verdad.
+    let textPoint = freeSpot(in: newestCard() ?? firstCard)
+    moveMouse(to: textPoint)
     wait(0.4)
-    click(at: CGPoint(x: thumbnailPoint.x - 70, y: thumbnailPoint.y - 30))
+    click(at: textPoint)
     wait(3)
     shot("e2e-09c-texto-editor")
     if let editor = windowFrame(owner: "Zas") {
         let middle = editor.midY + 26
-        drag(from: CGPoint(x: editor.minX + 60, y: middle), to: CGPoint(x: editor.maxX - 60, y: middle))
+        // Las tarjetas que queden flotan sobre el editor: el arrastre empieza a su derecha.
+        let start = max(editor.minX + 60, visible.minX + 18 + 224 + 20)
+        drag(from: CGPoint(x: start, y: middle), to: CGPoint(x: editor.maxX - 60, y: middle))
         wait(0.5)
         shot("e2e-09d-texto-seleccionado")
         NSPasteboard.general.clearContents()

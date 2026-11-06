@@ -111,6 +111,7 @@ final class Settings: ObservableObject {
     private enum Key {
         static let playSound = "playSound"
         static let thumbnailSeconds = "thumbnailSeconds"
+        static let thumbnailsOnLeft = "thumbnailsOnLeft"
         static let recordMicrophone = "recordMicrophone"
         static let shortcuts = "shortcuts"
         static let saveFolder = "saveFolder"
@@ -136,6 +137,11 @@ final class Settings: ObservableObject {
 
     @Published var thumbnailSeconds: Double {
         didSet { defaults.set(thumbnailSeconds, forKey: Key.thumbnailSeconds) }
+    }
+
+    /// Lado de la pantalla donde se apilan las tarjetas.
+    @Published var thumbnailsOnLeft: Bool {
+        didSet { defaults.set(thumbnailsOnLeft, forKey: Key.thumbnailsOnLeft) }
     }
 
     @Published var recordMicrophone: Bool {
@@ -198,6 +204,9 @@ final class Settings: ObservableObject {
         }
     }
 
+    /// Sin guardar a propósito: se apaga al salir, y Zas siempre abre con los iconos visibles.
+    @Published var hidesDesktopIcons = false
+
     /// Atajos que macOS no aceptó, porque otra app o acción ya los usa.
     @Published var conflicts: Set<HotKeyAction> = []
 
@@ -219,10 +228,11 @@ final class Settings: ObservableObject {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        defaults.register(defaults: [Key.playSound: true, Key.thumbnailSeconds: 6.0, Key.saveCaptures: true, Key.videoCopiesSummary: true, Key.videoEvery: 2.0, Key.videoFPS: 30, Key.videoCursor: true])
+        defaults.register(defaults: [Key.playSound: true, Key.thumbnailSeconds: 6.0, Key.thumbnailsOnLeft: true, Key.saveCaptures: true, Key.videoCopiesSummary: true, Key.videoEvery: 2.0, Key.videoFPS: 30, Key.videoCursor: true])
 
         playSound = defaults.bool(forKey: Key.playSound)
         thumbnailSeconds = defaults.double(forKey: Key.thumbnailSeconds)
+        thumbnailsOnLeft = defaults.bool(forKey: Key.thumbnailsOnLeft)
         recordMicrophone = defaults.bool(forKey: Key.recordMicrophone)
         saveCaptures = defaults.bool(forKey: Key.saveCaptures)
         videoCopiesSummary = defaults.bool(forKey: Key.videoCopiesSummary)

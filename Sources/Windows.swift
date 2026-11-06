@@ -161,6 +161,8 @@ private struct SettingsView: View {
                 set: { setLaunchAtLogin($0) }
             ))
             Toggle("Sonido al capturar", isOn: $settings.playSound)
+            Toggle("Mostrar miniaturas a la izquierda", isOn: $settings.thumbnailsOnLeft)
+            Toggle("Ocultar iconos del escritorio", isOn: $settings.hidesDesktopIcons)
             Picker("Mostrar miniatura durante", selection: $settings.thumbnailSeconds) {
                 Text("3 segundos").tag(3.0)
                 Text("6 segundos").tag(6.0)
@@ -352,121 +354,6 @@ private struct WelcomeView: View {
     }
 }
 
-/// Todas las capturas guardadas, con filtro y borrado a la Papelera.
-private struct HistoryView: View {
-    enum Filter: String, CaseIterable {
-        case all = "Todo"
-        case images = "Capturas"
-        case videos = "Videos"
-    }
-
-    let onOpen: (URL) -> Void
-    @State private var files: [URL] = []
-    @State private var filter = Filter.all
-
-    private var visible: [URL] {
-        files.filter {
-            switch filter {
-            case .all: return true
-            case .images: return $0.pathExtension == "png"
-            case .videos: return $0.pathExtension == "mp4"
-            }
-        }
-    }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            Picker("Mostrar", selection: $filter) {
-                ForEach(Filter.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .frame(width: 260)
-            .padding(.vertical, 12)
-
-            if visible.isEmpty {
-                Text("Aún no hay capturas aquí.")
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                ScrollView {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 160), spacing: 12)], spacing: 12) {
-                        ForEach(visible, id: \.self) { file in
-                            HistoryTile(file: file, onOpen: onOpen, onChange: reload)
-                        }
-                    }
-                    .padding(16)
-                }
-            }
-        }
-        .frame(minWidth: 520, idealWidth: 720, minHeight: 360, idealHeight: 520)
-        .onAppear(perform: reload)
-    }
-
-    private func reload() {
-        files = Recents.files(limit: 500)
-    }
-}
-
-private struct HistoryTile: View {
-    let file: URL
-    let onOpen: (URL) -> Void
-    let onChange: () -> Void
-    @State private var preview: NSImage?
-
-    private static let formatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "es")
-        formatter.dateFormat = "d MMM, HH:mm"
-        return formatter
-    }()
-
-    private var dateText: String {
-        let date = (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
-        return date.map(Self.formatter.string) ?? Recents.title(for: file)
-    }
-
-    var body: some View {
-        Button {
-            onOpen(file)
-        } label: {
-            VStack(spacing: 6) {
-                Group {
-                    if let preview {
-                        Image(nsImage: preview).resizable().scaledToFill()
-                    } else {
-                        Image(systemName: file.pathExtension == "mp4" ? "film" : "photo")
-                            .font(.title)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .frame(width: 160, height: 100)
-                .background(.quaternary, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                Text(dateText)
-                    .font(.callout)
-                    .foregroundStyle(.primary)
-            }
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("\(file.pathExtension == "mp4" ? "Video" : "Captura") del \(dateText)")
-        .task {
-            // Se decodifica aparte: quinientas capturas no deben trabar la ventana.
-            let url = file
-            preview = await Recents.previewInBackground(of: url).image
-        }
-        .contextMenu {
-            Button("Abrir") { onOpen(file) }
-            Button("Mostrar en Finder") { NSWorkspace.shared.activateFileViewerSelecting([file]) }
-            Button("Mover a la Papelera") {
-                NSWorkspace.shared.recycle([file]) { _, _ in
-                    Task { @MainActor in onChange() }
-                }
-            }
-        }
-    }
-}
-
 /// Crea y recuerda las dos ventanas de la app.
 @MainActor
 final class WindowCoordinator: NSObject, NSWindowDelegate {
@@ -501,20 +388,24 @@ final class WindowCoordinator: NSObject, NSWindowDelegate {
         settingsWindow?.makeKeyAndOrderFront(nil)
     }
 
-    private var historyWindow: NSWindow?
+    private var history: HistoryController?
 
     func showHistory(onOpen: @escaping (URL) -> Void) {
-        let host = NSHostingController(rootView: HistoryView(onOpen: onOpen))
-        historyWindow?.close()
-        let window = NSWindow(contentViewController: host)
-        window.title = "Historial"
-        window.styleMask = [.titled, .closable, .resizable]
-        window.isReleasedWhenClosed = false
-        window.setContentSize(host.view.fittingSize)
-        window.center()
-        historyWindow = window
-        NSApp.activate(ignoringOtherApps: true)
-        window.makeKeyAndOrderFront(nil)
+        if let history {
+            history.reload()
+            return
+        }
+        let controller = HistoryController(onOpen: onOpen)
+        controller.onClose = { [weak self] in
+            self?.history = nil
+        }
+        history = controller
+        controller.show()
+    }
+
+    /// Una captura no debe llevarse el historial en la imagen.
+    func closeHistory() {
+        history?.close(animated: false)
     }
 
     func showWelcome(hasPermission: Bool, openSettings: @escaping () -> Void, relaunch: @escaping () -> Void) {
@@ -558,8 +449,9 @@ final class WindowCoordinator: NSObject, NSWindowDelegate {
         settingsWindow = nil
         settingsTabs = nil
         welcomeWindow = nil
-        historyWindow?.close()
-        historyWindow = nil
+        closeHistory()
     }
+
+    var testHistory: HistoryController? { history }
     #endif
 }

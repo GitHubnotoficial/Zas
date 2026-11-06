@@ -193,3 +193,142 @@ extension NSRect {
         )
     }
 }
+
+extension Design {
+    /// Barras superior e inferior del editor.
+    static let editorBar: CGFloat = 44
+    /// Botones sin marco dentro de esas barras.
+    static let toolSize: CGFloat = 28
+
+    /// Fondo liso y neutro detrás de la captura, en claro y en oscuro.
+    static var canvasBackground: NSColor {
+        NSColor(name: nil) { appearance in
+            let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            return NSColor(white: isDark ? 0.11 : 0.9, alpha: 1)
+        }
+    }
+}
+
+/// Píldora gris de una barra del editor: un punto de color, un grosor, un símbolo o un texto.
+/// Con `chevron` avisa de que abre algo. Con el mismo alto que ancho, es un botón redondo.
+final class PillControl: NSButton {
+    enum Content {
+        case dot(NSColor)
+        case stroke(CGFloat)
+        case symbol(String)
+        case text(String)
+    }
+
+    var content: Content {
+        didSet { needsDisplay = true }
+    }
+
+    override var isEnabled: Bool {
+        didSet { alphaValue = isEnabled ? 1 : 0.35 }
+    }
+
+    // El dibujo es propio: con origen abajo, como el resto de las vistas de Zas.
+    override var isFlipped: Bool { false }
+
+    private let showsChevron: Bool
+    private var hovering = false
+    private var hoverArea: NSTrackingArea?
+
+    init(content: Content, width: CGFloat, tooltip: String, chevron: Bool = true, target: AnyObject?, action: Selector?) {
+        self.content = content
+        showsChevron = chevron
+        super.init(frame: CGRect(x: 0, y: 0, width: width, height: Design.toolSize))
+        title = ""
+        isBordered = false
+        toolTip = tooltip
+        self.target = target
+        self.action = action
+        setAccessibilityLabel(tooltip)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) no se usa")
+    }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverArea {
+            removeTrackingArea(hoverArea)
+        }
+        let area = NSTrackingArea(rect: .zero, options: [.activeAlways, .inVisibleRect, .mouseEnteredAndExited], owner: self, userInfo: nil)
+        addTrackingArea(area)
+        hoverArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        hovering = true
+        needsDisplay = true
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        hovering = false
+        needsDisplay = true
+    }
+
+    override func drawFocusRingMask() {
+        NSBezierPath(roundedRect: bounds, xRadius: bounds.height / 2, yRadius: bounds.height / 2).fill()
+    }
+
+    override var focusRingMaskBounds: NSRect { bounds }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let fill: NSColor = isHighlighted || (hovering && isEnabled) ? .tertiaryLabelColor : .quaternaryLabelColor
+        fill.setFill()
+        NSBezierPath(roundedRect: bounds, xRadius: bounds.height / 2, yRadius: bounds.height / 2).fill()
+
+        let room = showsChevron ? bounds.width - 12 : bounds.width
+        let center = CGPoint(x: room / 2 + (showsChevron ? 2 : 0), y: bounds.midY)
+        switch content {
+        case .dot(let color):
+            let dot = NSBezierPath(ovalIn: CGRect(x: center.x - 7, y: center.y - 7, width: 14, height: 14))
+            color.setFill()
+            dot.fill()
+            // Contorno visible: si no, el blanco desaparece sobre la barra clara.
+            NSColor.tertiaryLabelColor.setStroke()
+            dot.lineWidth = 1
+            dot.stroke()
+        case .stroke(let value):
+            let line = NSBezierPath()
+            line.lineWidth = min(max(value / 2.5, 1.5), 8)
+            line.lineCapStyle = .round
+            line.move(to: CGPoint(x: center.x - 8, y: center.y))
+            line.line(to: CGPoint(x: center.x + 8, y: center.y))
+            NSColor.labelColor.setStroke()
+            line.stroke()
+        case .symbol(let name):
+            let configuration = NSImage.SymbolConfiguration(pointSize: 12, weight: .medium)
+                .applying(NSImage.SymbolConfiguration(paletteColors: [.labelColor]))
+            if let symbol = NSImage(systemSymbolName: name, accessibilityDescription: nil)?.withSymbolConfiguration(configuration) {
+                let size = symbol.size
+                symbol.draw(in: CGRect(x: center.x - size.width / 2, y: center.y - size.height / 2, width: size.width, height: size.height))
+            }
+        case .text(let text):
+            let attributes: [NSAttributedString.Key: Any] = [
+                .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium),
+                .foregroundColor: NSColor.labelColor,
+            ]
+            let size = (text as NSString).size(withAttributes: attributes)
+            (text as NSString).draw(at: CGPoint(x: center.x - size.width / 2, y: center.y - size.height / 2), withAttributes: attributes)
+        }
+
+        if showsChevron {
+            let chevron = NSBezierPath()
+            let x = bounds.maxX - 11
+            chevron.move(to: CGPoint(x: x - 3, y: bounds.midY + 1.5))
+            chevron.line(to: CGPoint(x: x, y: bounds.midY - 1.5))
+            chevron.line(to: CGPoint(x: x + 3, y: bounds.midY + 1.5))
+            chevron.lineWidth = 1.4
+            chevron.lineCapStyle = .round
+            chevron.lineJoinStyle = .round
+            NSColor.secondaryLabelColor.setStroke()
+            chevron.stroke()
+        }
+    }
+}

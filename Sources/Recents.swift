@@ -14,7 +14,7 @@ enum Recents {
                 includingPropertiesForKeys: [.contentModificationDateKey],
                 options: [.skipsHiddenFiles]
             )) ?? []
-            for url in names where ["png", "mp4"].contains(url.pathExtension.lowercased()) {
+            for url in names where ["png", "mp4", "gif"].contains(url.pathExtension.lowercased()) {
                 let date = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
                 found.append((url, date ?? .distantPast))
             }

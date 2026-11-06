@@ -1,5 +1,6 @@
 import AVFoundation
 import AppKit
+import CoreImage.CIFilterBuiltins
 
 /// Pruebas que corren en un Mac real: lógica, captura, video e imágenes de cada pantalla.
 /// Solo se compilan con -D ZAS_TEST; no forman parte de la app que se instala.
@@ -81,6 +82,8 @@ enum SelfTest {
         await polishTests()
         await systemTests()
         await recorderTest()
+        await historyTests()
+        await desktopCoverTests()
         await scenes()
     }
 
@@ -289,6 +292,107 @@ enum SelfTest {
         check(pixelated != nil && pixelated != plain, "pixelar cambia la imagen")
     }
 
+    // MARK: - Fondo no destructivo
+
+    /// El fondo es una receta: la imagen y las marcas no se enteran de que existe.
+    private static func backdropTests(_ image: NSImage) {
+        func isRed(_ color: NSColor?) -> Bool {
+            let rgb = color?.usingColorSpace(.sRGB)
+            return (rgb?.redComponent ?? 0) > 0.8 && (rgb?.greenComponent ?? 1) < 0.3
+        }
+        func isGreen(_ color: NSColor?) -> Bool {
+            let rgb = color?.usingColorSpace(.sRGB)
+            return (rgb?.greenComponent ?? 0) > 0.7 && (rgb?.redComponent ?? 1) < 0.4
+        }
+
+        let canvas = AnnotationCanvas(frame: CGRect(x: 0, y: 0, width: 600, height: 400), image: image)
+        let points = [CGPoint(x: 40, y: 50), CGPoint(x: 120, y: 90)]
+        canvas.add(Annotation(tool: .arrow, color: NSColor(srgbRed: 1, green: 0, blue: 0, alpha: 1), lineWidth: 6, points: points))
+        let withoutBackdrop = canvas.exportPNG()
+        let plainRep = withoutBackdrop.flatMap { NSBitmapImageRep(data: $0) }
+        // Mitad de la flecha: (80, 70) en puntos. Las filas van de arriba abajo.
+        check(isRed(plainRep?.colorAt(x: 160, y: 400 - 140)), "sin fondo, la marca está donde se dibujó")
+
+        var backdrop = Backdrop()
+        backdrop.kind = .solid
+        backdrop.color = [0, 1, 0]
+        backdrop.margin = 50
+        backdrop.shadow = 0
+        backdrop.corners = 0
+
+        canvas.setBackdrop(backdrop)
+        check(canvas.document.annotations[0].points == points, "el fondo no mueve las coordenadas de la marca")
+        let composed = canvas.exportPNG().flatMap { NSBitmapImageRep(data: $0) }
+        check(composed?.pixelsWide == 800 && composed?.pixelsHigh == 600, "el fondo añade su margen a la exportación (\(composed?.pixelsWide ?? 0)×\(composed?.pixelsHigh ?? 0))")
+        check(composed?.size == NSSize(width: 400, height: 300), "con fondo se conserva la densidad Retina")
+        check(isGreen(composed?.colorAt(x: 6, y: 6)), "el fondo aparece en la imagen exportada")
+        check(isRed(composed?.colorAt(x: 260, y: 600 - 240)), "la marca sale en su sitio sobre la captura con fondo")
+
+        // Cambiar el margen no desplaza nada, tampoco al convertir entre pantalla e imagen.
+        for margin in [CGFloat(0), 20, 120, 240] {
+            var wider = backdrop
+            wider.margin = margin
+            canvas.setBackdrop(wider, finished: false)
+            let onScreen = canvas.testViewPoint(fromImage: points[0])
+            let back = canvas.testImagePoint(fromView: onScreen)
+            check(canvas.document.annotations[0].points == points, "con margen \(Int(margin)) la marca conserva sus coordenadas")
+            check(hypot(back.x - points[0].x, back.y - points[0].y) < 0.001, "con margen \(Int(margin)) el cursor apunta al mismo sitio de la imagen")
+        }
+
+        // Un deslizador en movimiento es un solo paso de deshacer.
+        let steps = canvas.historyCount
+        var settled = backdrop
+        settled.margin = 120
+        canvas.setBackdrop(settled)
+        check(canvas.historyCount == steps + 1, "mover un deslizador ocupa un solo paso de deshacer")
+        canvas.undo(nil)
+        canvas.undo(nil)
+        check(canvas.document.backdrop == nil, "el fondo se puede deshacer")
+        canvas.redo(nil)
+        check(canvas.document.backdrop != nil, "el fondo se puede rehacer")
+
+        canvas.setBackdrop(nil)
+        check(canvas.exportPNG() == withoutBackdrop, "quitar el fondo devuelve la imagen original")
+        check(canvas.document.annotations[0].points == points, "quitar el fondo deja la marca igual")
+
+        // Guardar y abrir un proyecto.
+        canvas.setBackdrop(backdrop)
+        let reopened = canvas.projectData().flatMap { try? JSONDecoder().decode(ZasProject.self, from: $0) }
+        check(reopened?.document().backdrop == backdrop, "el fondo sobrevive a guardar y abrir un proyecto")
+        check(reopened?.document().annotations.first?.points == points, "las marcas siguen en su sitio al abrir un proyecto con fondo")
+        if let reopened, let base = reopened.baseImage() {
+            let second = AnnotationCanvas(frame: CGRect(x: 0, y: 0, width: 600, height: 400), image: base)
+            second.load(reopened.document())
+            let again = second.exportPNG().flatMap { NSBitmapImageRep(data: $0) }
+            check(again?.pixelsWide == 800 && isGreen(again?.colorAt(x: 6, y: 6)), "un proyecto abierto exporta con su fondo")
+            second.setBackdrop(nil)
+            check(second.document.annotations.count == 1, "en un proyecto abierto el fondo se sigue pudiendo quitar")
+        } else {
+            check(false, "se puede abrir un proyecto con fondo")
+        }
+
+        // Rotar integra las marcas, no el fondo: sigue siendo editable.
+        canvas.applyImage { ImageTools.rotated($0, clockwise: true) }
+        check(canvas.document.backdrop == backdrop, "rotar conserva el fondo aparte")
+        let rotated = canvas.exportPNG().flatMap { NSBitmapImageRep(data: $0) }
+        check(rotated?.pixelsWide == 600 && rotated?.pixelsHigh == 800, "el fondo se recompone alrededor de la imagen rotada")
+
+        // Autoequilibrar: añade espacio solo del lado que tiene menos.
+        var balanced = Backdrop()
+        balanced.margin = 10
+        balanced.inset = 2
+        balanced.autoBalance = true
+        let layout = balanced.layout(
+            content: CGRect(x: 0, y: 0, width: 100, height: 80),
+            edge: EdgeInfo(color: [1, 1, 1], left: 10, right: 30, top: 4, bottom: 4)
+        )
+        check(layout.card == CGRect(x: -22, y: -2, width: 124, height: 84), "autoequilibrar centra el contenido (\(layout.card))")
+        check(layout.outer == CGRect(x: -32, y: -12, width: 144, height: 104), "el margen rodea la tarjeta equilibrada")
+
+        let flat = ImageTools.edgeInfo(of: demoImage(scale: 1, width: 120, height: 80), crop: CGRect(x: 0, y: 0, width: 120, height: 80))
+        check(flat.color.count == 3, "se lee el color del borde de la captura")
+    }
+
     // MARK: - Defectos encontrados al usarla
 
     private static func polishTests() async {
@@ -334,6 +438,20 @@ enum SelfTest {
         jump.add(page(from: 1000))
         check(!jump.add(page(from: 3000)) && jump.lostTrack, "avisa cuando el contenido saltó demasiado")
 
+        // Controles de la captura con desplazamiento: nunca sobre lo que se está capturando.
+        let previewBig = stitcher.tailPreview(width: 20, maxHeight: 40)
+        check(previewBig?.width == 20 && previewBig?.height == 40, "la vista previa se queda con lo último y no pasa del tope")
+        check(stitcher.tailPreview(width: 20, maxHeight: 400)?.height == 110, "la vista previa crece con la imagen")
+        let desk = CGRect(x: 0, y: 0, width: 1440, height: 860)
+        let area = CGRect(x: 400, y: 300, width: 600, height: 400)
+        let scrollBar = ScrollHUDLayout.barFrame(selection: area, visible: desk)
+        check(scrollBar.midX == desk.midX && scrollBar.minY == desk.minY + ScrollHUDLayout.margin, "Cancelar y Listo van abajo y centrados")
+        let tallArea = CGRect(x: 300, y: 0, width: 500, height: 860)
+        check(!ScrollHUDLayout.barFrame(selection: tallArea, visible: desk).intersects(tallArea), "con una selección alta, los botones se apartan")
+        let scrollPreview = ScrollHUDLayout.previewFrame(height: 120, selection: area, visible: desk)
+        check(scrollPreview.maxX <= area.minX && scrollPreview.height == 120, "la vista previa va a la izquierda de la selección")
+        check(ScrollHUDLayout.previewFrame(height: 5000, selection: area, visible: desk).height == ScrollHUDLayout.previewMaxHeight, "la vista previa tiene un alto máximo")
+
         // Herramientas de imagen.
         let tall = demoImage(scale: 2, width: 300, height: 200)
         check(ImageTools.rotated(tall, clockwise: true)?.size == CGSize(width: 200, height: 300), "rotar intercambia ancho y alto")
@@ -369,6 +487,8 @@ enum SelfTest {
         check(restored?.document().annotations[0].text == "Hola", "un proyecto recupera el texto")
         check(restored?.document().annotations[1].filled == true, "un proyecto recupera las opciones")
         check(restored?.baseImage()?.size == tall.size, "un proyecto conserva el tamaño")
+
+        backdropTests(tall)
 
         // Física de la interfaz.
         check(abs(Spring.value(at: 2, response: 0.42, damping: 0.86) - 1) < 0.001, "el resorte se asienta en su destino")
@@ -434,7 +554,11 @@ enum SelfTest {
         thumbs.show(image: demoImage(), file: file, kind: .screenshot)
         thumbs.show(image: demoImage(), file: file, kind: .screenshot)
         await wait(0.4)
-        check(thumbs.testActionCount(index: 0) == 4, "la tarjeta muestra solo cuatro acciones")
+        check(thumbs.testActionCount(index: 0) == 6, "la tarjeta tiene seis acciones al pasar el cursor")
+        check(
+            thumbs.testActionLabels(index: 0) == ["Copiar", "Guardar", "Cerrar", "Fijar en pantalla", "Copiar ruta para un agente", "Anotar"],
+            "cada botón de la tarjeta tiene su etiqueta (\(thumbs.testActionLabels(index: 0)))"
+        )
         check(thumbs.testBadge(index: 0) == "Copiado", "la última miniatura dice Copiado")
         check(thumbs.testBadge(index: 1) == nil, "las anteriores no dicen Copiado, porque ya no lo están")
 
@@ -452,6 +576,98 @@ enum SelfTest {
         thumbs.resume()
         check(!thumbs.testIsHovering(index: 1) && thumbs.testHasTimer(index: 1), "tras capturar otra vez no queda atascada")
         thumbs.dismissAll()
+
+        // El contorno y el aviso son breves, y solo en la más reciente.
+        thumbs.show(image: demoImage(), file: file, kind: .screenshot)
+        thumbs.show(image: demoImage(), file: file, kind: .screenshot)
+        await wait(0.3)
+        check(thumbs.testIsOutlined(index: 0) && !thumbs.testIsOutlined(index: 1), "solo la tarjeta más reciente lleva contorno")
+
+        // En reposo los botones no responden: el clic es de la tarjeta.
+        let cardCenter = CGPoint(x: 112, y: 70)
+        let copyPill = CGPoint(x: cardCenter.x, y: cardCenter.y + 15)
+        check(!thumbs.testHitsButton(index: 0, at: copyPill), "en reposo, un clic en el centro es de la tarjeta")
+        thumbs.simulateHover(index: 0)
+        check(thumbs.testHitsButton(index: 0, at: copyPill), "con el cursor encima, el centro es la píldora Copiar")
+        check(!thumbs.testHitsButton(index: 0, at: CGPoint(x: 16, y: 70)), "fuera de los botones, el clic sigue siendo de la tarjeta")
+        check(thumbs.testHitsButton(index: 0, at: CGPoint(x: 18, y: 122)), "arriba a la izquierda hay un círculo")
+        thumbs.testSyncHover()
+
+        await wait(2.2)
+        check(!thumbs.testIsOutlined(index: 0), "el contorno dura un instante")
+        check(thumbs.testBadge(index: 0) == nil && thumbs.testIsInClipboard(index: 0), "el aviso se va, aunque siga copiada")
+
+        let copied = FileManager.default.temporaryDirectory.appendingPathComponent("zas-guardada-\(UUID().uuidString).png")
+        check(thumbs.testSave(index: 0, to: copied), "guardar escribe el archivo elegido")
+        check((try? Data(contentsOf: copied)) == (try? Data(contentsOf: file)), "lo guardado es la misma captura")
+        check(thumbs.testSave(index: 0, to: copied), "guardar encima de un archivo también funciona")
+        try? FileManager.default.removeItem(at: copied)
+        thumbs.dismissAll()
+
+        // La marca de video se queda y Copiar y Resumen van al centro.
+        thumbs.show(image: demoImage(), file: file, kind: .video)
+        check(
+            thumbs.testActionLabels(index: 0) == ["Copiar", "Copiar resumen en imágenes para Claude", "Cerrar", "Fijar en pantalla", "Copiar ruta para un agente", "Reproducir"],
+            "el video lleva Resumen y Reproducir (\(thumbs.testActionLabels(index: 0)))"
+        )
+        check(thumbs.testBadge(index: 0) == "Video copiado", "un video recién copiado lo dice")
+        await wait(2.2)
+        check(thumbs.testBadge(index: 0) == "Video", "en reposo, el video conserva su marca")
+        thumbs.dismissAll()
+
+        // La tarjeta sigue la forma de la captura, dentro de sus límites.
+        thumbs.show(image: demoImage(width: 1000, height: 300), file: file, kind: .screenshot)
+        thumbs.show(image: demoImage(width: 500, height: 620), file: file, kind: .screenshot)
+        thumbs.show(image: demoImage(width: 900, height: 450), file: file, kind: .screenshot)
+        await wait(0.8)
+        check(thumbs.testFrames.map(\.size) == [
+            CGSize(width: 224, height: 112), CGSize(width: 160, height: 168), CGSize(width: 224, height: 84),
+        ], "la tarjeta sigue la forma de la captura (\(thumbs.testFrames.map(\.size)))")
+        thumbs.dismissAll()
+
+        // Lado de la pila. El ajuste se guarda como los demás.
+        let suite = "zas-pruebas-\(UUID().uuidString)"
+        if let defaults = UserDefaults(suiteName: suite) {
+            check(Settings(defaults: defaults).thumbnailsOnLeft, "las tarjetas van a la izquierda por defecto")
+            Settings(defaults: defaults).thumbnailsOnLeft = false
+            check(!Settings(defaults: defaults).thumbnailsOnLeft, "el lado de las tarjetas se recuerda")
+            defaults.removePersistentDomain(forName: suite)
+        }
+
+        let savedSide = Settings.shared.thumbnailsOnLeft
+        let display = NSScreen.underMouse
+        for onLeft in [true, false] {
+            let side = onLeft ? "izquierda" : "derecha"
+            let outward: CGFloat = onLeft ? -1 : 1
+            Settings.shared.thumbnailsOnLeft = onLeft
+            thumbs.show(image: demoImage(), file: file, kind: .screenshot)
+            thumbs.show(image: demoImage(), file: file, kind: .screenshot)
+            await wait(0.8)
+
+            let home = thumbs.testFrames[0]
+            let visible = display.visibleFrame
+            let margin = onLeft ? home.minX - visible.minX : visible.maxX - home.maxX
+            check(abs(margin - Design.edgeMargin) < 1, "\(side): la tarjeta queda pegada a su borde (\(margin))")
+            check(abs(home.minY - visible.minY - Design.edgeMargin) < 1, "\(side): la tarjeta queda abajo")
+            check(abs(thumbs.testFrames[1].minY - home.maxY - Design.stackGap) < 1, "\(side): la pila crece hacia arriba con su separación")
+
+            thumbs.testSwipe(index: 0, delta: -outward * 300)
+            let inward = (thumbs.testFrames[0].minX - home.minX) * outward
+            check(inward < 0 && inward > -24, "\(side): hacia dentro cede muy poco (\(inward))")
+            thumbs.testEndSwipe(index: 0)
+            check(thumbs.visibleCount == 2, "\(side): un gesto hacia dentro no cierra")
+            await wait(0.8)
+
+            thumbs.testSwipe(index: 0, delta: outward * 150)
+            check(abs(thumbs.testFrames[0].minX - (home.minX + outward * 150)) < 1, "\(side): el gesto la lleva hacia su borde")
+            let outside = thumbs.testExitFrame(from: home)
+            check(onLeft ? outside.maxX < display.frame.minX : outside.minX > display.frame.maxX, "\(side): sale por el borde más cercano (\(outside))")
+            thumbs.testEndSwipe(index: 0)
+            check(thumbs.visibleCount == 1, "\(side): deslizar hacia el borde la cierra")
+            thumbs.dismissAll()
+        }
+        Settings.shared.thumbnailsOnLeft = savedSide
+        await wait(0.5)
 
         Settings.shared.thumbnailSeconds = 0.4
         thumbs.show(image: demoImage(), file: file, kind: .text, text: "hola de nuevo")
@@ -649,14 +865,169 @@ enum SelfTest {
 
         // Texto de la pantalla.
         let textURL = pngFile(demoImage())
-        let text = await withCheckedContinuation { (continuation: CheckedContinuation<String, Never>) in
-            TextReader.read(from: textURL) { continuation.resume(returning: $0) }
+        let textScan = await scan(textURL)
+        check(textScan.text.contains("Pedidos de hoy"), "lee texto en una imagen")
+        check(textScan.text.contains("Error al guardar"), "lee texto en español")
+        check(textScan.code == nil, "una imagen sin código QR no inventa uno")
+
+        let payload = "https://ejemplo.test/zas?pedido=1045"
+        if let qrURL = qrFile(payload) {
+            let qrScan = await scan(qrURL)
+            check(qrScan.code == payload, "lee el contenido de un código QR (\(qrScan.code ?? "nada"))")
+        } else {
+            check(false, "genera un código QR de prueba")
         }
-        check(text.contains("Pedidos de hoy"), "lee texto en una imagen")
-        check(text.contains("Error al guardar"), "lee texto en español")
 
         Capture.copyText("hola")
         check(NSPasteboard.general.string(forType: .string) == "hola", "copiar texto al portapapeles")
+    }
+
+    private static func scan(_ url: URL) async -> TextScan {
+        await withCheckedContinuation { (continuation: CheckedContinuation<TextScan, Never>) in
+            TextReader.scan(from: url) { continuation.resume(returning: $0) }
+        }
+    }
+
+    /// Un código QR nítido sobre blanco, con el margen que pide el formato.
+    private static func qrFile(_ message: String) -> URL? {
+        let filter = CIFilter.qrCodeGenerator()
+        filter.message = Data(message.utf8)
+        filter.correctionLevel = "M"
+        guard let code = filter.outputImage?
+            .samplingNearest()
+            .transformed(by: CGAffineTransform(scaleX: 10, y: 10))
+        else { return nil }
+        let extent = code.extent
+        guard let cgCode = CIContext().createCGImage(code, from: extent) else { return nil }
+        let margin = 60
+        let width = cgCode.width + margin * 2
+        let height = cgCode.height + margin * 2
+        guard let context = CGContext(
+            data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+        context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        context.interpolationQuality = .none
+        context.draw(cgCode, in: CGRect(x: margin, y: margin, width: cgCode.width, height: cgCode.height))
+        guard let image = context.makeImage() else { return nil }
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("qr-\(UUID().uuidString).png")
+        return Capture.writePNG(image, to: url, pointSize: CGSize(width: width, height: height)) ? url : nil
+    }
+
+    // MARK: - Historial y escritorio
+
+    private static func historyTests() async {
+        let shotFile = URL(fileURLWithPath: "/x/Zas 1.png")
+        let videoFile = URL(fileURLWithPath: "/x/Zas 2.mp4")
+        let gifFile = URL(fileURLWithPath: "/x/Zas 3.gif")
+        let upperFile = URL(fileURLWithPath: "/x/Zas 4.PNG")
+        let model = HistoryModel(files: [shotFile, videoFile, gifFile, upperFile])
+        check(model.visible.count == 4 && model.focused == shotFile, "Todo muestra cada archivo y enfoca el primero")
+        model.select(.images)
+        check(model.visible == [shotFile, upperFile], "Capturas filtra las imágenes")
+        model.select(.videos)
+        check(model.visible == [videoFile], "Videos filtra los videos")
+        model.select(.gifs)
+        check(model.visible == [gifFile], "GIF filtra por extensión")
+        model.select(.all)
+        model.move(by: 2)
+        check(model.focused == gifFile, "las flechas mueven el enfoque")
+        model.move(by: 9)
+        check(model.focused == upperFile, "el enfoque se detiene en la última")
+        model.move(by: -9)
+        check(model.focused == shotFile, "el enfoque se detiene en la primera")
+        model.move(by: 1)
+        model.load([shotFile, gifFile, upperFile])
+        check(model.focused == gifFile, "al borrar la enfocada, pasa a la siguiente")
+        model.select(.videos)
+        check(model.focused == nil, "un filtro vacío no enfoca nada")
+        model.cycleFilter(by: 1)
+        check(model.filter == .gifs, "Tab pasa al filtro siguiente")
+        model.cycleFilter(by: -2)
+        check(model.filter == .images, "volver atrás recorre los filtros")
+
+        // Archivos reales, para probar la lista y el panel.
+        let samples = historySamples()
+        check(Recents.files(limit: 500).contains { HistoryFilter.gifs.includes($0) }, "el historial incluye los GIF")
+        check(Recents.preview(of: samples[samples.count - 1]) != nil, "un GIF tiene carátula")
+
+        CGWarpMouseCursorPosition(CGPoint(x: 300, y: 300))
+        await wait(0.2)
+        let windows = WindowCoordinator()
+        keepAlive.append(windows)
+        var opened: URL?
+        windows.showHistory { opened = $0 }
+        guard let history = windows.testHistory else {
+            check(false, "se abre el historial")
+            return
+        }
+        history.closesOnFocusLoss = false
+        await wait(0.9)
+        check(history.testCanBecomeKey, "el panel del historial puede recibir teclado")
+        check(history.testFrame.width == NSScreen.underMouse.frame.width, "el historial ocupa todo el ancho")
+        check(history.testFrame.minY == NSScreen.underMouse.frame.minY, "el historial llega al borde inferior")
+        history.testKey(124)
+        check(history.model.focus == 1, "la flecha derecha pasa a la siguiente tarjeta")
+        history.testKey(123)
+        check(history.model.focus == 0, "la flecha izquierda vuelve")
+        history.testWheel(lines: -1)
+        check(history.model.focus == 1, "la rueda pasa tarjetas")
+        history.testKey(48)
+        check(history.model.filter == .images, "Tab cambia de filtro")
+        let expected = history.model.focused
+        history.testKey(36)
+        check(opened != nil && opened == expected, "Enter abre la enfocada")
+        check(windows.testHistory == nil, "abrir cierra el historial")
+
+        windows.showHistory { _ in }
+        windows.testHistory?.closesOnFocusLoss = false
+        await wait(0.3)
+        windows.testHistory?.testKey(53)
+        check(windows.testHistory == nil, "Esc cierra el historial")
+        await wait(0.3)
+        samples.forEach { try? FileManager.default.removeItem(at: $0) }
+    }
+
+    /// Carátulas de muestra en la carpeta real. La última de la lista es un GIF.
+    private static func historySamples() -> [URL] {
+        let sizes = [(900, 560), (640, 400), (1000, 300), (500, 620), (760, 480)]
+        var files: [URL] = []
+        for (index, size) in sizes.enumerated() {
+            let source = pngFile(demoImage(scale: 1, width: size.0, height: size.1))
+            let file = Capture.folder.appendingPathComponent("Zas muestra \(index).png")
+            try? FileManager.default.removeItem(at: file)
+            try? FileManager.default.moveItem(at: source, to: file)
+            files.append(file)
+        }
+        let gif = Capture.folder.appendingPathComponent("Zas muestra.gif")
+        if let rep = demoImage(scale: 1, width: 640, height: 400).representations.compactMap({ $0 as? NSBitmapImageRep }).first {
+            try? rep.representation(using: .gif, properties: [:])?.write(to: gif)
+        }
+        files.append(gif)
+        return files
+    }
+
+    private static func desktopCoverTests() async {
+        check(!Settings(defaults: UserDefaults(suiteName: "zas-pruebas-\(UUID().uuidString)")!).hidesDesktopIcons, "al abrir Zas, los iconos se ven")
+        check(DesktopCover.gravity(scaling: .scaleProportionallyUpOrDown, allowsClipping: true) == .resizeAspectFill, "la copia del fondo llena la pantalla igual que el original")
+        check(DesktopCover.gravity(scaling: .scaleProportionallyUpOrDown, allowsClipping: false) == .resizeAspect, "la copia respeta el ajuste a la pantalla")
+        check(DesktopCover.gravity(scaling: .scaleAxesIndependently, allowsClipping: false) == .resize, "la copia respeta el estirado")
+
+        let cover = DesktopCover()
+        cover.setOn(true)
+        for _ in 0..<50 where cover.testWindows.isEmpty {
+            await wait(0.1)
+        }
+        check(cover.testWindows.count == NSScreen.screens.count, "hay una cubierta por pantalla (\(cover.testWindows.count))")
+        let iconLevel = Int(CGWindowLevelForKey(.desktopIconWindow))
+        check(cover.testWindows.allSatisfy { $0.level.rawValue == iconLevel + 1 }, "la cubierta queda justo encima de los iconos")
+        check(cover.testWindows.allSatisfy { $0.ignoresMouseEvents }, "la cubierta deja pasar el ratón")
+        check(cover.testWindows.allSatisfy { $0.collectionBehavior.contains(.canJoinAllSpaces) && $0.collectionBehavior.contains(.stationary) }, "la cubierta sigue en todos los Espacios")
+        check(cover.testWindows.allSatisfy { $0.sharingType != .none }, "la cubierta sale en las capturas")
+        check(cover.windowIDs.count == NSScreen.screens.count, "el video puede incluir la cubierta")
+        cover.setOn(false)
+        check(cover.testWindows.isEmpty, "la cubierta se apaga")
     }
 
     private static func recorderTest() async {
@@ -739,6 +1110,14 @@ enum SelfTest {
         return window
     }
 
+    /// Lleva el cursor real a la tarjeta: uno simulado se perdería al revisar dónde está de verdad.
+    private static func hoverCard(_ thumbs: ThumbnailController, index: Int) async {
+        let frame = thumbs.testFrames[index]
+        CGWarpMouseCursorPosition(CGPoint(x: frame.midX, y: NSScreen.screens[0].frame.maxY - frame.midY))
+        await wait(0.2)
+        thumbs.testSyncHover()
+    }
+
     private static func scenes() async {
         for (label, appearance) in [("claro", NSAppearance.Name.aqua), ("oscuro", NSAppearance.Name.darkAqua)] {
             NSApp.appearance = NSAppearance(named: appearance)
@@ -777,9 +1156,17 @@ enum SelfTest {
             thumbs.show(image: demoImage(), file: file, kind: .screenshot)
             thumbs.show(image: demoImage(), file: file, kind: .screenshot)
             check(thumbs.visibleCount == 4, "la pila no pasa de cuatro miniaturas")
-            await wait(0.4)
-            thumbs.simulateHover(index: 0)
+            // En reposo: que se asienten el resorte y los avisos.
+            await wait(2.5)
             await shoot("\(label)-04-miniaturas")
+            await hoverCard(thumbs, index: 0)
+            await shoot("\(label)-04b-tarjeta-cursor")
+            await hoverCard(thumbs, index: 2)
+            await shoot("\(label)-04c-tarjeta-ancha")
+            await hoverCard(thumbs, index: 3)
+            await shoot("\(label)-04d-tarjeta-video")
+            CGWarpMouseCursorPosition(CGPoint(x: 400, y: 330))
+            await wait(0.2)
             thumbs.dismissAll()
 
             let pins = PinController()
@@ -801,6 +1188,27 @@ enum SelfTest {
             await shoot("\(label)-07e-censura")
             editor.testSelect(tool: .eraser)
             await shoot("\(label)-07f-borrador")
+
+            // La antigua fila de opciones ya no existe: el lienzo ocupa todo menos las dos barras.
+            if let room = editor.testWindow.contentView?.bounds.height {
+                check(editor.testCanvasArea.height == room - Design.editorBar * 2, "el lienzo gana la altura de la fila de opciones")
+            }
+            editor.testSelect(tool: .arrow)
+            editor.testOpenSizePopover()
+            await shoot("\(label)-07g-popover-grosor")
+            editor.testOpenSizePopover()
+            await wait(0.3)
+
+            editor.testOpenBackgroundPanel(gradient: 7)
+            await wait(1)
+            check(editor.testBackgroundPanelOpen && editor.testCanvasArea.minX == BackgroundPanel.width, "el panel Fondo abre y el lienzo le hace sitio")
+            await shoot("\(label)-07h-panel-fondo")
+            editor.testCloseBackgroundPanel()
+            await wait(1)
+            check(editor.testCanvasArea.minX == 0, "el panel Fondo se cierra y el lienzo recupera su sitio")
+            await shoot("\(label)-07i-fondo-sin-panel")
+            editor.canvas.setBackdrop(nil)
+
             editor.testSelect(tool: .highlight)
             editor.testOpenPalette()
             editor.testOpenPalette()
@@ -835,9 +1243,29 @@ enum SelfTest {
             await shoot("\(label)-09c-video")
             check(windows.testSettingsTitle == "Video", "el título sigue a la pestaña elegida")
             windows.closeAll()
+            let samples = historySamples()
             windows.showHistory { _ in }
+            windows.testHistory?.closesOnFocusLoss = false
+            windows.testHistory?.testKey(124)
             await shoot("\(label)-09b-historial")
             windows.closeAll()
+            samples.forEach { try? FileManager.default.removeItem(at: $0) }
+
+            let visible = NSScreen.screens[0].frame
+            let scrollArea = Selection(screen: NSScreen.screens[0], rect: CGRect(
+                x: (visible.width * 0.3).rounded(),
+                y: (visible.height * 0.12).rounded(),
+                width: (visible.width * 0.5).rounded(),
+                height: (visible.height * 0.62).rounded()
+            ))
+            let scrollHUD = ScrollCaptureHUD(selection: scrollArea.appKitRect, screen: scrollArea.screen, hiddenFromCapture: false)
+            scrollHUD.show()
+            if let long = demoImage(scale: 1, width: 296, height: 420).cgImage(forProposedRect: nil, context: nil, hints: nil) {
+                scrollHUD.update(preview: long)
+            }
+            await shoot("\(label)-09e-desplazamiento")
+            scrollHUD.close()
+
             windows.showWelcome(hasPermission: false, openSettings: {}, relaunch: {})
             await shoot("\(label)-10-permiso")
             windows.closeAll()

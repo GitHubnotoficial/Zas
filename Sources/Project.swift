@@ -26,6 +26,8 @@ struct ZasProject: Codable {
     var height: CGFloat
     var crop: CGRect?
     var marks: [Mark]
+    /// Fondo no destructivo. Los proyectos anteriores no lo tienen.
+    var backdrop: Backdrop?
 
     private static func png(_ image: NSImage) -> Data? {
         guard let tiff = image.tiffRepresentation else { return nil }
@@ -38,6 +40,7 @@ struct ZasProject: Codable {
         width = image.size.width
         height = image.size.height
         crop = document.crop
+        backdrop = document.backdrop
         marks = document.annotations.map { mark in
             let color = mark.color.usingColorSpace(.sRGB) ?? .black
             return Mark(
@@ -66,6 +69,7 @@ struct ZasProject: Codable {
     func document() -> AnnotationDocument {
         var document = AnnotationDocument()
         document.crop = crop
+        document.backdrop = backdrop
         document.annotations = marks.compactMap { mark in
             guard let tool = AnnotationTool(rawValue: mark.tool), mark.color.count == 4 else { return nil }
             return Annotation(

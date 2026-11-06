@@ -1,4 +1,5 @@
 import AppKit
+import UniformTypeIdentifiers
 
 enum ThumbnailKind {
     case screenshot
@@ -19,8 +20,8 @@ private final class CardPanel: NSPanel {
     }
 }
 
-/// Pila de tarjetas en la esquina. Cada captura nueva entra abajo y empuja a las demás,
-/// para poder sacar varias seguidas y arrastrarlas o editarlas después.
+/// Pila de tarjetas en la esquina inferior del lado elegido en Ajustes. Cada captura nueva
+/// entra abajo y empuja a las demás, para poder sacar varias seguidas y arrastrarlas o editarlas después.
 @MainActor
 final class ThumbnailController {
     var onAnnotate: ((NSImage, URL) -> Void)?
@@ -38,6 +39,8 @@ final class ThumbnailController {
         var swipeOffset: CGFloat = 0
         var swipeVelocity: CGFloat = 0
         var swipeTime = Date()
+        /// El contorno espera a que la tarjeta se vea: mientras se captura, la pila está escondida.
+        var outlinePending = false
 
         init(panel: CardPanel, view: ThumbnailView) {
             self.panel = panel
@@ -148,13 +151,18 @@ final class ThumbnailController {
         view.onGif = { [weak self] in
             self?.onGif?(file)
         }
-        view.onDragEnded = { [weak self] in
+        view.onReleased = { [weak self] in
             self?.syncHover()
         }
 
-        // Solo la captura más reciente está en el portapapeles.
-        items.forEach { $0.view.isInClipboard = false }
+        // Solo la captura más reciente está en el portapapeles y lleva el contorno.
+        items.forEach {
+            $0.view.isInClipboard = false
+            $0.outlinePending = false
+            $0.view.clearOutline()
+        }
         view.isInClipboard = inClipboard
+        item.outlinePending = true
 
         items.insert(item, at: 0)
         while items.count > maximumItems, let oldest = items.last {
@@ -162,8 +170,9 @@ final class ThumbnailController {
         }
 
         let target = frames()[0]
+        let outside = (target.width + Design.edgeMargin) * outwardSign(of: target)
         let start = source.flatMap { $0.width >= 24 && $0.height >= 24 ? $0 : nil }
-            ?? target.offsetBy(dx: target.width + Design.edgeMargin, dy: 0)
+            ?? target.offsetBy(dx: outside, dy: 0)
         panel.setFrame(start, display: false)
         if !isSuspended {
             panel.orderFrontRegardless()
@@ -172,6 +181,7 @@ final class ThumbnailController {
         // Mientras está escondida no corre el tiempo: se cuenta desde que se vuelva a ver.
         if !isSuspended {
             startTimer(item)
+            revealOutline()
         }
     }
 
@@ -198,6 +208,13 @@ final class ThumbnailController {
             startTimer(item)
         }
         layoutItems()
+        revealOutline()
+    }
+
+    private func revealOutline() {
+        guard let newest = items.first, newest.outlinePending else { return }
+        newest.outlinePending = false
+        newest.view.flashOutline()
     }
 
     private func markCopied(_ item: Item) {
@@ -237,11 +254,22 @@ final class ThumbnailController {
         layoutItems()
     }
 
+    /// -1 si el borde más cercano es el izquierdo, 1 si es el derecho.
+    private func outwardSign(of frame: CGRect) -> CGFloat {
+        frame.midX < (screen ?? NSScreen.underMouse).frame.midX ? -1 : 1
+    }
+
+    /// Justo fuera de la pantalla, por el borde más cercano.
+    private func exitFrame(from start: CGRect) -> CGRect {
+        let bounds = (screen ?? NSScreen.underMouse).frame
+        let x = outwardSign(of: start) < 0 ? bounds.minX - start.width - 12 : bounds.maxX + 12
+        return CGRect(x: x, y: start.minY, width: start.width, height: start.height)
+    }
+
     /// Sale por el borde más cercano, hacia donde estaría si fuera un objeto.
     private func slideOut(_ panel: NSPanel) {
         let start = panel.frame
-        let edge = (screen ?? NSScreen.underMouse).frame.maxX + 12
-        let target = start.offsetBy(dx: edge - start.minX, dy: 0)
+        let target = exitFrame(from: start)
         leaving.append(panel)
         Spring.run(response: 0.34, damping: 1, step: { progress in
             panel.setFrame(start.moved(to: target, by: progress), display: true)
@@ -255,29 +283,43 @@ final class ThumbnailController {
         guard !isSuspended else { return }
         switch event.phase {
         case .began:
-            item.spring?.invalidate()
-            item.swipeOffset = 0
-            item.swipeVelocity = 0
-            item.swipeTime = Date()
-            stopTimer(item)
+            beginSwipe(item)
         case .changed:
-            let delta = event.isDirectionInvertedFromDevice ? event.scrollingDeltaX : -event.scrollingDeltaX
-            let now = Date()
-            let elapsed = max(now.timeIntervalSince(item.swipeTime), 0.001)
-            item.swipeVelocity = delta / CGFloat(elapsed)
-            item.swipeTime = now
-            item.swipeOffset += delta
-            guard let home = homeFrame(of: item) else { return }
-            item.panel.setFrameOrigin(NSPoint(x: home.minX + CardSwipe.resisted(item.swipeOffset), y: home.minY))
+            moveSwipe(item, by: event.isDirectionInvertedFromDevice ? event.scrollingDeltaX : -event.scrollingDeltaX)
         case .ended, .cancelled:
-            if CardSwipe.shouldClose(offset: item.swipeOffset, width: item.panel.frame.width, velocity: item.swipeVelocity) {
-                dismiss(item)
-            } else {
-                layoutItems()
-                syncHover()
-            }
+            endSwipe(item)
         default:
             break
+        }
+    }
+
+    private func beginSwipe(_ item: Item) {
+        item.spring?.invalidate()
+        item.swipeOffset = 0
+        item.swipeVelocity = 0
+        item.swipeTime = Date()
+        stopTimer(item)
+    }
+
+    /// `delta` es positivo hacia la derecha. Se acumula hacia el borde más cercano,
+    /// sea cual sea: así `CardSwipe` no necesita saber de qué lado está la tarjeta.
+    private func moveSwipe(_ item: Item, by delta: CGFloat) {
+        guard let home = homeFrame(of: item) else { return }
+        let outward = outwardSign(of: home)
+        let now = Date()
+        let elapsed = max(now.timeIntervalSince(item.swipeTime), 0.001)
+        item.swipeVelocity = delta * outward / CGFloat(elapsed)
+        item.swipeTime = now
+        item.swipeOffset += delta * outward
+        item.panel.setFrameOrigin(NSPoint(x: home.minX + CardSwipe.resisted(item.swipeOffset) * outward, y: home.minY))
+    }
+
+    private func endSwipe(_ item: Item) {
+        if CardSwipe.shouldClose(offset: item.swipeOffset, width: item.panel.frame.width, velocity: item.swipeVelocity) {
+            dismiss(item)
+        } else {
+            layoutItems()
+            syncHover()
         }
     }
 
@@ -288,10 +330,12 @@ final class ThumbnailController {
 
     private func frames() -> [CGRect] {
         let visible = (screen ?? NSScreen.underMouse).visibleFrame
+        let onLeft = Settings.shared.thumbnailsOnLeft
         var y = visible.minY + Design.edgeMargin
         return items.map { item in
             let size = item.view.cardSize
-            let frame = CGRect(x: visible.maxX - size.width - Design.edgeMargin, y: y, width: size.width, height: size.height)
+            let x = onLeft ? visible.minX + Design.edgeMargin : visible.maxX - size.width - Design.edgeMargin
+            let frame = CGRect(x: x, y: y, width: size.width, height: size.height)
             y += size.height + Design.stackGap
             return frame
         }
@@ -321,7 +365,7 @@ final class ThumbnailController {
     private func syncHover() {
         guard !isSuspended else { return }
         let mouse = NSEvent.mouseLocation
-        for item in items where !item.view.isDragging {
+        for item in items where !item.view.isHeld {
             let inside = item.panel.frame.contains(mouse)
             if inside != item.view.isHovering {
                 item.view.setHovering(inside)
@@ -374,11 +418,93 @@ final class ThumbnailController {
     func testIsInClipboard(index: Int) -> Bool { items[index].view.isInClipboard }
     func testBadge(index: Int) -> String? { items[index].view.badgeText }
     func testActionCount(index: Int) -> Int { items[index].view.actionCount }
+    func testActionLabels(index: Int) -> [String] { items[index].view.actionLabels }
+    func testIsOutlined(index: Int) -> Bool { items[index].view.isOutlined }
+    func testHitsButton(index: Int, at point: CGPoint) -> Bool { items[index].view.hitsButton(at: point) }
+    func testSave(index: Int, to url: URL) -> Bool { items[index].view.writeCopy(to: url) }
+    func testExitFrame(from frame: CGRect) -> CGRect { exitFrame(from: frame) }
+
+    /// Un gesto completo hasta `delta`, positivo hacia la derecha. Falta soltarlo con `testEndSwipe`.
+    func testSwipe(index: Int, delta: CGFloat) {
+        beginSwipe(items[index])
+        moveSwipe(items[index], by: delta)
+    }
+
+    func testEndSwipe(index: Int) { endSwipe(items[index]) }
     func testCopy(index: Int) { markCopied(items[index]) }
     var testFrames: [CGRect] { items.map { $0.panel.frame } }
 
     var visibleCount: Int { items.count }
     #endif
+}
+
+/// Control sobre la tarjeta: claro y liso, para leerse igual sobre cualquier captura.
+private final class CardControl: NSButton {
+    private static let ink = NSColor(white: 0.1, alpha: 1)
+
+    private var hovering = false
+    private var hoverArea: NSTrackingArea?
+
+    init(title: String? = nil, symbol: String? = nil, label: String, size: CGSize, target: AnyObject, action: Selector) {
+        super.init(frame: CGRect(origin: .zero, size: size))
+        isBordered = false
+        toolTip = label
+        contentTintColor = Self.ink
+        self.target = target
+        self.action = action
+        if let symbol {
+            image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)?
+                .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 11, weight: .semibold))
+            imagePosition = .imageOnly
+        }
+        if let title {
+            showTitle(title)
+        }
+        wantsLayer = true
+        layer?.cornerRadius = size.height / 2
+        setAccessibilityLabel(label)
+        refresh()
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) no se usa")
+    }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    func showTitle(_ text: String) {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = .center
+        attributedTitle = NSAttributedString(string: text, attributes: [
+            .font: NSFont.systemFont(ofSize: 12, weight: .medium),
+            .foregroundColor: Self.ink,
+            .paragraphStyle: paragraph,
+        ])
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverArea {
+            removeTrackingArea(hoverArea)
+        }
+        let area = NSTrackingArea(rect: .zero, options: [.activeAlways, .inVisibleRect, .mouseEnteredAndExited], owner: self, userInfo: nil)
+        addTrackingArea(area)
+        hoverArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        hovering = true
+        refresh()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        hovering = false
+        refresh()
+    }
+
+    private func refresh() {
+        layer?.backgroundColor = NSColor(white: 1, alpha: hovering ? 1 : 0.86).cgColor
+    }
 }
 
 private final class ThumbnailView: NSView, NSDraggingSource {
@@ -392,10 +518,22 @@ private final class ThumbnailView: NSView, NSDraggingSource {
     var onSummarize: (() -> Void)?
     var onTrim: (() -> Void)?
     var onGif: (() -> Void)?
-    var onDragEnded: (() -> Void)?
+    /// Terminó un arrastre o el panel de guardar: hay que volver a mirar dónde está el cursor.
+    var onReleased: (() -> Void)?
 
     var isInClipboard = false {
-        didSet { refreshBadge() }
+        didSet {
+            noticeTask?.cancel()
+            showsClipboardNotice = isInClipboard
+            refreshBadge()
+            guard isInClipboard else { return }
+            noticeTask = Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 1_800_000_000)
+                guard !Task.isCancelled else { return }
+                self?.showsClipboardNotice = false
+                self?.refreshBadge()
+            }
+        }
     }
 
     let cardSize: CGSize
@@ -408,18 +546,30 @@ private final class ThumbnailView: NSView, NSDraggingSource {
     private var hovering = false
     var isHovering: Bool { hovering }
     private(set) var isDragging = false
+    private var isSaving = false
+    /// Mientras se arrastra o se guarda, el cursor sale de la tarjeta, pero esta debe seguir ahí.
+    var isHeld: Bool { isDragging || isSaving }
     private var flashText: String?
     private var mouseDownPoint: NSPoint?
     private var dragged = false
     private var trackingArea: NSTrackingArea?
+    private var showsClipboardNotice = false
+    private var noticeTask: Task<Void, Never>?
+    private var outlineTask: Task<Void, Never>?
+    private(set) var isOutlined = false
 
-    private let actionBar: GlassView
-    private var actionButtons: [GlassButton] = []
+    /// Oscurece y desenfoca la captura para que los controles se lean sobre cualquier imagen.
+    private let veil = GlassView(frame: .zero, radius: Design.cardRadius, material: .hudWindow, blending: .withinWindow)
+    private let outline = NSView()
     private let badge = GlassView(frame: .zero, radius: 11, blending: .withinWindow)
-    private let closeBar = GlassView(frame: .zero, radius: 12, blending: .withinWindow)
     private let badgeLabel = NSTextField(labelWithString: "")
+    /// Apiladas en el centro. La primera es siempre Copiar.
+    private var pills: [CardControl] = []
+    private var corners: [(button: CardControl, right: Bool, top: Bool)] = []
 
-    var actionCount: Int { actionButtons.count }
+    private var controls: [CardControl] { pills + corners.map { $0.button } }
+    var actionCount: Int { controls.count }
+    var actionLabels: [String] { controls.compactMap { $0.accessibilityLabel() } }
 
     init(frame: CGRect, image: NSImage, file: URL, kind: ThumbnailKind, text: String?) {
         self.image = image
@@ -427,20 +577,19 @@ private final class ThumbnailView: NSView, NSDraggingSource {
         self.kind = kind
         self.text = text
         cardSize = frame.size
-        actionBar = GlassView(frame: .zero, radius: Design.controlRadius + 2, blending: .withinWindow)
         super.init(frame: frame)
         wantsLayer = true
         layer?.cornerRadius = Design.cardRadius
         layer?.cornerCurve = .continuous
         layer?.masksToBounds = true
-        layer?.borderWidth = 0.5
-        layer?.borderColor = NSColor.separatorColor.cgColor
         setAccessibilityElement(true)
         setAccessibilityRole(.button)
         setAccessibilityLabel(kind == .video ? "Video capturado" : (kind == .text ? "Texto capturado" : "Captura"))
-        buildActions()
         buildBadge()
-        buildClose()
+        buildVeil()
+        buildControls()
+        buildOutline()
+        layoutCard()
     }
 
     required init?(coder: NSCoder) {
@@ -449,54 +598,99 @@ private final class ThumbnailView: NSView, NSDraggingSource {
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
-    /// Cuatro acciones como máximo: el resto está en el clic derecho.
-    private func buildActions() {
-        var buttons: [GlassButton] = [
-            GlassButton(symbol: "doc.on.doc", tooltip: "Copiar otra vez", target: self, action: #selector(copyAgain)),
-        ]
+    /// Todo clic es de la tarjeta, salvo en un botón que ya se ve. Sin esto, el velo y el
+    /// aviso se quedarían el clic, y un botón aún invisible respondería por sorpresa.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard let hit = super.hitTest(point) else { return nil }
+        return hovering && hit is CardControl ? hit : self
+    }
+
+    func hitsButton(at point: CGPoint) -> Bool {
+        hitTest(convert(point, to: superview)) is CardControl
+    }
+
+    // La tarjeta nace del tamaño de la selección y encoge: se recoloca a mano para no arrastrar redondeos.
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        layoutCard()
+    }
+
+    private func layoutCard() {
+        veil.frame = bounds
+        outline.frame = bounds
+
+        let gap: CGFloat = 6
+        let height = pills.reduce(-gap) { $0 + $1.frame.height + gap }
+        var top = ((bounds.height + height) / 2).rounded()
+        for pill in pills {
+            let size = pill.frame.size
+            pill.frame.origin = CGPoint(x: ((bounds.width - size.width) / 2).rounded(), y: top - size.height)
+            top -= size.height + gap
+        }
+
+        for corner in corners {
+            let size = corner.button.frame.size
+            corner.button.frame.origin = CGPoint(
+                x: corner.right ? bounds.width - gap - size.width : gap,
+                y: corner.top ? bounds.height - gap - size.height : gap
+            )
+        }
+    }
+
+    private func buildVeil() {
+        veil.appearance = NSAppearance(named: .darkAqua)
+        veil.layer?.borderWidth = 0
+        veil.alphaValue = 0
+        let scrim = NSView(frame: veil.bounds)
+        scrim.wantsLayer = true
+        scrim.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.28).cgColor
+        scrim.autoresizingMask = [.width, .height]
+        veil.addSubview(scrim)
+        addSubview(veil)
+    }
+
+    private func makePill(_ title: String, label: String, action: Selector) -> CardControl {
+        CardControl(title: title, label: label, size: CGSize(width: 92, height: 24), target: self, action: action)
+    }
+
+    private func makeCircle(_ symbol: String, label: String, action: Selector) -> CardControl {
+        CardControl(symbol: symbol, label: label, size: CGSize(width: 24, height: 24), target: self, action: action)
+    }
+
+    /// En reposo no se ve nada de esto: la captura manda. El resto de opciones está en el clic derecho.
+    private func buildControls() {
+        pills = [makePill("Copiar", label: "Copiar", action: #selector(copyAgain))]
+        corners = [(makeCircle("xmark", label: "Cerrar", action: #selector(closeCard)), false, true)]
+
+        if kind != .text {
+            corners.append((makeCircle("pin", label: "Fijar en pantalla", action: #selector(pin)), true, true))
+            corners.append((makeCircle("terminal", label: "Copiar ruta para un agente", action: #selector(copyPath)), true, false))
+        }
         switch kind {
         case .screenshot:
-            buttons.append(GlassButton(symbol: "pencil.tip", tooltip: "Anotar", target: self, action: #selector(annotate)))
-            buttons.append(GlassButton(symbol: "link", tooltip: "Copiar ruta para un agente", target: self, action: #selector(copyPath)))
-            buttons.append(GlassButton(symbol: "pin", tooltip: "Fijar en pantalla", target: self, action: #selector(pin)))
+            pills.append(makePill("Guardar", label: "Guardar", action: #selector(saveAs)))
+            corners.append((makeCircle("pencil.tip", label: "Anotar", action: #selector(annotate)), false, false))
         case .video:
-            buttons.append(GlassButton(symbol: "square.grid.2x2", tooltip: "Copiar resumen en imágenes para Claude", target: self, action: #selector(summarize)))
-            buttons.append(GlassButton(symbol: "link", tooltip: "Copiar ruta para un agente", target: self, action: #selector(copyPath)))
-            buttons.append(GlassButton(symbol: "play.fill", tooltip: "Reproducir", target: self, action: #selector(open)))
+            pills.append(makePill("Resumen", label: "Copiar resumen en imágenes para Claude", action: #selector(summarize)))
+            corners.append((makeCircle("play.fill", label: "Reproducir", action: #selector(open)), false, false))
         case .text:
             break
         }
 
-        let padding: CGFloat = 4
-        let gap: CGFloat = 2
-        let width = padding * 2 + CGFloat(buttons.count) * Design.actionSize + CGFloat(buttons.count - 1) * gap
-        let height = Design.actionSize + padding * 2
-        actionBar.frame = CGRect(
-            x: ((bounds.width - width) / 2).rounded(),
-            y: 8,
-            width: width,
-            height: height
-        )
-        actionBar.autoresizingMask = [.minXMargin, .maxXMargin, .maxYMargin]
-        var x = padding
-        for button in buttons {
-            button.frame.origin = CGPoint(x: x, y: padding)
-            actionBar.addSubview(button)
-            x += Design.actionSize + gap
+        for control in controls {
+            control.alphaValue = 0
+            addSubview(control)
         }
-        actionBar.alphaValue = 0
-        addSubview(actionBar)
-        actionButtons = buttons
     }
 
-    /// El gesto de deslizar no basta: también hace falta un botón visible.
-    private func buildClose() {
-        closeBar.frame = CGRect(x: 6, y: bounds.height - 30, width: 24, height: 24)
-        closeBar.autoresizingMask = [.maxXMargin, .minYMargin]
-        let button = GlassButton(symbol: "xmark", tooltip: "Cerrar", target: self, action: #selector(closeCard), size: 24)
-        closeBar.addSubview(button)
-        closeBar.alphaValue = 0
-        addSubview(closeBar)
+    /// Por encima de todo: señala cuál es la captura recién tomada.
+    private func buildOutline() {
+        outline.wantsLayer = true
+        outline.layer?.cornerRadius = Design.cardRadius
+        outline.layer?.cornerCurve = .continuous
+        outline.layer?.borderWidth = 2
+        outline.alphaValue = 0
+        addSubview(outline)
     }
 
     private func buildBadge() {
@@ -508,7 +702,10 @@ private final class ThumbnailView: NSView, NSDraggingSource {
     }
 
     private func refreshBadge() {
-        guard let badgeText, !hovering || flashText != nil else {
+        setAccessibilityValue(badgeText)
+        // Con el cursor encima, el aviso se lee en la propia píldora y no tapa ningún control.
+        pills.first?.showTitle(flashText ?? "Copiar")
+        guard let badgeText, !hovering else {
             badge.isHidden = true
             return
         }
@@ -520,6 +717,35 @@ private final class ThumbnailView: NSView, NSDraggingSource {
         badge.isHidden = false
     }
 
+    /// Fundido corto. Con Reducir movimiento, el cambio es inmediato.
+    private func fade(_ views: [NSView], to alpha: CGFloat) {
+        NSAnimationContext.beginGrouping()
+        NSAnimationContext.current.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.16
+        views.forEach { $0.animator().alphaValue = alpha }
+        NSAnimationContext.endGrouping()
+    }
+
+    func flashOutline() {
+        outlineTask?.cancel()
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            outline.layer?.borderColor = NSColor.controlAccentColor.cgColor
+        }
+        isOutlined = true
+        fade([outline], to: 1)
+        outlineTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            guard !Task.isCancelled else { return }
+            self?.clearOutline()
+        }
+    }
+
+    func clearOutline() {
+        outlineTask?.cancel()
+        guard isOutlined else { return }
+        isOutlined = false
+        fade([outline], to: 0)
+    }
+
     @objc private func annotate() { onAnnotate?() }
     @objc private func pin() { onPin?() }
     @objc private func copyAgain() { onCopy?() }
@@ -528,6 +754,38 @@ private final class ThumbnailView: NSView, NSDraggingSource {
     @objc private func closeCard() { onClose?() }
     @objc private func trim() { onTrim?() }
     @objc private func makeGif() { onGif?() }
+
+    /// El panel no es modal: la tarjeta se queda y sigue viva hasta que se responda, aunque se cierre.
+    @objc private func saveAs() {
+        guard !isSaving else { return }
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [UTType(filenameExtension: file.pathExtension) ?? .png]
+        panel.directoryURL = Capture.isScratch(file) ? Capture.folder : file.deletingLastPathComponent()
+        panel.nameFieldStringValue = file.lastPathComponent
+        isSaving = true
+        onHoldChanged?(true)
+        NSApp.activate(ignoringOtherApps: true)
+        panel.begin { response in
+            let url = panel.url
+            Task { @MainActor in
+                self.isSaving = false
+                if response == .OK, let url {
+                    if self.writeCopy(to: url) {
+                        self.flashCopied("Guardado")
+                    } else {
+                        Toast.shared.show("No se pudo guardar la captura.")
+                    }
+                }
+                self.onReleased?()
+            }
+        }
+    }
+
+    /// Escritura atómica: si falla, un archivo que ya existía queda intacto.
+    func writeCopy(to url: URL) -> Bool {
+        guard let data = try? Data(contentsOf: file) else { return false }
+        return (try? data.write(to: url, options: .atomic)) != nil
+    }
 
     /// Vuelve a poner esta captura en el portapapeles. Sirve para pegar una de las anteriores.
     @MainActor
@@ -575,6 +833,9 @@ private final class ThumbnailView: NSView, NSDraggingSource {
             menu.addItem(.separator())
             menu.addItem(withTitle: "Copiar ruta", action: #selector(copyPath), keyEquivalent: "").target = self
         }
+        if kind == .screenshot {
+            menu.addItem(withTitle: "Guardar como…", action: #selector(saveAs), keyEquivalent: "").target = self
+        }
         if kind != .text, !Capture.isScratch(file) {
             menu.addItem(withTitle: "Mostrar en Finder", action: #selector(reveal), keyEquivalent: "").target = self
         }
@@ -607,8 +868,7 @@ private final class ThumbnailView: NSView, NSDraggingSource {
     }
 
     override func mouseExited(with event: NSEvent) {
-        // Al arrastrar, el cursor sale de la tarjeta, pero esta debe seguir ahí.
-        guard !isDragging else { return }
+        guard !isHeld else { return }
         setHovering(false)
         onHoldChanged?(false)
     }
@@ -616,11 +876,8 @@ private final class ThumbnailView: NSView, NSDraggingSource {
     func setHovering(_ value: Bool) {
         guard hovering != value else { return }
         hovering = value
-        NSAnimationContext.beginGrouping()
-        NSAnimationContext.current.duration = 0.16
-        actionBar.animator().alphaValue = value ? 1 : 0
-        closeBar.animator().alphaValue = value ? 1 : 0
-        NSAnimationContext.endGrouping()
+        fade([veil], to: value ? 1 : 0)
+        fade(controls, to: value ? 1 : 0)
         refreshBadge()
     }
 
@@ -671,7 +928,7 @@ private final class ThumbnailView: NSView, NSDraggingSource {
         if operation != [] {
             onClose?()
         } else {
-            onDragEnded?()
+            onReleased?()
         }
     }
 
@@ -680,9 +937,9 @@ private final class ThumbnailView: NSView, NSDraggingSource {
         NSColor.windowBackgroundColor.setFill()
         bounds.fill()
 
-        // La imagen entra completa, sin deformarse.
+        // La imagen llena la tarjeta sin deformarse. Si es muy alta o muy ancha, recorta antes que dejar bandas.
         let imageSize = image.size
-        let ratio = min(bounds.width / max(imageSize.width, 1), bounds.height / max(imageSize.height, 1))
+        let ratio = max(bounds.width / max(imageSize.width, 1), bounds.height / max(imageSize.height, 1))
         let drawn = CGSize(width: imageSize.width * ratio, height: imageSize.height * ratio)
         image.draw(in: CGRect(
             x: (bounds.width - drawn.width) / 2,
@@ -692,18 +949,19 @@ private final class ThumbnailView: NSView, NSDraggingSource {
         ))
     }
 
-    /// "Copiado" solo en lo que de verdad está en el portapapeles.
+    /// "Copiado" solo en lo que de verdad está en el portapapeles, y solo un momento.
+    /// Después, en reposo, solo queda la marca de los videos.
     var badgeText: String? {
         if let flashText {
             return flashText
         }
         switch kind {
         case .screenshot:
-            return isInClipboard ? "Copiado" : nil
+            return showsClipboardNotice ? "Copiado" : nil
         case .video:
-            return isInClipboard ? "Video copiado" : "Video"
+            return showsClipboardNotice ? "Video copiado" : "Video"
         case .text:
-            return isInClipboard ? "Texto copiado" : "Texto"
+            return showsClipboardNotice ? "Texto copiado" : nil
         }
     }
 }

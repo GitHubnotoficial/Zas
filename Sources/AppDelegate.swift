@@ -16,7 +16,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var scrollStitcher: ScrollStitcher?
     private var scrollHotKeys: [UInt32] = []
     private var scrollSelection: Selection?
+    private var scrollHUD: ScrollCaptureHUD?
     private var settingsObserver: AnyCancellable?
+    private var coverObserver: AnyCancellable?
+    private let desktopCover = DesktopCover()
+    private var desktopCoverItem: NSMenuItem?
 
     private let overlay = SelectionOverlay()
     private let thumbnail = ThumbnailController()
@@ -73,6 +77,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self?.registerHotKeys()
             }
 
+        coverObserver = Settings.shared.$hidesDesktopIcons
+            .dropFirst()
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] hidden in
+                self?.desktopCover.setOn(hidden)
+                self?.desktopCoverItem?.state = hidden ? .on : .off
+            }
+
         ShortcutRecorderButton.onRecordingChanged = { [weak self] recording in
             if recording {
                 self?.unregisterHotKeys()
@@ -127,6 +140,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        desktopCover.setOn(false)
         Capture.clearScratch()
     }
 
@@ -241,6 +255,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(.separator())
         addItem("Historial", symbol: nil, #selector(openHistory))
         addItem("Abrir proyecto…", symbol: nil, #selector(chooseProject))
+        desktopCoverItem = addItem("Ocultar iconos del escritorio", symbol: nil, #selector(toggleDesktopIcons))
         let settings = addItem("Ajustes…", symbol: nil, #selector(openSettings))
         settings.keyEquivalent = ","
         menu.addItem(.separator())
@@ -436,7 +451,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             Toast.shared.show("Grabando. \(stop) para detener")
             return false
         }
-        return !overlay.isActive && !captureInFlight
+        guard !overlay.isActive, !captureInFlight else { return false }
+        windows.closeHistory()
+        return true
     }
 
     private func snap(_ selection: Selection) {
@@ -496,6 +513,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if !selection.isFullScreen {
             showRecordingBorder(around: selection.appKitRect)
         }
+        let hud = ScrollCaptureHUD(selection: selection.appKitRect, screen: selection.screen)
+        hud.onCancel = { [weak self] in
+            self?.finishScroll(save: false)
+        }
+        hud.onDone = { [weak self] in
+            self?.finishScroll(save: true)
+        }
+        hud.show()
+        scrollHUD = hud
         Toast.shared.show("Desplázate. Enter termina, Esc cancela.", seconds: 4)
         if let done = HotKeys.shared.register(keyCode: UInt32(kVK_Return), modifiers: 0, action: { [weak self] in
             self?.finishScroll(save: true)
@@ -520,7 +546,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         Capture.run(arguments: ["-x", Capture.regionArgument(selection.globalTopLeftRect)], to: url) { [weak self] _ in
             guard let self else { return }
             if let image = Capture.image(at: url) {
-                self.scrollStitcher?.add(image)
+                if self.scrollStitcher?.add(image) == true,
+                   let preview = self.scrollStitcher?.tailPreview(
+                       width: ScrollCaptureHUD.previewPixelWidth,
+                       maxHeight: ScrollCaptureHUD.previewPixelHeight
+                   ) {
+                    self.scrollHUD?.update(preview: preview)
+                }
                 if self.scrollStitcher?.lostTrack == true {
                     Toast.shared.show("Muy rápido. Sube un poco.", seconds: 1.5)
                 }
@@ -539,6 +571,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         scrollSelection = nil
         scrollHotKeys.forEach { HotKeys.shared.unregister($0) }
         scrollHotKeys.removeAll()
+        scrollHUD?.close()
+        scrollHUD = nil
         recordingBorder?.orderOut(nil)
         recordingBorder = nil
         Toast.shared.hide()
@@ -640,8 +674,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let arguments = selection.captureArguments
         let url = Capture.temporaryFileURL()
         if let frozen = selection.frozen, Capture.writePNG(frozen, to: url, pointSize: selection.imagePointSize) {
-            TextReader.read(from: url) { [weak self] text in
-                self?.finishText(text, imageURL: url)
+            TextReader.scan(from: url) { [weak self] scan in
+                self?.finishText(scan, imageURL: url)
             }
             return
         }
@@ -654,20 +688,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     Toast.shared.show("macOS no entregó la imagen. Inténtalo de nuevo.")
                     return
                 }
-                TextReader.read(from: url) { text in
-                    self?.finishText(text, imageURL: url)
+                TextReader.scan(from: url) { scan in
+                    self?.finishText(scan, imageURL: url)
                 }
             }
         }
     }
 
-    private func finishText(_ text: String, imageURL: URL) {
+    private func finishText(_ scan: TextScan, imageURL: URL) {
         captureInFlight = false
         thumbnail.resume()
         // La imagen muestra lo que había en pantalla: no debe quedarse en disco.
         let image = NSImage(contentsOf: imageURL)
         try? FileManager.default.removeItem(at: imageURL)
 
+        // Un código QR manda sobre el texto que lo rodea: es lo que se quería leer.
+        let text = scan.code ?? scan.text
         guard !text.isEmpty else {
             Toast.shared.show("No hay texto en esa área")
             return
@@ -676,6 +712,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         Capture.playSound()
         if let image {
             thumbnail.show(image: image, file: imageURL, kind: .text, text: text)
+        }
+        if scan.code != nil {
+            Toast.shared.show("Código QR copiado")
         }
     }
 
@@ -743,7 +782,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     systemAudio: Settings.shared.systemAudio,
                     fps: Settings.shared.videoFPS,
                     showsCursor: Settings.shared.videoCursor,
-                    visibleWindows: overlayEffects.windowIDs
+                    // Sin la copia del fondo, los iconos escondidos volverían a salir en el video.
+                    visibleWindows: overlayEffects.windowIDs + self.desktopCover.windowIDs
                 )
                 self.showRecordingUI(selection)
             } catch {
@@ -930,6 +970,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             Capture.copyFile(at: file)
             Capture.playSound()
             showVideoThumbnail(file, inClipboard: true)
+        } else if HistoryFilter.gifs.includes(file) {
+            // Se copia el archivo: como imagen, el GIF perdería el movimiento.
+            guard FileManager.default.fileExists(atPath: file.path) else {
+                Toast.shared.show("Ese archivo ya no existe.")
+                return
+            }
+            Capture.copyFile(at: file)
+            Capture.playSound()
+            Toast.shared.show("GIF copiado")
         } else if let image = Capture.copyImage(at: file) {
             Capture.playSound()
             thumbnail.show(image: image, file: file, kind: .screenshot)
@@ -942,6 +991,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func openFolder() {
         NSWorkspace.shared.open(Capture.folder)
+    }
+
+    @objc private func toggleDesktopIcons() {
+        Settings.shared.hidesDesktopIcons.toggle()
     }
 
     @objc private func openSettings() {

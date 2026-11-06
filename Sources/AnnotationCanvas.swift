@@ -25,6 +25,11 @@ final class AnnotationCanvas: NSView {
     var onRequestZoom: ((Int) -> Void)?
     var onToolShortcut: ((AnnotationTool) -> Void)?
 
+    /// Aire que se deja alrededor de la imagen al ajustarla al lienzo.
+    var fitInset: CGFloat = 0 {
+        didSet { needsDisplay = true }
+    }
+
     private let original: NSImage
     private var image: NSImage { document.base ?? original }
     /// Una versión pixelada por cada intensidad usada.
@@ -100,17 +105,30 @@ final class AnnotationCanvas: NSView {
         document.crop ?? CGRect(origin: .zero, size: image.size)
     }
 
-    private var displayScale: CGFloat {
-        let content = contentRect
-        return min(bounds.width / max(content.width, 1), bounds.height / max(content.height, 1), 1)
+    /// Todo lo que se ve y se exporta: el contenido y, si lo hay, el fondo que lo rodea.
+    /// El fondo crece hacia afuera, así que la imagen y las marcas conservan sus coordenadas.
+    private var outputRect: CGRect {
+        guard let backdrop = document.backdrop else { return contentRect }
+        return backdrop.layout(content: contentRect, edge: edgeInfo).outer
     }
 
-    /// Dónde se dibuja el contenido dentro del lienzo.
+    private var displayScale: CGFloat {
+        let output = outputRect
+        let room = bounds.insetBy(dx: fitInset, dy: fitInset)
+        let across: CGFloat = max(room.width, 1) / max(output.width, 1)
+        let down: CGFloat = max(room.height, 1) / max(output.height, 1)
+        return max(min(across, down, 1), 0.01)
+    }
+
+    /// Escala de la imagen en el lienzo, sin contar el zoom.
+    var fitScale: CGFloat { displayScale }
+
+    /// Dónde se dibuja el resultado dentro del lienzo.
     private var displayRect: CGRect {
-        let content = contentRect
+        let output = outputRect
         let scale = displayScale
-        let width = content.width * scale
-        let height = content.height * scale
+        let width = output.width * scale
+        let height = output.height * scale
         return CGRect(
             x: ((bounds.width - width) / 2).rounded(),
             y: ((bounds.height - height) / 2).rounded(),
@@ -120,22 +138,22 @@ final class AnnotationCanvas: NSView {
     }
 
     private func imagePoint(fromView point: CGPoint) -> CGPoint {
-        let content = contentRect
+        let output = outputRect
         let display = displayRect
         let scale = displayScale
         return CGPoint(
-            x: content.minX + (point.x - display.minX) / scale,
-            y: content.minY + (point.y - display.minY) / scale
+            x: output.minX + (point.x - display.minX) / scale,
+            y: output.minY + (point.y - display.minY) / scale
         )
     }
 
     private func viewPoint(fromImage point: CGPoint) -> CGPoint {
-        let content = contentRect
+        let output = outputRect
         let display = displayRect
         let scale = displayScale
         return CGPoint(
-            x: display.minX + (point.x - content.minX) * scale,
-            y: display.minY + (point.y - content.minY) * scale
+            x: display.minX + (point.x - output.minX) * scale,
+            y: display.minY + (point.y - output.minY) * scale
         )
     }
 
@@ -144,7 +162,85 @@ final class AnnotationCanvas: NSView {
     }
 
     override func resetCursorRects() {
-        addCursorRect(displayRect, cursor: tool == .select ? .arrow : .crosshair)
+        // Con fondo solo se dibuja sobre la captura, no sobre el margen.
+        let content = contentRect
+        let scale = displayScale
+        let area = CGRect(
+            origin: viewPoint(fromImage: content.origin),
+            size: CGSize(width: content.width * scale, height: content.height * scale)
+        )
+        addCursorRect(area, cursor: tool == .select ? .arrow : .crosshair)
+    }
+
+    /// La ventana y el panel Fondo cambian el tamaño del lienzo.
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        needsDisplay = true
+        window?.invalidateCursorRects(for: self)
+    }
+
+    // MARK: - Fondo
+
+    private var edgeCache: (image: NSImage, crop: CGRect, info: EdgeInfo)?
+    private var blurCache: (image: NSImage, crop: CGRect, blurred: NSImage?)?
+    private var pictureCache: (data: Data, picture: NSImage?)?
+    /// Documento de antes de empezar a mover un deslizador del panel Fondo.
+    private var backdropStart: AnnotationDocument?
+
+    private var edgeInfo: EdgeInfo {
+        let content = contentRect
+        if let edgeCache, edgeCache.image === image, edgeCache.crop == content {
+            return edgeCache.info
+        }
+        let info = ImageTools.edgeInfo(of: image, crop: content)
+        edgeCache = (image, content, info)
+        return info
+    }
+
+    private var blurredBackdrop: NSImage? {
+        let content = contentRect
+        if let blurCache, blurCache.image === image, blurCache.crop == content {
+            return blurCache.blurred
+        }
+        let blurred = ImageTools.blurredBackdrop(of: image, crop: content)
+        blurCache = (image, content, blurred)
+        return blurred
+    }
+
+    private func backdropPicture(_ data: Data?) -> NSImage? {
+        guard let data else { return nil }
+        if let pictureCache, pictureCache.data == data {
+            return pictureCache.picture
+        }
+        let picture = NSImage(data: data)
+        pictureCache = (data, picture)
+        return picture
+    }
+
+    /// La captura actual sin marcas: de ella sale la muestra de difuminado del panel.
+    var currentImage: NSImage { image }
+
+    /// Cambia el fondo sin tocar la imagen ni las marcas.
+    /// Mientras un deslizador se mueve, `finished` es `false` y todo cuenta como un solo paso de deshacer.
+    func setBackdrop(_ backdrop: Backdrop?, finished: Bool = true) {
+        commitTextField()
+        if backdropStart == nil {
+            backdropStart = document
+        }
+        document.backdrop = backdrop
+        if finished {
+            finishBackdropEdit()
+        }
+        needsDisplay = true
+        window?.invalidateCursorRects(for: self)
+    }
+
+    private func finishBackdropEdit() {
+        guard let start = backdropStart else { return }
+        backdropStart = nil
+        if document != start {
+            pushUndo(start)
+        }
     }
 
     // MARK: - Historial
@@ -160,6 +256,7 @@ final class AnnotationCanvas: NSView {
     }
 
     private func mutate(_ change: (inout AnnotationDocument) -> Void) {
+        finishBackdropEdit()
         let before = document
         change(&document)
         if document != before {
@@ -215,6 +312,7 @@ final class AnnotationCanvas: NSView {
             discardText()
             return
         }
+        finishBackdropEdit()
         guard let previous = undoStack.popLast() else { return }
         redoStack.append(document)
         document = previous
@@ -274,9 +372,10 @@ final class AnnotationCanvas: NSView {
     }
 
     /// Cambia la imagen entera con las marcas ya integradas. Se puede deshacer.
+    /// El fondo queda aparte: sigue siendo editable y se recompone alrededor del resultado.
     func applyImage(_ transform: (NSImage) -> NSImage?) {
         commitText()
-        guard let data = exportPNG(), let flattened = NSImage(data: data), let result = transform(flattened) else { return }
+        guard let data = exportPNG(includingBackdrop: false), let flattened = NSImage(data: data), let result = transform(flattened) else { return }
         selectedIndex = nil
         mutate {
             $0.base = result
@@ -339,6 +438,11 @@ final class AnnotationCanvas: NSView {
 
         selectedIndex = nil
         needsDisplay = true
+
+        // Lo que se dibuje fuera de la captura quedaría recortado: sobre el margen no se empieza nada.
+        if document.backdrop != nil, !contentRect.contains(point) {
+            return
+        }
 
         switch tool {
         case .select:
@@ -611,6 +715,11 @@ final class AnnotationCanvas: NSView {
     }
 
     func commitText() {
+        finishBackdropEdit()
+        commitTextField()
+    }
+
+    private func commitTextField() {
         guard let field = textField else { return }
         textField = nil
         let text = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -632,13 +741,14 @@ final class AnnotationCanvas: NSView {
         guard let context = NSGraphicsContext.current?.cgContext else { return }
         let display = displayRect
         let content = contentRect
+        let output = outputRect
         let scale = displayScale
 
         NSGraphicsContext.saveGraphicsState()
-        NSBezierPath(roundedRect: display, xRadius: 10, yRadius: 10).addClip()
+        NSBezierPath(rect: display).addClip()
         context.translateBy(x: display.minX, y: display.minY)
         context.scaleBy(x: scale, y: scale)
-        context.translateBy(x: -content.minX, y: -content.minY)
+        context.translateBy(x: -output.minX, y: -output.minY)
 
         renderContents(including: current)
         if let selectedIndex, document.annotations.indices.contains(selectedIndex) {
@@ -651,7 +761,26 @@ final class AnnotationCanvas: NSView {
     }
 
     /// Las marcas van en una capa aparte: el borrador las quita sin tocar la captura.
-    private func renderContents(including draft: Annotation? = nil) {
+    private func renderContents(including draft: Annotation? = nil, withBackdrop: Bool = true) {
+        guard withBackdrop, let backdrop = document.backdrop else {
+            renderCapture(including: draft)
+            return
+        }
+        let content = contentRect
+        let edge = edgeInfo
+        BackdropArt.compose(
+            backdrop,
+            layout: backdrop.layout(content: content, edge: edge),
+            content: content,
+            edge: edge,
+            blurred: backdrop.kind == .ownBlur ? blurredBackdrop : nil,
+            picture: backdropPicture(backdrop.picture)
+        ) {
+            renderCapture(including: draft)
+        }
+    }
+
+    private func renderCapture(including draft: Annotation?) {
         image.draw(in: CGRect(origin: .zero, size: image.size))
         guard let context = NSGraphicsContext.current?.cgContext else { return }
         context.beginTransparencyLayer(auxiliaryInfo: nil)
@@ -692,14 +821,15 @@ final class AnnotationCanvas: NSView {
 
     // MARK: - Exportar
 
-    func exportPNG() -> Data? {
+    /// Exporta lo que se ve. Sin el fondo, sale solo la captura con sus marcas.
+    func exportPNG(includingBackdrop: Bool = true) -> Data? {
         guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
             return nil
         }
-        let content = contentRect
+        let frame = includingBackdrop ? outputRect : contentRect
         let pixelsPerPoint = CGFloat(cgImage.width) / max(image.size.width, 1)
-        let width = Int((content.width * pixelsPerPoint).rounded())
-        let height = Int((content.height * pixelsPerPoint).rounded())
+        let width = Int((frame.width * pixelsPerPoint).rounded())
+        let height = Int((frame.height * pixelsPerPoint).rounded())
 
         guard let bitmap = NSBitmapImageRep(
             bitmapDataPlanes: nil,
@@ -719,14 +849,19 @@ final class AnnotationCanvas: NSView {
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = context
         context.cgContext.scaleBy(x: pixelsPerPoint, y: pixelsPerPoint)
-        context.cgContext.translateBy(x: -content.minX, y: -content.minY)
-        renderContents()
+        context.cgContext.translateBy(x: -frame.minX, y: -frame.minY)
+        renderContents(withBackdrop: includingBackdrop)
         NSGraphicsContext.restoreGraphicsState()
 
         // Se asigna al final para no alterar la escala del dibujo de arriba.
-        bitmap.size = content.size
+        bitmap.size = frame.size
         return bitmap.representation(using: .png, properties: [:])
     }
+
+    #if ZAS_TEST
+    func testViewPoint(fromImage point: CGPoint) -> CGPoint { viewPoint(fromImage: point) }
+    func testImagePoint(fromView point: CGPoint) -> CGPoint { imagePoint(fromView: point) }
+    #endif
 }
 
 extension AnnotationCanvas: NSTextFieldDelegate {

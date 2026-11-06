@@ -197,9 +197,12 @@ struct AnnotationDocument: Equatable {
     var crop: CGRect?
     /// Imagen transformada (rotada, con fondo...). `nil` es la captura original.
     var base: NSImage?
+    /// Fondo alrededor de la captura. No cambia ninguna coordenada.
+    var backdrop: Backdrop?
 
     static func == (lhs: AnnotationDocument, rhs: AnnotationDocument) -> Bool {
-        lhs.crop == rhs.crop && lhs.base === rhs.base && lhs.annotations.count == rhs.annotations.count
+        lhs.crop == rhs.crop && lhs.base === rhs.base && lhs.backdrop == rhs.backdrop
+            && lhs.annotations.count == rhs.annotations.count
             && zip(lhs.annotations, rhs.annotations).allSatisfy {
                 $0.points == $1.points && $0.color == $1.color && $0.lineWidth == $1.lineWidth
                     && $0.blockSize == $1.blockSize && $0.text == $1.text

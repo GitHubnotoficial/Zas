@@ -92,11 +92,177 @@ private final class LiveTextPane: NSView {
     }
 }
 
+/// La barra comparte fila con los semáforos, una zona donde el título puede quedarse con el clic.
+/// La ventana entrega directamente a cada control de la barra lo que le toca.
+private final class EditorWindow: NSWindow {
+    weak var topBar: NSView?
+
+    override func sendEvent(_ event: NSEvent) {
+        if event.type == .leftMouseDown, attachedSheet == nil, let topBar,
+           let point = topBar.superview?.convert(event.locationInWindow, from: nil),
+           let control = topBar.hitTest(point) as? NSControl {
+            if !isKeyWindow {
+                makeKey()
+            }
+            control.mouseDown(with: event)
+            return
+        }
+        super.sendEvent(event)
+    }
+}
+
+/// Fondo liso y neutro de la ventana.
+private final class EditorSurface: NSView {
+    override func draw(_ dirtyRect: NSRect) {
+        Design.canvasBackground.setFill()
+        bounds.fill()
+    }
+}
+
+/// Barra superior o inferior: color de ventana y un filo fino hacia el lienzo.
+private final class EditorBar: NSView {
+    private let lineAtBottom: Bool
+
+    init(frame: CGRect, lineAtBottom: Bool) {
+        self.lineAtBottom = lineAtBottom
+        super.init(frame: frame)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) no se usa")
+    }
+
+    // La barra de arriba es también el título: desde ahí se mueve la ventana.
+    override var mouseDownCanMoveWindow: Bool { lineAtBottom }
+
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.windowBackgroundColor.setFill()
+        bounds.fill()
+        NSColor.separatorColor.setFill()
+        CGRect(x: 0, y: lineAtBottom ? 0 : bounds.height - 1, width: bounds.width, height: 1).fill()
+    }
+}
+
+/// Avisa cuando cambia de tamaño, para que el lienzo siga llenando el espacio.
+private final class CanvasScrollView: NSScrollView {
+    var onResize: (() -> Void)?
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        onResize?()
+    }
+}
+
+/// Con poco zoom la imagen queda en el centro, no pegada a una esquina.
+private final class CenteringClipView: NSClipView {
+    override func constrainBoundsRect(_ proposedBounds: NSRect) -> NSRect {
+        var rect = super.constrainBoundsRect(proposedBounds)
+        guard let document = documentView?.frame else { return rect }
+        if rect.width > document.width {
+            rect.origin.x = (document.width - rect.width) / 2
+        }
+        if rect.height > document.height {
+            rect.origin.y = (document.height - rect.height) / 2
+        }
+        return rect
+    }
+}
+
+/// Píldora "Arrástrame": al arrastrarla, el archivo con las marcas sale hacia otra app.
+private final class DragPill: NSView, NSDraggingSource {
+    var fileProvider: (() -> URL?)?
+
+    private var start: CGPoint?
+    private var dragged = false
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        toolTip = "Arrastra la imagen a otra app"
+        setAccessibilityElement(true)
+        setAccessibilityRole(.button)
+        setAccessibilityLabel("Arrastrar la imagen a otra app")
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) no se usa")
+    }
+
+    override var mouseDownCanMoveWindow: Bool { false }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: .openHand)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        start = convert(event.locationInWindow, from: nil)
+        dragged = false
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard !dragged, let start else { return }
+        let point = convert(event.locationInWindow, from: nil)
+        guard hypot(point.x - start.x, point.y - start.y) > 4 else { return }
+        dragged = true
+
+        guard let url = fileProvider?(), let image = NSImage(contentsOf: url) else { return }
+        let ratio = min(220 / max(image.size.width, 1), 160 / max(image.size.height, 1), 1)
+        let size = CGSize(width: image.size.width * ratio, height: image.size.height * ratio)
+        let item = NSDraggingItem(pasteboardWriter: url as NSURL)
+        item.setDraggingFrame(
+            CGRect(x: point.x - size.width / 2, y: point.y - size.height / 2, width: size.width, height: size.height),
+            contents: image
+        )
+        beginDraggingSession(with: [item], event: event, source: self)
+    }
+
+    // Tocarla, una o dos veces, no hace nada: solo responde al arrastre.
+    override func mouseUp(with event: NSEvent) {
+        start = nil
+    }
+
+    func draggingSession(
+        _ session: NSDraggingSession,
+        sourceOperationMaskFor context: NSDraggingContext
+    ) -> NSDragOperation {
+        .copy
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.quaternaryLabelColor.setFill()
+        NSBezierPath(roundedRect: bounds, xRadius: bounds.height / 2, yRadius: bounds.height / 2).fill()
+
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 12, weight: .medium),
+            .foregroundColor: NSColor.labelColor,
+        ]
+        let title = "Arrástrame" as NSString
+        let size = title.size(withAttributes: attributes)
+        title.draw(
+            at: CGPoint(x: bounds.midX - size.width / 2, y: bounds.midY - size.height / 2),
+            withAttributes: attributes
+        )
+
+        // Dos marcas de agarre, una a cada lado.
+        NSColor.tertiaryLabelColor.setFill()
+        for x in [CGFloat(11), bounds.maxX - 19] {
+            for y in [bounds.midY + 1, bounds.midY - 3] {
+                NSBezierPath(roundedRect: CGRect(x: x, y: y, width: 8, height: 2), xRadius: 1, yRadius: 1).fill()
+            }
+        }
+    }
+}
+
 /// Ventana de anotación. "Listo" reemplaza el portapapeles, guarda una copia y cierra.
 @MainActor
-final class AnnotationEditor: NSObject, NSWindowDelegate {
+final class AnnotationEditor: NSObject, NSWindowDelegate, NSPopoverDelegate {
     var onFinish: ((NSImage, URL) -> Void)?
     var onClose: (() -> Void)?
+
+    private enum StylePopover {
+        case color, size, line
+    }
 
     private static let palette: [(String, NSColor)] = [
         ("Rojo", .systemRed),
@@ -123,26 +289,40 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
         .highlight: (6, 60, 22), .text: (1, 24, 5), .counter: (1, 24, 5), .eraser: (6, 90, 28),
         .pixelate: (8, 90, 30),
     ]
+    /// Sobrevive al editor: lo fijado sigue en pantalla aunque se cierre esta ventana.
+    private static let pins = PinController()
 
     private let image: NSImage
     private let file: URL
     let canvas: AnnotationCanvas
-    private let scrollView: NSScrollView
-    private let window: NSWindow
+    private let scrollView: CanvasScrollView
+    private let window: EditorWindow
+    private let backgroundPanel: BackgroundPanel
     private let previousApp = NSWorkspace.shared.frontmostApplication
     private let targetScreen: NSScreen
 
     private var toolButtons: [AnnotationTool: GlassButton] = [:]
-    private var colorSwatch: DotButton?
-    private let colorPopover = NSPopover()
+    private var filledButton: GlassButton?
+    private var backgroundButton: GlassButton?
+    private var colorPill: PillControl?
+    private var widthPill: PillControl?
+    private var linePill: PillControl?
+    private var zoomPill: PillControl?
     private var undoButton: GlassButton?
     private var redoButton: GlassButton?
-    private var saveButton: GlassButton?
     private var textButton: GlassButton?
-    private var zoomLabel: NSTextField?
-    private var subBar: GlassView?
     private var liveText: LiveTextPane?
     private var escapeMonitor: Any?
+
+    private var stylePopover: NSPopover?
+    private var openPopover: StylePopover?
+    private var popoverClosed: (kind: StylePopover, at: Date)?
+
+    private var panelOpen = false
+    private var panelProgress: CGFloat = 0
+    private var panelSpring: Timer?
+    private var sharePicker: NSSharingServicePicker?
+    private var pathExport: (revision: Int, url: URL)?
 
     private var penColor: NSColor = .systemRed
     private var markerColor = AnnotationEditor.markers[0].1
@@ -154,11 +334,11 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
         self.image = image
         self.file = file
 
-        // Dos filas reservadas: herramientas y opciones. Nada flota encima de la captura.
-        let toolbarHeight: CGFloat = 106
+        // Una barra arriba y otra abajo. Nada flota encima de la captura.
+        let barHeight = Design.editorBar
         let padding: CGFloat = 24
-        let minimumWidth: CGFloat = 900
-        let minimumHeight: CGFloat = 340
+        let minimumWidth: CGFloat = 920
+        let minimumHeight: CGFloat = 420
 
         let screen = NSScreen.underMouse
         targetScreen = screen
@@ -166,24 +346,20 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
         let fit = min(
             1,
             (visible.width - padding * 2) / max(image.size.width, 1),
-            (visible.height - toolbarHeight - padding * 2) / max(image.size.height, 1)
+            (visible.height - barHeight * 2 - padding * 2) / max(image.size.height, 1)
         )
         let imageWidth = (image.size.width * fit).rounded()
         let imageHeight = (image.size.height * fit).rounded()
         let contentSize = CGSize(
             width: max(imageWidth + padding * 2, minimumWidth),
-            height: max(imageHeight + padding * 2 + toolbarHeight, minimumHeight)
+            height: max(imageHeight + padding * 2 + barHeight * 2, minimumHeight)
         )
 
-        let area = CGRect(
-            x: padding,
-            y: padding,
-            width: contentSize.width - padding * 2,
-            height: contentSize.height - toolbarHeight - padding * 2
-        )
+        let area = CGRect(x: 0, y: barHeight, width: contentSize.width, height: contentSize.height - barHeight * 2)
         canvas = AnnotationCanvas(frame: CGRect(origin: .zero, size: area.size), image: image)
-        scrollView = NSScrollView(frame: area)
-        window = NSWindow(
+        scrollView = CanvasScrollView(frame: area)
+        backgroundPanel = BackgroundPanel(frame: CGRect(x: -BackgroundPanel.width, y: barHeight, width: BackgroundPanel.width, height: area.height))
+        window = EditorWindow(
             contentRect: CGRect(origin: .zero, size: contentSize),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
@@ -191,8 +367,11 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
         )
         super.init()
 
+        canvas.fitInset = padding
+
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
+        window.titlebarSeparatorStyle = .none
         window.title = "Anotar captura"
         window.autorecalculatesKeyViewLoop = true
         window.minSize = CGSize(width: minimumWidth, height: minimumHeight)
@@ -200,6 +379,9 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
         window.delegate = self
         window.collectionBehavior = [.fullScreenAuxiliary, .moveToActiveSpace]
 
+        let clip = CenteringClipView()
+        clip.drawsBackground = false
+        scrollView.contentView = clip
         scrollView.documentView = canvas
         scrollView.autoresizingMask = [.width, .height]
         scrollView.drawsBackground = false
@@ -210,25 +392,36 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
         scrollView.minMagnification = 0.25
         scrollView.maxMagnification = 8
 
-        let content = NSVisualEffectView(frame: CGRect(origin: .zero, size: contentSize))
-        content.material = .underWindowBackground
-        content.blendingMode = .behindWindow
-        content.state = .followsWindowActiveState
+        backgroundPanel.isHidden = true
+        backgroundPanel.autoresizingMask = [.height, .maxXMargin]
+
+        let content = EditorSurface(frame: CGRect(origin: .zero, size: contentSize))
         content.addSubview(scrollView)
-        buildToolbar(in: content)
-        buildZoomControls(in: content)
+        content.addSubview(backgroundPanel)
+        buildTopBar(in: content)
+        buildBottomBar(in: content)
         window.contentView = content
 
         for (tool, size) in Self.sizes {
             toolSizes[tool] = size.2
         }
 
-        canvas.onHistoryChanged = { [weak self] in self?.refreshHistoryButtons() }
+        canvas.onHistoryChanged = { [weak self] in self?.documentChanged() }
         canvas.onRequestClose = { [weak self] in self?.window.performClose(nil) }
         canvas.onRequestCopy = { [weak self] in self?.quickCopy() }
         canvas.onRequestSave = { [weak self] in self?.saveCopy() }
         canvas.onRequestZoom = { [weak self] step in self?.zoom(by: step) }
         canvas.onToolShortcut = { [weak self] tool in self?.select(tool: tool) }
+
+        backgroundPanel.onChange = { [weak self] backdrop, finished in
+            guard let self else { return }
+            self.canvas.setBackdrop(backdrop, finished: finished)
+            self.refreshZoomLabel()
+        }
+        backgroundPanel.onPickPicture = { [weak self] in self?.pickBackdropPicture() }
+
+        scrollView.onResize = { [weak self] in self?.fitCanvas() }
+        fitCanvas()
 
         magnifyObserver = NotificationCenter.default.addObserver(
             forName: NSScrollView.didEndLiveMagnifyNotification,
@@ -241,103 +434,176 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
         }
 
         select(tool: .arrow)
-        refreshHistoryButtons()
+        documentChanged()
     }
 
-    /// Barra de vidrio flotante.
-    private func buildToolbar(in content: NSView) {
-        let tools: [AnnotationTool] = [
-            .select, .arrow, .rectangle, .ellipse, .pencil, .highlight, .text, .counter, .pixelate, .spotlight, .eraser, .crop,
-        ]
-        let padding = Design.barPadding
-        let barHeight = Design.actionSize + padding * 2
+    // MARK: - Barras
 
-        let bar = GlassView(frame: .zero, radius: Design.barRadius, blending: .withinWindow)
-        var x = padding
+    /// Una sola fila junto a los semáforos: imagen, herramientas, estilo y, a la derecha, las salidas.
+    private func buildTopBar(in content: NSView) {
+        let barHeight = Design.editorBar
+        let size = Design.toolSize
+        let bar = EditorBar(
+            frame: CGRect(x: 0, y: content.bounds.height - barHeight, width: content.bounds.width, height: barHeight),
+            lineAtBottom: true
+        )
+        bar.autoresizingMask = [.width, .minYMargin]
+
+        // Empieza después de los semáforos.
+        var x: CGFloat = 86
         func place(_ view: NSView, gap: CGFloat = 2) {
             view.frame.origin = CGPoint(x: x, y: ((barHeight - view.frame.height) / 2).rounded())
             bar.addSubview(view)
             x += view.frame.width + gap
         }
-
-        for tool in tools {
+        func addTool(_ tool: AnnotationTool, gap: CGFloat = 2) {
             let button = GlassButton(
                 symbol: tool.symbol,
                 tooltip: "\(tool.label) (\(tool.key))",
                 target: self,
-                action: #selector(toolPressed(_:))
+                action: #selector(toolPressed(_:)),
+                size: size
             )
             button.tag = tool.rawValue
-            place(button)
+            place(button, gap: gap)
             toolButtons[tool] = button
         }
 
-        x += 6
-        let swatch = DotButton(color: penColor, diameter: 18, tooltip: "Color y tamaño", target: self, action: #selector(swatchPressed(_:)))
-        place(swatch, gap: 10)
-        colorSwatch = swatch
+        // Grupo de imagen.
+        addTool(.crop)
+        place(GlassButton(symbol: "photo", tooltip: "Imagen: rotar, voltear, tamaño", target: self, action: #selector(imagePressed(_:)), size: size))
+        let background = GlassButton(symbol: "rectangle.inset.filled", tooltip: "Fondo", target: self, action: #selector(backgroundPressed), size: size)
+        place(background, gap: 14)
+        backgroundButton = background
 
-        let undo = GlassButton(symbol: "arrow.uturn.backward", tooltip: "Deshacer (⌘Z)", target: canvas, action: #selector(AnnotationCanvas.undo(_:)))
-        place(undo)
-        undoButton = undo
-        let redo = GlassButton(symbol: "arrow.uturn.forward", tooltip: "Rehacer (⇧⌘Z)", target: canvas, action: #selector(AnnotationCanvas.redo(_:)))
-        place(redo, gap: 10)
-        redoButton = redo
+        // Herramientas.
+        addTool(.select)
+        addTool(.rectangle)
+        let filled = GlassButton(symbol: "rectangle.fill", tooltip: "Cuadro relleno", target: self, action: #selector(filledPressed), size: size)
+        place(filled)
+        filledButton = filled
+        addTool(.ellipse)
+        addTool(.arrow)
+        addTool(.text)
+        addTool(.pixelate)
+        addTool(.spotlight)
+        addTool(.counter)
+        addTool(.pencil)
+        addTool(.highlight)
+        addTool(.eraser, gap: 14)
 
-        place(GlassButton(symbol: "doc.on.doc", tooltip: "Copiar sin cerrar (⌘C)", target: self, action: #selector(quickCopy)))
-        let save = GlassButton(symbol: "square.and.arrow.down", tooltip: "Guardar", target: self, action: #selector(savePressed(_:)))
-        place(save)
-        saveButton = save
-        place(GlassButton(symbol: "photo.on.rectangle", tooltip: "Imagen: rotar, fondo, tamaño", target: self, action: #selector(imagePressed(_:))))
-        let text = GlassButton(symbol: "text.viewfinder", tooltip: "Seleccionar texto en la imagen", target: self, action: #selector(toggleTextMode))
-        place(text, gap: 8)
-        textButton = text
+        // Píldoras de estilo: sustituyen a la antigua fila de opciones.
+        let color = PillControl(content: .dot(penColor), width: 42, tooltip: "Color", target: self, action: #selector(swatchPressed(_:)))
+        place(color, gap: 4)
+        colorPill = color
+        let width = PillControl(content: .stroke(5), width: 42, tooltip: "Grosor", target: self, action: #selector(widthPressed(_:)))
+        place(width, gap: 4)
+        widthPill = width
+        let line = PillControl(content: .symbol(AnnotationTool.arrow.symbol), width: 42, tooltip: "Tipo de línea", target: self, action: #selector(linePressed(_:)))
+        place(line, gap: 4)
+        linePill = line
 
+        // Salidas, pegadas a la derecha.
         let done = NSButton(title: "Listo", target: self, action: #selector(copyAndClose))
         done.bezelStyle = .rounded
         done.controlSize = .large
         done.keyEquivalent = "\r"
+        done.toolTip = "Copiar, guardar y cerrar (⏎)"
         done.sizeToFit()
-        place(done, gap: padding + 2)
+        let save = NSButton(title: "Guardar como…", target: self, action: #selector(savePressed(_:)))
+        save.bezelStyle = .rounded
+        save.controlSize = .large
+        save.sizeToFit()
 
-        bar.frame = CGRect(
-            x: ((content.bounds.width - x) / 2).rounded(),
-            y: content.bounds.height - barHeight - 10,
-            width: x,
-            height: barHeight
-        )
-        bar.autoresizingMask = [.minXMargin, .maxXMargin, .minYMargin]
+        var right = bar.bounds.width - 12
+        for button in [done, save] {
+            right -= button.frame.width
+            button.frame.origin = CGPoint(x: right, y: ((barHeight - button.frame.height) / 2).rounded())
+            button.autoresizingMask = [.minXMargin]
+            bar.addSubview(button)
+            right -= 8
+        }
+
+        content.addSubview(bar)
+        window.topBar = bar
+    }
+
+    /// Zoom e historia a la izquierda, arrastre al centro, salidas rápidas a la derecha.
+    private func buildBottomBar(in content: NSView) {
+        let barHeight = Design.editorBar
+        let size = Design.toolSize
+        let bar = EditorBar(frame: CGRect(x: 0, y: 0, width: content.bounds.width, height: barHeight), lineAtBottom: false)
+        bar.autoresizingMask = [.width, .maxYMargin]
+        let middle = ((barHeight - size) / 2).rounded()
+
+        var x: CGFloat = 12
+        func place(_ view: NSView, gap: CGFloat = 2) {
+            view.frame.origin = CGPoint(x: x, y: middle)
+            bar.addSubview(view)
+            x += view.frame.width + gap
+        }
+
+        let zoom = PillControl(content: .text("100 %"), width: 78, tooltip: "Zoom", target: self, action: #selector(zoomPressed(_:)))
+        place(zoom, gap: 10)
+        zoomPill = zoom
+
+        let undo = GlassButton(symbol: "arrow.uturn.backward", tooltip: "Deshacer (⌘Z)", target: canvas, action: #selector(AnnotationCanvas.undo(_:)), size: size)
+        place(undo)
+        undoButton = undo
+        let redo = GlassButton(symbol: "arrow.uturn.forward", tooltip: "Rehacer (⇧⌘Z)", target: canvas, action: #selector(AnnotationCanvas.redo(_:)), size: size)
+        place(redo)
+        redoButton = redo
+        let text = GlassButton(symbol: "text.viewfinder", tooltip: "Seleccionar texto en la imagen", target: self, action: #selector(toggleTextMode), size: size)
+        place(text)
+        textButton = text
+
+        let drag = DragPill(frame: CGRect(x: ((bar.bounds.width - 124) / 2).rounded(), y: middle, width: 124, height: size))
+        drag.autoresizingMask = [.minXMargin, .maxXMargin]
+        drag.fileProvider = { [weak self] in self?.exportTemporaryFile() }
+        bar.addSubview(drag)
+
+        let buttons = [
+            PillControl(content: .symbol("square.and.arrow.up"), width: size, tooltip: "Compartir", chevron: false, target: self, action: #selector(sharePressed(_:))),
+            PillControl(content: .symbol("pin"), width: size, tooltip: "Fijar en la pantalla", chevron: false, target: self, action: #selector(pinPressed)),
+            PillControl(content: .symbol("doc.on.doc"), width: size, tooltip: "Copiar sin cerrar (⌘C)", chevron: false, target: self, action: #selector(quickCopy)),
+            PillControl(content: .symbol("terminal"), width: size, tooltip: "Copiar ruta para un agente", chevron: false, target: self, action: #selector(copyPathPressed)),
+        ]
+        var right = bar.bounds.width - 12
+        for button in buttons.reversed() {
+            right -= button.frame.width
+            button.frame.origin = CGPoint(x: right, y: middle)
+            button.autoresizingMask = [.minXMargin]
+            bar.addSubview(button)
+            right -= 8
+        }
+
         content.addSubview(bar)
     }
 
-    private func buildZoomControls(in content: NSView) {
-        let pill = GlassView(frame: CGRect(x: 0, y: 0, width: 186, height: 38), radius: Design.barRadius, blending: .withinWindow)
-        let out = GlassButton(symbol: "minus", tooltip: "Alejar (⌘-)", target: self, action: #selector(zoomOut), size: 28)
-        out.frame.origin = CGPoint(x: 5, y: 5)
-        pill.addSubview(out)
+    /// Centra los semáforos en la barra de 44 puntos, que comparten con las herramientas.
+    /// macOS los recoloca al cambiar el tamaño, así que se repite cada vez.
+    private func alignWindowButtons() {
+        let barHeight = Design.editorBar
+        let buttons = [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton].compactMap { window.standardWindowButton($0) }
+        guard let first = buttons.first, let titlebar = first.superview?.superview else { return }
+        var frame = titlebar.frame
+        frame.size.height = barHeight
+        frame.origin.y = window.frame.height - barHeight
+        titlebar.frame = frame
+        for (index, button) in buttons.enumerated() {
+            button.setFrameOrigin(NSPoint(
+                x: 16 + CGFloat(index) * 20,
+                y: ((barHeight - button.frame.height) / 2).rounded()
+            ))
+        }
+    }
 
-        let label = NSTextField(labelWithString: "100 %")
-        label.font = .monospacedDigitSystemFont(ofSize: 12, weight: .medium)
-        label.alignment = .center
-        label.frame = CGRect(x: 33, y: 11, width: 50, height: 16)
-        pill.addSubview(label)
-        zoomLabel = label
+    func windowDidResize(_ notification: Notification) {
+        alignWindowButtons()
+    }
 
-        let plus = GlassButton(symbol: "plus", tooltip: "Acercar (⌘+)", target: self, action: #selector(zoomIn), size: 28)
-        plus.frame.origin = CGPoint(x: 83, y: 5)
-        pill.addSubview(plus)
-
-        let fit = NSButton(title: "Ajustar", target: self, action: #selector(zoomFit))
-        fit.isBordered = false
-        fit.font = .systemFont(ofSize: 12, weight: .medium)
-        fit.frame = CGRect(x: 114, y: 8, width: 64, height: 22)
-        fit.contentTintColor = .labelColor
-        fit.toolTip = "Ver toda la imagen (⌘0)"
-        pill.addSubview(fit)
-
-        pill.frame.origin = CGPoint(x: content.bounds.maxX - pill.frame.width - 12, y: content.bounds.height - 62 - 40)
-        pill.autoresizingMask = [.minXMargin, .minYMargin]
-        content.addSubview(pill)
+    func windowDidBecomeKey(_ notification: Notification) {
+        alignWindowButtons()
     }
 
     func show() {
@@ -351,120 +617,99 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
         window.makeFirstResponder(canvas)
+        alignWindowButtons()
     }
 
-    private func refreshHistoryButtons() {
+    /// El lienzo llena su zona y la imagen se ajusta dentro; el zoom se aplica encima.
+    private func fitCanvas() {
+        canvas.setFrameSize(scrollView.contentSize)
+        refreshZoomLabel()
+    }
+
+    /// Algo cambió en el documento, también al deshacer o al abrir un proyecto.
+    private func documentChanged() {
         undoButton?.isEnabled = canvas.canUndo
         redoButton?.isEnabled = canvas.canRedo
+        refreshZoomLabel()
+        if panelOpen {
+            backgroundPanel.reload(canvas.document.backdrop, capture: canvas.currentImage)
+        }
     }
 
     private func select(tool: AnnotationTool) {
         canvas.commitText()
         closeTextMode()
-        colorPopover.performClose(nil)
+        stylePopover?.performClose(nil)
         canvas.tool = tool
         canvas.color = tool == .highlight ? markerColor : penColor
         if let size = toolSizes[tool] {
             canvas.lineWidth = size
         }
-        colorSwatch?.dotColor = canvas.color
-        for (candidate, button) in toolButtons {
-            button.isActive = candidate == tool
-        }
-        buildSubBar()
+        refreshToolButtons()
+        refreshStyleControls()
     }
 
-    /// Las herramientas de pincel muestran su tamaño a la vista, sin abrir nada.
-    private func buildSubBar() {
-        subBar?.removeFromSuperview()
-        subBar = nil
+    /// Fondo azul solo en la activa. Cuadro y cuadro relleno son la misma herramienta.
+    private func refreshToolButtons() {
+        for (candidate, button) in toolButtons {
+            button.isActive = candidate == canvas.tool && !(candidate == .rectangle && canvas.filled)
+        }
+        filledButton?.isActive = canvas.tool == .rectangle && canvas.filled
+
+        // La misma herramienta traza flecha o línea: el botón muestra cuál.
+        let symbol = canvas.plainLine ? "line.diagonal" : AnnotationTool.arrow.symbol
+        let configuration = NSImage.SymbolConfiguration(pointSize: Design.toolSize * 0.42, weight: .medium)
+        if let picture = NSImage(systemSymbolName: symbol, accessibilityDescription: AnnotationTool.arrow.label)?.withSymbolConfiguration(configuration) {
+            toolButtons[.arrow]?.image = picture
+        }
+    }
+
+    /// Símbolo de la variante elegida, en las herramientas que tienen más de una.
+    private var lineSymbol: String? {
+        switch canvas.tool {
+        case .arrow: return canvas.plainLine ? "line.diagonal" : AnnotationTool.arrow.symbol
+        case .rectangle: return canvas.filled ? "rectangle.fill" : "rectangle"
+        case .pixelate: return canvas.smoothBlur ? "drop" : "square.grid.3x3.square"
+        default: return nil
+        }
+    }
+
+    private func refreshStyleControls() {
         let tool = canvas.tool
-        colorSwatch?.isEnabled = ![.eraser, .pixelate, .crop, .spotlight, .select].contains(tool)
-        colorSwatch?.alphaValue = colorSwatch?.isEnabled == true ? 1 : 0.3
-        guard [.pencil, .highlight, .eraser, .pixelate, .rectangle, .ellipse, .arrow, .text, .counter].contains(tool),
-              let size = Self.sizes[tool], let content = window.contentView
-        else { return }
+        colorPill?.isEnabled = ![.eraser, .pixelate, .crop, .spotlight, .select].contains(tool)
+        colorPill?.content = .dot(canvas.color)
+        colorPill?.setAccessibilityValue(colorName(canvas.color))
 
-        let bar = GlassView(frame: .zero, radius: Design.barRadius, blending: .withinWindow)
-        var x: CGFloat = 12
-        func addSegment(_ labels: [String], selected: Int, action: Selector) {
-            let mode = NSSegmentedControl(labels: labels, trackingMode: .selectOne, target: self, action: action)
-            mode.selectedSegment = selected
-            mode.controlSize = .small
-            mode.sizeToFit()
-            mode.frame.origin = CGPoint(x: x, y: 9)
-            bar.addSubview(mode)
-            x += mode.frame.width + 12
-        }
-        if tool == .pixelate {
-            addSegment(["Pixelado", "Desenfoque"], selected: canvas.smoothBlur ? 1 : 0, action: #selector(blurStyleChanged(_:)))
-            addSegment(["Recuadro", "Pincel"], selected: canvas.pixelBrush ? 1 : 0, action: #selector(pixelModeChanged(_:)))
-        }
-        if tool == .rectangle {
-            addSegment(["Contorno", "Relleno"], selected: canvas.filled ? 1 : 0, action: #selector(fillChanged(_:)))
-        }
-        if tool == .arrow {
-            addSegment(["Flecha", "Línea"], selected: canvas.plainLine ? 1 : 0, action: #selector(lineChanged(_:)))
-        }
+        widthPill?.isEnabled = [.pencil, .highlight, .eraser, .pixelate, .rectangle, .ellipse, .arrow, .text, .counter].contains(tool)
+        widthPill?.content = .stroke(canvas.lineWidth)
+        widthPill?.setAccessibilityValue("\(Int(canvas.lineWidth))")
 
-        if tool != .pixelate || canvas.pixelBrush {
-            let label = NSTextField(labelWithString: "Tamaño:")
-            label.font = .systemFont(ofSize: 12, weight: .medium)
-            label.sizeToFit()
-            label.frame.origin = CGPoint(x: x, y: 11)
-            bar.addSubview(label)
-            x += label.frame.width + 8
-
-            let slider = NSSlider(value: Double(canvas.lineWidth), minValue: Double(size.0), maxValue: Double(size.1), target: self, action: #selector(sizeChanged(_:)))
-            slider.frame = CGRect(x: x, y: 8, width: 120, height: 22)
-            slider.setAccessibilityLabel("Tamaño")
-            bar.addSubview(slider)
-            x += 128
-
-            let value = NSTextField(labelWithString: "\(Int(canvas.lineWidth))")
-            value.font = .monospacedDigitSystemFont(ofSize: 12, weight: .medium)
-            value.alignment = .right
-            value.frame = CGRect(x: x, y: 11, width: 24, height: 16)
-            value.tag = 77
-            bar.addSubview(value)
-            x += 34
+        let symbol = lineSymbol
+        linePill?.isHidden = symbol == nil
+        if let symbol {
+            linePill?.content = .symbol(symbol)
         }
+    }
 
-        if tool == .pixelate {
-            let strength = NSTextField(labelWithString: "Intensidad:")
-            strength.font = .systemFont(ofSize: 12, weight: .medium)
-            strength.sizeToFit()
-            strength.frame.origin = CGPoint(x: x, y: 11)
-            bar.addSubview(strength)
-            x += strength.frame.width + 8
-            let blocks = NSSlider(value: Double(canvas.blockSize), minValue: 6, maxValue: 40, target: self, action: #selector(blockChanged(_:)))
-            blocks.frame = CGRect(x: x, y: 8, width: 100, height: 22)
-            blocks.setAccessibilityLabel("Intensidad")
-            bar.addSubview(blocks)
-            x += 112
-        }
-
-        bar.frame = CGRect(
-            x: ((content.bounds.width - x) / 2).rounded(),
-            y: content.bounds.height - 62 - 44,
-            width: x,
-            height: 38
-        )
-        bar.autoresizingMask = [.minXMargin, .maxXMargin, .minYMargin]
-        content.addSubview(bar)
-        subBar = bar
+    private func colorName(_ color: NSColor) -> String {
+        (Self.palette + Self.markers).first { Self.sameColor($0.1, color) }?.0 ?? "Color propio"
     }
 
     @objc private func blurStyleChanged(_ sender: NSSegmentedControl) {
         canvas.smoothBlur = sender.selectedSegment == 1
+        refreshStyleControls()
     }
 
     @objc private func fillChanged(_ sender: NSSegmentedControl) {
         canvas.filled = sender.selectedSegment == 1
+        refreshToolButtons()
+        refreshStyleControls()
     }
 
     @objc private func lineChanged(_ sender: NSSegmentedControl) {
         canvas.plainLine = sender.selectedSegment == 1
+        refreshToolButtons()
+        refreshStyleControls()
     }
 
     // MARK: - Imagen
@@ -486,13 +731,9 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
             add("\(percent) %", #selector(resizeImage(_:)), tag: percent, to: sizes)
         }
         menu.addItem(withTitle: "Cambiar tamaño", action: nil, keyEquivalent: "").submenu = sizes
-        let fonts = NSMenu()
-        for (index, entry) in ImageTools.backgrounds.enumerated() {
-            add(entry.name, #selector(addBackground(_:)), tag: index, to: fonts)
-        }
-        menu.addItem(withTitle: "Añadir fondo", action: nil, keyEquivalent: "").submenu = fonts
         menu.addItem(.separator())
         add("Añadir otra imagen…", #selector(addOtherImage))
+        add(panelOpen ? "Ocultar el fondo" : "Mostrar el fondo", #selector(backgroundPressed))
         menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.height + 6), in: sender)
     }
 
@@ -508,10 +749,6 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
         canvas.applyImage { ImageTools.resized($0, factor: CGFloat(sender.tag) / 100) }
     }
 
-    @objc private func addBackground(_ sender: NSMenuItem) {
-        canvas.applyImage { ImageTools.withBackground($0, colors: ImageTools.backgrounds[sender.tag].colors) }
-    }
-
     @objc private func addOtherImage() {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.image]
@@ -524,9 +761,70 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
         }
     }
 
+    // MARK: - Panel Fondo
+
+    @objc private func backgroundPressed() {
+        setBackgroundPanel(open: !panelOpen)
+    }
+
+    /// El panel entra por la izquierda con resorte y el lienzo le hace sitio.
+    private func setBackgroundPanel(open: Bool) {
+        guard open != panelOpen else { return }
+        canvas.commitText()
+        closeTextMode()
+        panelOpen = open
+        backgroundButton?.isActive = open
+        backgroundButton?.setAccessibilityValue(open ? "Abierto" : "Cerrado")
+        panelSpring?.invalidate()
+
+        if open {
+            backgroundPanel.reload(canvas.document.backdrop, capture: canvas.currentImage)
+            backgroundPanel.isHidden = false
+        }
+        let start = panelProgress
+        let target: CGFloat = open ? 1 : 0
+        panelSpring = Spring.run(
+            step: { [weak self] value in
+                self?.applyPanel(progress: start + (target - start) * value)
+            },
+            completion: { [weak self] in
+                self?.applyPanel(progress: target)
+                self?.backgroundPanel.isHidden = !open
+            }
+        )
+    }
+
+    private func applyPanel(progress: CGFloat) {
+        panelProgress = progress
+        guard let content = window.contentView else { return }
+        let width = BackgroundPanel.width
+        // El panel no se despega del borde. El lienzo sí acusa el rebote del resorte.
+        backgroundPanel.frame.origin.x = -width * (1 - min(max(progress, 0), 1))
+        let shift = width * max(progress, 0)
+        scrollView.frame = CGRect(
+            x: shift,
+            y: Design.editorBar,
+            width: max(content.bounds.width - shift, 1),
+            height: max(content.bounds.height - Design.editorBar * 2, 1)
+        )
+    }
+
+    private func pickBackdropPicture() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.image]
+        panel.beginSheetModal(for: window) { [weak self] response in
+            let url = panel.url
+            Task { @MainActor in
+                guard response == .OK, let url, let picture = NSImage(contentsOf: url),
+                      let data = ImageTools.backdropPicture(from: picture)
+                else { return }
+                self?.backgroundPanel.usePicture(data)
+            }
+        }
+    }
+
     @objc private func pixelModeChanged(_ sender: NSSegmentedControl) {
         canvas.pixelBrush = sender.selectedSegment == 1
-        buildSubBar()
     }
 
     @objc private func blockChanged(_ sender: NSSlider) {
@@ -540,30 +838,71 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
             penColor = color
         }
         canvas.color = color
-        colorSwatch?.dotColor = color
+        colorPill?.content = .dot(color)
+        colorPill?.setAccessibilityValue(colorName(color))
     }
 
     @objc private func toolPressed(_ sender: NSButton) {
         if let tool = AnnotationTool(rawValue: sender.tag) {
+            if tool == .rectangle {
+                canvas.filled = false
+            }
             select(tool: tool)
         }
     }
 
-    // MARK: - Mini paleta
-
-    @objc private func swatchPressed(_ sender: NSButton) {
-        if colorPopover.isShown {
-            colorPopover.performClose(nil)
-            return
-        }
-        let controller = NSViewController()
-        controller.view = buildPalette()
-        colorPopover.contentViewController = controller
-        colorPopover.behavior = .transient
-        colorPopover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .maxY)
+    @objc private func filledPressed() {
+        canvas.filled = true
+        select(tool: .rectangle)
     }
 
-    /// Mini paleta: solo color. El tamaño ya está a la vista en la fila de opciones.
+    // MARK: - Popovers de estilo
+
+    /// Abre o cierra una píldora. Pulsar la misma con su popover abierto debe cerrarlo:
+    /// el sistema ya lo cerró al apretar el botón, y no hay que volver a abrirlo al soltar.
+    private func togglePopover(_ kind: StylePopover, from sender: NSView, content: () -> NSView) {
+        if stylePopover?.isShown == true, openPopover == kind {
+            stylePopover?.performClose(nil)
+            return
+        }
+        if let popoverClosed, popoverClosed.kind == kind, Date().timeIntervalSince(popoverClosed.at) < 0.25 {
+            self.popoverClosed = nil
+            return
+        }
+        stylePopover?.close()
+
+        let controller = NSViewController()
+        controller.view = content()
+        let popover = NSPopover()
+        popover.contentViewController = controller
+        popover.behavior = .transient
+        popover.animates = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        popover.delegate = self
+        stylePopover = popover
+        openPopover = kind
+        popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
+    }
+
+    func popoverDidClose(_ notification: Notification) {
+        guard let popover = notification.object as? NSPopover, popover === stylePopover, let openPopover else { return }
+        popoverClosed = (openPopover, Date())
+        stylePopover = nil
+        self.openPopover = nil
+    }
+
+    @objc private func swatchPressed(_ sender: NSButton) {
+        togglePopover(.color, from: sender) { buildPalette() }
+    }
+
+    @objc private func widthPressed(_ sender: NSButton) {
+        togglePopover(.size, from: sender) { buildSizeControls() }
+    }
+
+    @objc private func linePressed(_ sender: NSButton) {
+        togglePopover(.line, from: sender) { buildLineControls() }
+    }
+
+    /// Mini paleta: solo color. El grosor y el tipo de línea tienen su propia píldora.
     private func buildPalette() -> NSView {
         let tool = canvas.tool
         let colors = tool == .highlight ? Self.markers : Self.palette
@@ -605,6 +944,84 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
         return view
     }
 
+    /// Lo que antes estaba a la vista en la fila de opciones: tamaño e intensidad.
+    private func buildSizeControls() -> NSView {
+        let tool = canvas.tool
+        let showsSize = tool != .pixelate || canvas.pixelBrush
+        let showsStrength = tool == .pixelate
+        let rowHeight: CGFloat = 30
+        let width: CGFloat = 262
+        let rows = (showsSize ? 1 : 0) + (showsStrength ? 1 : 0)
+        let height = CGFloat(max(rows, 1)) * rowHeight + 14
+        let view = NSView(frame: CGRect(x: 0, y: 0, width: width, height: height))
+        var y = height - 7 - rowHeight
+
+        func addLabel(_ text: String) {
+            let label = NSTextField(labelWithString: text)
+            label.font = .systemFont(ofSize: 12, weight: .medium)
+            label.frame = CGRect(x: 12, y: y + 7, width: 72, height: 16)
+            view.addSubview(label)
+        }
+
+        if showsSize, let size = Self.sizes[tool] {
+            addLabel("Tamaño")
+            let slider = NSSlider(value: Double(canvas.lineWidth), minValue: Double(size.0), maxValue: Double(size.1), target: self, action: #selector(sizeChanged(_:)))
+            slider.frame = CGRect(x: 86, y: y + 4, width: 130, height: 22)
+            slider.setAccessibilityLabel("Tamaño")
+            view.addSubview(slider)
+
+            let value = NSTextField(labelWithString: "\(Int(canvas.lineWidth))")
+            value.font = .monospacedDigitSystemFont(ofSize: 12, weight: .medium)
+            value.alignment = .right
+            value.frame = CGRect(x: 220, y: y + 7, width: 30, height: 16)
+            value.tag = 77
+            view.addSubview(value)
+            y -= rowHeight
+        }
+
+        if showsStrength {
+            addLabel("Intensidad")
+            let blocks = NSSlider(value: Double(canvas.blockSize), minValue: 6, maxValue: 40, target: self, action: #selector(blockChanged(_:)))
+            blocks.frame = CGRect(x: 86, y: y + 4, width: 164, height: 22)
+            blocks.setAccessibilityLabel("Intensidad")
+            view.addSubview(blocks)
+        }
+        return view
+    }
+
+    /// Variantes de la herramienta: flecha o línea, contorno o relleno, tipo de censura.
+    private func buildLineControls() -> NSView {
+        var rows: [NSSegmentedControl] = []
+        func addSegment(_ labels: [String], selected: Int, name: String, action: Selector) {
+            let mode = NSSegmentedControl(labels: labels, trackingMode: .selectOne, target: self, action: action)
+            mode.selectedSegment = selected
+            mode.controlSize = .small
+            mode.setAccessibilityLabel(name)
+            mode.sizeToFit()
+            rows.append(mode)
+        }
+        switch canvas.tool {
+        case .pixelate:
+            addSegment(["Pixelado", "Desenfoque"], selected: canvas.smoothBlur ? 1 : 0, name: "Tipo de censura", action: #selector(blurStyleChanged(_:)))
+            addSegment(["Recuadro", "Pincel"], selected: canvas.pixelBrush ? 1 : 0, name: "Forma de la censura", action: #selector(pixelModeChanged(_:)))
+        case .rectangle:
+            addSegment(["Contorno", "Relleno"], selected: canvas.filled ? 1 : 0, name: "Tipo de cuadro", action: #selector(fillChanged(_:)))
+        default:
+            addSegment(["Flecha", "Línea"], selected: canvas.plainLine ? 1 : 0, name: "Tipo de línea", action: #selector(lineChanged(_:)))
+        }
+
+        let width = (rows.map { $0.frame.width }.max() ?? 120) + 24
+        let height = CGFloat(rows.count) * 30 + 14
+        let view = NSView(frame: CGRect(x: 0, y: 0, width: width, height: height))
+        var y = height - 12 - 22
+        for row in rows {
+            row.frame.origin = CGPoint(x: ((width - row.frame.width) / 2).rounded(), y: y)
+            view.addSubview(row)
+            y -= 30
+        }
+        return view
+    }
+
     private static func sameColor(_ a: NSColor, _ b: NSColor) -> Bool {
         guard let first = a.usingColorSpace(.sRGB), let second = b.usingColorSpace(.sRGB) else { return false }
         return abs(first.redComponent - second.redComponent) < 0.01
@@ -615,11 +1032,11 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
     @objc private func colorPressed(_ sender: NSButton) {
         let colors = canvas.tool == .highlight ? Self.markers : Self.palette
         setColor(colors[sender.tag].1)
-        colorPopover.performClose(nil)
+        stylePopover?.performClose(nil)
     }
 
     @objc private func sampleColor() {
-        colorPopover.performClose(nil)
+        stylePopover?.performClose(nil)
         NSColorSampler().show { [weak self] color in
             guard let color else { return }
             Task { @MainActor in
@@ -637,6 +1054,8 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
         toolSizes[canvas.tool] = value
         canvas.lineWidth = value
         (sender.superview?.viewWithTag(77) as? NSTextField)?.stringValue = "\(Int(value))"
+        widthPill?.content = .stroke(value)
+        widthPill?.setAccessibilityValue("\(Int(value))")
     }
 
     // MARK: - Zoom
@@ -653,6 +1072,11 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
     }
 
     private func setMagnification(_ value: CGFloat) {
+        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            scrollView.magnification = value
+            refreshZoomLabel()
+            return
+        }
         scrollView.animator().magnification = value
         Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 280_000_000)
@@ -662,11 +1086,26 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
 
     @objc private func zoomIn() { setMagnification(min(scrollView.magnification * 1.25, 8)) }
     @objc private func zoomOut() { setMagnification(max(scrollView.magnification / 1.25, 0.25)) }
-    /// La imagen entera a la vista, sin agrandarla más de su tamaño real.
-    @objc private func zoomFit() {
-        let image = canvas.bounds.size
-        let room = scrollView.bounds.size
-        setMagnification(max(min(room.width / max(image.width, 1), room.height / max(image.height, 1), 1), 0.25))
+    /// La imagen entera a la vista, sin agrandarla más de su tamaño real: el lienzo ya se ajusta solo.
+    @objc private func zoomFit() { setMagnification(1) }
+
+    @objc private func zoomPressed(_ sender: NSButton) {
+        let menu = NSMenu()
+        for percent in [50, 100, 200] {
+            let item = menu.addItem(withTitle: "\(percent) %", action: #selector(zoomPreset(_:)), keyEquivalent: "")
+            item.target = self
+            item.tag = percent
+        }
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "Ajustar", action: #selector(zoomFit), keyEquivalent: "").target = self
+        // La píldora vive abajo: el menú se abre hacia arriba.
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.height + menu.size.height + 6), in: sender)
+    }
+
+    /// El porcentaje se cuenta sobre el tamaño real de la imagen, no sobre el ajuste al lienzo.
+    @objc private func zoomPreset(_ sender: NSMenuItem) {
+        let target = CGFloat(sender.tag) / 100 / max(canvas.fitScale, 0.01)
+        setMagnification(min(max(target, 0.25), 8))
     }
 
     // MARK: - Menú principal
@@ -679,7 +1118,9 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
     }
 
     private func refreshZoomLabel() {
-        zoomLabel?.stringValue = "\(Int((scrollView.magnification * 100).rounded())) %"
+        let percent = "\(Int((scrollView.magnification * canvas.fitScale * 100).rounded())) %"
+        zoomPill?.content = .text(percent)
+        zoomPill?.setAccessibilityValue(percent)
     }
 
     // MARK: - Selección de texto
@@ -751,6 +1192,54 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
         }
         Capture.playSound()
         Toast.shared.show("Copiado")
+    }
+
+    /// Archivo de paso con el resultado actual, para arrastrar o compartir.
+    private func exportTemporaryFile() -> URL? {
+        canvas.commitText()
+        guard let data = canvas.exportPNG() else { return nil }
+        let url = Capture.uniqueURL(in: Capture.scratchFolder, name: "\(Self.baseName(of: file)) anotada.png")
+        return (try? data.write(to: url)) != nil ? url : nil
+    }
+
+    @objc private func sharePressed(_ sender: NSButton) {
+        guard let url = exportTemporaryFile() else {
+            Toast.shared.show("No se pudo crear la imagen.")
+            return
+        }
+        let picker = NSSharingServicePicker(items: [url])
+        sharePicker = picker
+        picker.show(relativeTo: sender.bounds, of: sender, preferredEdge: .maxY)
+    }
+
+    @objc private func pinPressed() {
+        canvas.commitText()
+        guard let data = canvas.exportPNG(), let picture = NSImage(data: data) else {
+            Toast.shared.show("No se pudo crear la imagen.")
+            return
+        }
+        Self.pins.pin(picture)
+    }
+
+    /// Sin cambios, la ruta es la de la captura. Con cambios, la de una copia con las marcas:
+    /// quien la reciba debe ver lo mismo que hay en el editor.
+    @objc private func copyPathPressed() {
+        canvas.commitText()
+        var path: URL?
+        if canvas.revision == 0, file.pathExtension != "zas", FileManager.default.fileExists(atPath: file.path) {
+            path = file
+        } else if let pathExport, pathExport.revision == canvas.revision {
+            path = pathExport.url
+        } else {
+            let url = nextCopyURL(in: Capture.imageFolder)
+            guard write(to: url) else { return }
+            pathExport = (canvas.revision, url)
+            path = url
+        }
+        guard let path else { return }
+        Capture.copyText(path.path)
+        Capture.playSound()
+        Toast.shared.show("Ruta copiada")
     }
 
     @objc private func savePressed(_ sender: NSButton) {
@@ -920,6 +1409,8 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
 
     func windowWillClose(_ notification: Notification) {
         closeTextMode()
+        panelSpring?.invalidate()
+        stylePopover?.close()
         if let magnifyObserver {
             NotificationCenter.default.removeObserver(magnifyObserver)
             self.magnifyObserver = nil
@@ -940,10 +1431,30 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
     }
 
     func testOpenPalette() {
-        if let colorSwatch {
-            swatchPressed(colorSwatch)
+        if let colorPill {
+            swatchPressed(colorPill)
         }
     }
+
+    func testOpenSizePopover() {
+        if let widthPill {
+            widthPressed(widthPill)
+        }
+    }
+
+    func testOpenBackgroundPanel(gradient: Int) {
+        setBackgroundPanel(open: true)
+        backgroundPanel.chooseGradient(gradient)
+    }
+
+    func testCloseBackgroundPanel() {
+        setBackgroundPanel(open: false)
+    }
+
+    var testBackgroundPanelOpen: Bool { panelOpen }
+
+    /// Zona del lienzo: toda la ventana menos las dos barras y el panel.
+    var testCanvasArea: CGRect { scrollView.frame }
 
     func testZoom() -> CGFloat {
         scrollView.magnification = 2

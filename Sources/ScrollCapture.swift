@@ -141,3 +141,250 @@ struct ScrollStitcher {
         return context.makeImage()
     }
 }
+
+extension ScrollStitcher {
+    /// Lo último que se unió, reducido a `targetWidth` píxeles de ancho. Solo dibuja los tramos
+    /// que caben en `maxHeight`, así que una imagen de treinta mil filas cuesta lo mismo que una corta.
+    func tailPreview(width targetWidth: Int, maxHeight: Int) -> CGImage? {
+        guard width > 0, targetWidth > 0, maxHeight > 0, !pieces.isEmpty else { return nil }
+        let scale = CGFloat(targetWidth) / CGFloat(width)
+        let targetHeight = min(max(Int((CGFloat(height) * scale).rounded()), 1), maxHeight)
+        let space = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
+        guard let context = CGContext(
+            data: nil, width: targetWidth, height: targetHeight, bitsPerComponent: 8, bytesPerRow: 0,
+            space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+        context.interpolationQuality = .medium
+        var bottom: CGFloat = 0
+        for piece in pieces.reversed() {
+            let pieceHeight = CGFloat(piece.height) * scale
+            context.draw(piece, in: CGRect(x: 0, y: bottom, width: CGFloat(targetWidth), height: pieceHeight))
+            bottom += pieceHeight
+            if bottom >= CGFloat(targetHeight) { break }
+        }
+        return context.makeImage()
+    }
+}
+
+/// Dónde van los controles de la captura con desplazamiento, en coordenadas de AppKit.
+/// Se evita pisar la selección: lo que esté dentro de ella podría acabar en la imagen.
+enum ScrollHUDLayout {
+    static let barSize = CGSize(width: 202, height: 32)
+    static let previewWidth: CGFloat = 148
+    static let previewMaxHeight: CGFloat = 300
+    static let margin: CGFloat = 18
+
+    /// Abajo y centrada. Si la selección llega hasta ahí, se busca arriba y luego a los lados.
+    static func barFrame(selection: CGRect, visible: CGRect) -> CGRect {
+        let centered = (visible.midX - barSize.width / 2).rounded()
+        let bottom = visible.minY + margin
+        let origins = [
+            CGPoint(x: centered, y: bottom),
+            CGPoint(x: centered, y: visible.maxY - margin - barSize.height),
+            CGPoint(x: selection.maxX + margin, y: bottom),
+            CGPoint(x: selection.minX - margin - barSize.width, y: bottom),
+        ]
+        let candidates = origins.map { CGRect(origin: $0, size: barSize) }
+        let free = candidates.first { visible.contains($0) && !$0.intersects(selection) }
+        return free ?? candidates[0]
+    }
+
+    /// A la izquierda de la selección, apoyada abajo para crecer hacia arriba.
+    static func previewFrame(height: CGFloat, selection: CGRect, visible: CGRect) -> CGRect {
+        let size = CGSize(width: previewWidth, height: min(max(height, 1), previewMaxHeight))
+        let left = selection.minX - margin - size.width
+        let right = selection.maxX + margin
+        let x: CGFloat
+        if left >= visible.minX + margin {
+            x = left
+        } else if right + size.width <= visible.maxX - margin {
+            x = right
+        } else {
+            x = visible.minX + margin
+        }
+        let lowest = max(selection.minY, visible.minY + margin)
+        let y = min(lowest, visible.maxY - margin - size.height)
+        return CGRect(origin: CGPoint(x: x, y: y), size: size)
+    }
+}
+
+/// Píldora con icono y texto.
+private final class ScrollPillButton: NSButton {
+    init(frame: CGRect, title: String, symbol: String, hint: String, color: NSColor, target: AnyObject, action: Selector) {
+        super.init(frame: frame)
+        isBordered = false
+        image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 11, weight: .bold))
+        imagePosition = .imageLeading
+        imageHugsTitle = true
+        contentTintColor = color
+        attributedTitle = NSAttributedString(string: title, attributes: [
+            .font: NSFont.systemFont(ofSize: 13, weight: .medium),
+            .foregroundColor: color,
+        ])
+        toolTip = hint
+        self.target = target
+        self.action = action
+        setAccessibilityLabel(title)
+        setAccessibilityHelp(hint)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) no se usa")
+    }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+}
+
+/// Lo que se ve mientras se desplaza: Cancelar y Listo, y la imagen que va creciendo.
+@MainActor
+final class ScrollCaptureHUD: NSObject {
+    /// Ancho y alto máximo de la vista previa en píxeles: el doble de sus puntos, para Retina.
+    static let previewPixelWidth = Int(ScrollHUDLayout.previewWidth * 2)
+    static let previewPixelHeight = Int(ScrollHUDLayout.previewMaxHeight * 2)
+
+    var onCancel: (() -> Void)?
+    var onDone: (() -> Void)?
+
+    private let selection: CGRect
+    private let visible: CGRect
+    private let bar: NSPanel
+    private let preview: NSPanel
+    private let imageView = NSImageView()
+
+    /// Con `hiddenFromCapture` no sale en los tramos. Las escenas de prueba lo apagan para verse.
+    init(selection: CGRect, screen: NSScreen, hiddenFromCapture: Bool = true) {
+        let visible = screen.visibleFrame
+        self.selection = selection
+        self.visible = visible
+        bar = ScrollCaptureHUD.makePanel(
+            frame: ScrollHUDLayout.barFrame(selection: selection, visible: visible),
+            hiddenFromCapture: hiddenFromCapture
+        )
+        preview = ScrollCaptureHUD.makePanel(
+            frame: ScrollHUDLayout.previewFrame(height: 1, selection: selection, visible: visible),
+            hiddenFromCapture: hiddenFromCapture
+        )
+        super.init()
+        buildBar()
+        buildPreview()
+    }
+
+    private static func makePanel(frame: CGRect, hiddenFromCapture: Bool) -> NSPanel {
+        let panel = NSPanel(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        panel.level = .screenSaver
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hidesOnDeactivate = false
+        panel.isReleasedWhenClosed = false
+        panel.animationBehavior = .none
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
+        if hiddenFromCapture {
+            panel.sharingType = .none
+        }
+        return panel
+    }
+
+    private func buildBar() {
+        bar.hasShadow = true
+        let size = ScrollHUDLayout.barSize
+        let gap = Design.stackGap
+        let cancelWidth = ((size.width - gap) * 0.54).rounded()
+        let doneWidth = size.width - gap - cancelWidth
+        let container = NSView(frame: CGRect(origin: .zero, size: size))
+
+        let glass = GlassView(frame: CGRect(x: 0, y: 0, width: cancelWidth, height: size.height), radius: size.height / 2)
+        let cancel = ScrollPillButton(
+            frame: glass.bounds,
+            title: "Cancelar",
+            symbol: "xmark",
+            hint: "Descarta la captura (Esc)",
+            color: .labelColor,
+            target: self,
+            action: #selector(cancelPressed)
+        )
+        glass.addSubview(cancel)
+        container.addSubview(glass)
+
+        let done = ScrollPillButton(
+            frame: CGRect(x: cancelWidth + gap, y: 0, width: doneWidth, height: size.height),
+            title: "Listo",
+            symbol: "checkmark",
+            hint: "Termina y une la captura (Enter)",
+            color: .white,
+            target: self,
+            action: #selector(donePressed)
+        )
+        done.wantsLayer = true
+        done.layer?.cornerRadius = size.height / 2
+        done.layer?.cornerCurve = .continuous
+        done.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
+        container.addSubview(done)
+        bar.contentView = container
+    }
+
+    private func buildPreview() {
+        preview.hasShadow = true
+        preview.ignoresMouseEvents = true
+        imageView.frame = CGRect(origin: .zero, size: preview.frame.size)
+        imageView.imageScaling = .scaleAxesIndependently
+        imageView.autoresizingMask = [.width, .height]
+        imageView.wantsLayer = true
+        imageView.layer?.cornerRadius = Design.controlRadius
+        imageView.layer?.cornerCurve = .continuous
+        imageView.layer?.masksToBounds = true
+        imageView.layer?.borderWidth = 0.5
+        imageView.layer?.borderColor = NSColor.separatorColor.cgColor
+        imageView.setAccessibilityElement(true)
+        imageView.setAccessibilityRole(.image)
+        imageView.setAccessibilityLabel("Vista previa de la captura")
+        preview.contentView = imageView
+    }
+
+    func show() {
+        bar.alphaValue = 0
+        bar.orderFrontRegardless()
+        fade(bar)
+    }
+
+    /// `image` ya viene reducida: ver `ScrollStitcher.tailPreview`.
+    func update(preview image: CGImage) {
+        let scale = ScrollHUDLayout.previewWidth / max(CGFloat(image.width), 1)
+        let height = CGFloat(image.height) * scale
+        imageView.image = NSImage(
+            cgImage: image,
+            size: CGSize(width: ScrollHUDLayout.previewWidth, height: height)
+        )
+        preview.setFrame(
+            ScrollHUDLayout.previewFrame(height: height, selection: selection, visible: visible),
+            display: true
+        )
+        if !preview.isVisible {
+            preview.alphaValue = 0
+            preview.orderFrontRegardless()
+            fade(preview)
+        }
+        preview.invalidateShadow()
+    }
+
+    func close() {
+        bar.orderOut(nil)
+        preview.orderOut(nil)
+    }
+
+    /// Solo aparece: no viaja, así que no hay nada que quitar con Reducir movimiento.
+    private func fade(_ panel: NSPanel) {
+        NSAnimationContext.beginGrouping()
+        NSAnimationContext.current.duration = 0.14
+        panel.animator().alphaValue = 1
+        NSAnimationContext.endGrouping()
+    }
+
+    @objc private func cancelPressed() {
+        onCancel?()
+    }
+
+    @objc private func donePressed() {
+        onDone?()
+    }
+}
