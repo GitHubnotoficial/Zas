@@ -4,24 +4,26 @@ import SwiftUI
 
 /// Las acciones que se disparan con un atajo global.
 enum HotKeyAction: String, CaseIterable, Codable {
-    case region, fullScreen, timed, text, record, again
+    case region, fullScreen, timed, scroll, text, record, again
 
     var title: String {
         switch self {
         case .region: return "Capturar área o ventana"
         case .fullScreen: return "Capturar pantalla"
         case .timed: return "Capturar en 3 segundos"
+        case .scroll: return "Capturar con desplazamiento"
         case .text: return "Copiar texto de la pantalla"
         case .record: return "Grabar video"
-        case .again: return "Repetir la última captura"
+        case .again: return "Repetir captura"
         }
     }
 
     var symbol: String {
         switch self {
         case .region: return "viewfinder"
-        case .fullScreen: return "macwindow"
+        case .fullScreen: return "display"
         case .timed: return "timer"
+        case .scroll: return "arrow.up.and.down"
         case .text: return "text.viewfinder"
         case .record: return "record.circle"
         case .again: return "arrow.clockwise"
@@ -34,6 +36,7 @@ enum HotKeyAction: String, CaseIterable, Codable {
         case .region: return Shortcut(keyCode: UInt32(kVK_ANSI_2), modifiers: modifiers)
         case .fullScreen: return Shortcut(keyCode: UInt32(kVK_ANSI_1), modifiers: modifiers)
         case .timed: return Shortcut(keyCode: UInt32(kVK_ANSI_8), modifiers: modifiers)
+        case .scroll: return Shortcut(keyCode: UInt32(kVK_ANSI_0), modifiers: modifiers)
         case .text: return Shortcut(keyCode: UInt32(kVK_ANSI_7), modifiers: modifiers)
         case .record: return Shortcut(keyCode: UInt32(kVK_ANSI_6), modifiers: modifiers)
         case .again: return Shortcut(keyCode: UInt32(kVK_ANSI_9), modifiers: modifiers)

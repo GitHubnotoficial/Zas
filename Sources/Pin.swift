@@ -106,6 +106,15 @@ private final class PinView: NSView {
     init(frame: CGRect, image: NSImage) {
         self.image = image
         super.init(frame: frame)
+        wantsLayer = true
+        layer?.cornerRadius = Design.cardRadius
+        layer?.cornerCurve = .continuous
+        layer?.masksToBounds = true
+        layer?.borderWidth = 0.5
+        layer?.borderColor = NSColor.separatorColor.cgColor
+        setAccessibilityElement(true)
+        setAccessibilityRole(.image)
+        setAccessibilityLabel("Captura fijada")
     }
 
     required init?(coder: NSCoder) {
@@ -139,8 +148,24 @@ private final class PinView: NSView {
         closeButton?.isHidden = true
     }
 
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let menu = NSMenu()
+        menu.addItem(withTitle: "Copiar", action: #selector(copyImage), keyEquivalent: "").target = self
+        menu.addItem(withTitle: "Cerrar", action: #selector(closeButtonPressed), keyEquivalent: "").target = self
+        return menu
+    }
+
+    @objc private func copyImage() {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.writeObjects([image])
+    }
+
+    @objc private func closeButtonPressed() {
+        closeButton?.performClick(nil)
+    }
+
     override func draw(_ dirtyRect: NSRect) {
-        NSBezierPath(roundedRect: bounds, xRadius: 8, yRadius: 8).addClip()
         image.draw(in: bounds)
     }
 }

@@ -414,7 +414,8 @@ private final class ThumbnailView: NSView, NSDraggingSource {
 
     private let actionBar: GlassView
     private var actionButtons: [GlassButton] = []
-    private let badge = GlassView(frame: .zero, radius: 11)
+    private let badge = GlassView(frame: .zero, radius: 11, blending: .withinWindow)
+    private let closeBar = GlassView(frame: .zero, radius: 12, blending: .withinWindow)
     private let badgeLabel = NSTextField(labelWithString: "")
 
     var actionCount: Int { actionButtons.count }
@@ -425,16 +426,20 @@ private final class ThumbnailView: NSView, NSDraggingSource {
         self.kind = kind
         self.text = text
         cardSize = frame.size
-        actionBar = GlassView(frame: .zero, radius: Design.controlRadius + 2)
+        actionBar = GlassView(frame: .zero, radius: Design.controlRadius + 2, blending: .withinWindow)
         super.init(frame: frame)
         wantsLayer = true
         layer?.cornerRadius = Design.cardRadius
         layer?.cornerCurve = .continuous
         layer?.masksToBounds = true
         layer?.borderWidth = 0.5
-        layer?.borderColor = NSColor.white.withAlphaComponent(0.3).cgColor
+        layer?.borderColor = NSColor.separatorColor.cgColor
+        setAccessibilityElement(true)
+        setAccessibilityRole(.button)
+        setAccessibilityLabel(kind == .video ? "Video capturado" : (kind == .text ? "Texto capturado" : "Captura"))
         buildActions()
         buildBadge()
+        buildClose()
     }
 
     required init?(coder: NSCoder) {
@@ -451,11 +456,11 @@ private final class ThumbnailView: NSView, NSDraggingSource {
         switch kind {
         case .screenshot:
             buttons.append(GlassButton(symbol: "pencil.tip", tooltip: "Anotar", target: self, action: #selector(annotate)))
-            buttons.append(GlassButton(symbol: "terminal", tooltip: "Copiar la ruta para un agente", target: self, action: #selector(copyPath)))
+            buttons.append(GlassButton(symbol: "link", tooltip: "Copiar ruta para un agente", target: self, action: #selector(copyPath)))
             buttons.append(GlassButton(symbol: "pin", tooltip: "Fijar en pantalla", target: self, action: #selector(pin)))
         case .video:
             buttons.append(GlassButton(symbol: "square.grid.2x2", tooltip: "Copiar resumen en imágenes para Claude", target: self, action: #selector(summarize)))
-            buttons.append(GlassButton(symbol: "terminal", tooltip: "Copiar la ruta para un agente", target: self, action: #selector(copyPath)))
+            buttons.append(GlassButton(symbol: "link", tooltip: "Copiar ruta para un agente", target: self, action: #selector(copyPath)))
             buttons.append(GlassButton(symbol: "play.fill", tooltip: "Reproducir", target: self, action: #selector(open)))
         case .text:
             break
@@ -481,6 +486,16 @@ private final class ThumbnailView: NSView, NSDraggingSource {
         actionBar.alphaValue = 0
         addSubview(actionBar)
         actionButtons = buttons
+    }
+
+    /// El gesto de deslizar no basta: también hace falta un botón visible.
+    private func buildClose() {
+        closeBar.frame = CGRect(x: 6, y: bounds.height - 30, width: 24, height: 24)
+        closeBar.autoresizingMask = [.maxXMargin, .minYMargin]
+        let button = GlassButton(symbol: "xmark", tooltip: "Cerrar", target: self, action: #selector(closeCard), size: 24)
+        closeBar.addSubview(button)
+        closeBar.alphaValue = 0
+        addSubview(closeBar)
     }
 
     private func buildBadge() {
@@ -557,7 +572,7 @@ private final class ThumbnailView: NSView, NSDraggingSource {
             let location = menu.addItem(withTitle: path, action: nil, keyEquivalent: "")
             location.isEnabled = false
             menu.addItem(.separator())
-            menu.addItem(withTitle: "Copiar la ruta", action: #selector(copyPath), keyEquivalent: "").target = self
+            menu.addItem(withTitle: "Copiar ruta", action: #selector(copyPath), keyEquivalent: "").target = self
         }
         if kind != .text, !Capture.isScratch(file) {
             menu.addItem(withTitle: "Mostrar en Finder", action: #selector(reveal), keyEquivalent: "").target = self
@@ -603,6 +618,7 @@ private final class ThumbnailView: NSView, NSDraggingSource {
         NSAnimationContext.beginGrouping()
         NSAnimationContext.current.duration = 0.16
         actionBar.animator().alphaValue = value ? 1 : 0
+        closeBar.animator().alphaValue = value ? 1 : 0
         NSAnimationContext.endGrouping()
         refreshBadge()
     }
@@ -660,7 +676,7 @@ private final class ThumbnailView: NSView, NSDraggingSource {
 
     override func draw(_ dirtyRect: NSRect) {
         NSGraphicsContext.current?.imageInterpolation = .high
-        NSColor(white: 0.09, alpha: 1).setFill()
+        NSColor.windowBackgroundColor.setFill()
         bounds.fill()
 
         // La imagen entra completa, sin deformarse.

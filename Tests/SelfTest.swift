@@ -824,6 +824,10 @@ enum SelfTest {
             keepAlive.append(windows)
             windows.showSettings()
             await shoot("\(label)-09-ajustes")
+            windows.testSettingsPane(1)
+            await shoot("\(label)-09a-atajos")
+            windows.testSettingsPane(2)
+            await shoot("\(label)-09c-video")
             windows.closeAll()
             windows.showHistory { _ in }
             await shoot("\(label)-09b-historial")

@@ -1,4 +1,4 @@
-import AVFoundation
+@preconcurrency import AVFoundation
 import AppKit
 import Carbon
 import Combine
@@ -165,7 +165,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         let appItem = NSMenuItem()
         let appMenu = NSMenu()
+        appMenu.addItem(withTitle: "Acerca de Zas", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Ajustes…", action: #selector(openSettings), keyEquivalent: ",").target = self
+        appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Salir de Zas", action: #selector(quit), keyEquivalent: "q").target = self
         appItem.submenu = appMenu
         main.addItem(appItem)
@@ -201,6 +204,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu = NSMenu()
         addActionItem(.region, #selector(captureRegion))
         addActionItem(.fullScreen, #selector(captureFullScreen))
+        addActionItem(.timed, #selector(captureTimed))
+        addActionItem(.scroll, #selector(captureScroll))
         addActionItem(.text, #selector(captureText))
         addActionItem(.record, #selector(toggleRecording))
         addActionItem(.again, #selector(captureAgain))
@@ -213,7 +218,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(recents)
         menu.delegate = self
         menu.addItem(.separator())
-        addItem("Ver historial…", symbol: nil, #selector(openHistory))
+        addItem("Historial", symbol: nil, #selector(openHistory))
         addItem("Abrir proyecto…", symbol: nil, #selector(chooseProject))
         let settings = addItem("Ajustes…", symbol: nil, #selector(openSettings))
         settings.keyEquivalent = ","
@@ -275,6 +280,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case .region: captureRegion()
         case .fullScreen: captureFullScreen()
         case .timed: captureTimed()
+        case .scroll: captureScroll()
         case .again: captureAgain()
         case .text: captureText()
         case .record: toggleRecording()
@@ -377,6 +383,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         snap(.fullScreen(.underMouse))
     }
 
+    @objc private func captureScroll() {
+        beginSelection(.scroll)
+    }
+
     @objc private func captureText() {
         beginSelection(.text)
     }
@@ -390,7 +400,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         captureInFlight = true
         Task { @MainActor in
             for second in [3, 2, 1] {
-                Toast.shared.show("\(second)", seconds: 2)
+                Toast.shared.show("\(second)", seconds: 2, large: true)
                 try? await Task.sleep(nanoseconds: 1_000_000_000)
             }
             // El aviso no debe salir en la imagen.
@@ -402,7 +412,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func canStartCapture() -> Bool {
         if recorder != nil {
             let stop = Settings.shared.shortcut(for: .record).displayString
-            Toast.shared.show("Estás grabando. Detén con \(stop) para capturar.")
+            Toast.shared.show("Grabando. \(stop) para detener")
             return false
         }
         return !overlay.isActive && !captureInFlight
@@ -567,7 +577,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if await GifExporter.export(video: video, to: output) {
                 Capture.copyFile(at: output)
                 Capture.playSound()
-                Toast.shared.show("GIF copiado.")
+                Toast.shared.show("GIF copiado")
             } else {
                 Toast.shared.show("No se pudo crear el GIF.")
             }
@@ -638,7 +648,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         try? FileManager.default.removeItem(at: imageURL)
 
         guard !text.isEmpty else {
-            Toast.shared.show("No encontré texto. Prueba con un área de letras más claras.")
+            Toast.shared.show("No hay texto en esa área")
             return
         }
         Capture.copyText(text)
@@ -812,6 +822,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         stopIcon?.isTemplate = false
         statusItem.button?.image = stopIcon
         statusItem.button?.imagePosition = .imageLeft
+        statusItem.button?.font = .monospacedDigitSystemFont(ofSize: 13, weight: .regular)
         statusItem.button?.title = " 0:00"
 
         recordingStart = Date()
@@ -833,7 +844,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         // Zas queda excluida del video, así que este aviso no sale en la grabación.
         let stop = Settings.shared.shortcut(for: .record).displayString
-        Toast.shared.show("Grabando. Detén con \(stop) o con el contador de la barra de menú.", seconds: 3.5)
+        Toast.shared.show("Grabando. \(stop) para detener", seconds: 3)
     }
 
     private func hideRecordingUI() {

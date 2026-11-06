@@ -4,6 +4,9 @@ import AppKit
 enum Design {
     static let cardRadius: CGFloat = 14
     static let controlRadius: CGFloat = 10
+    /// Barras: radio 14 y margen 6. El botón interior mide 14 - 6 = 8, para que las curvas sean concéntricas.
+    static let barRadius: CGFloat = 14
+    static let barPadding: CGFloat = 6
     static let edgeMargin: CGFloat = 18
     static let stackGap: CGFloat = 10
     static let actionSize: CGFloat = 32
@@ -12,17 +15,22 @@ enum Design {
 /// Vidrio del sistema con esquinas redondeadas y un filo de luz.
 /// Solo se usa en lo que flota sobre el contenido, nunca dentro de otro vidrio.
 final class GlassView: NSVisualEffectView {
-    init(frame: CGRect, radius: CGFloat, material: NSVisualEffectView.Material = .popover) {
+    init(
+        frame: CGRect,
+        radius: CGFloat,
+        material: NSVisualEffectView.Material = .popover,
+        blending: NSVisualEffectView.BlendingMode = .behindWindow
+    ) {
         super.init(frame: frame)
         self.material = material
-        blendingMode = .behindWindow
+        blendingMode = blending
         state = .active
         wantsLayer = true
         layer?.cornerRadius = radius
         layer?.cornerCurve = .continuous
         layer?.masksToBounds = true
         layer?.borderWidth = 0.5
-        layer?.borderColor = NSColor.white.withAlphaComponent(0.28).cgColor
+        layer?.borderColor = NSColor.separatorColor.cgColor
         // La máscara recorta también el desenfoque del escritorio, no solo el dibujo.
         maskImage = Self.mask(radius: radius)
     }
@@ -55,6 +63,9 @@ final class GlassButton: NSButton {
         didSet { refresh() }
     }
 
+    private var hovering = false
+    private var hoverArea: NSTrackingArea?
+
     init(symbol: String, tooltip: String, target: AnyObject?, action: Selector?, size: CGFloat = Design.actionSize) {
         super.init(frame: CGRect(x: 0, y: 0, width: size, height: size))
         let configuration = NSImage.SymbolConfiguration(pointSize: size * 0.42, weight: .medium)
@@ -66,8 +77,9 @@ final class GlassButton: NSButton {
         self.target = target
         self.action = action
         wantsLayer = true
-        layer?.cornerRadius = size * 0.3
+        layer?.cornerRadius = min(size * 0.3, Design.barRadius - Design.barPadding)
         layer?.cornerCurve = .continuous
+        setAccessibilityLabel(tooltip)
         refresh()
     }
 
@@ -77,15 +89,37 @@ final class GlassButton: NSButton {
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverArea {
+            removeTrackingArea(hoverArea)
+        }
+        let area = NSTrackingArea(rect: .zero, options: [.activeAlways, .inVisibleRect, .mouseEnteredAndExited], owner: self, userInfo: nil)
+        addTrackingArea(area)
+        hoverArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        hovering = true
+        refresh()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        hovering = false
+        refresh()
+    }
+
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
         refresh()
     }
 
     private func refresh() {
-        contentTintColor = isActive ? .white : .labelColor
+        contentTintColor = isActive ? .alternateSelectedControlTextColor : .labelColor
+        setAccessibilityValue(isActive ? "Activo" : nil)
         effectiveAppearance.performAsCurrentDrawingAppearance {
-            layer?.backgroundColor = (isActive ? activeColor : .clear).cgColor
+            let fill: NSColor = isActive ? activeColor : (hovering && isEnabled ? .quaternaryLabelColor : .clear)
+            layer?.backgroundColor = fill.cgColor
         }
     }
 }
@@ -110,6 +144,12 @@ enum Spring {
         step: @escaping @MainActor (CGFloat) -> Void,
         completion: (@MainActor () -> Void)? = nil
     ) -> Timer {
+        // Quien pide reducir el movimiento ve el resultado sin el viaje.
+        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            step(1)
+            completion?()
+            return Timer(timeInterval: 0, repeats: false) { _ in }
+        }
         let started = Date()
         let length = response * 1.6
         let timer = Timer(timeInterval: 1.0 / 60, repeats: true) { timer in

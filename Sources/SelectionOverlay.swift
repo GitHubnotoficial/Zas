@@ -284,7 +284,6 @@ private final class OverlayView: NSView {
 
     private let dimLayer = CAShapeLayer()
     private let frameLayer = CAShapeLayer()
-    private let handles = (0..<4).map { _ in CALayer() }
     private let frozenLayer = CALayer()
     private let magnifier = CALayer()
     private var frozenImage: CGImage?
@@ -293,6 +292,7 @@ private final class OverlayView: NSView {
     private let sizeLabel = NSTextField(labelWithString: "")
     private var hud: GlassView?
     private var modeButtons: [(SelectionMode, GlassButton)] = []
+    private weak var freezeButton: GlassButton?
 
     init(frame: CGRect, screen: NSScreen, windows: [WindowTarget], owner: SelectionOverlay) {
         self.screen = screen
@@ -300,6 +300,9 @@ private final class OverlayView: NSView {
         self.owner = owner
         super.init(frame: frame)
         wantsLayer = true
+        setAccessibilityElement(true)
+        setAccessibilityRole(.group)
+        setAccessibilityLabel("Selección de captura. Arrastra para elegir un área.")
         buildLayers()
         buildPill()
         buildHUD()
@@ -332,17 +335,6 @@ private final class OverlayView: NSView {
         frameLayer.fillColor = nil
         frameLayer.lineWidth = 1.5
         root.addSublayer(frameLayer)
-
-        for handle in handles {
-            handle.bounds = CGRect(x: 0, y: 0, width: 9, height: 9)
-            handle.cornerRadius = 4.5
-            handle.backgroundColor = NSColor.white.cgColor
-            handle.shadowColor = NSColor.black.cgColor
-            handle.shadowOpacity = 0.35
-            handle.shadowRadius = 2
-            handle.shadowOffset = .zero
-            root.addSublayer(handle)
-        }
 
         magnifier.bounds = CGRect(x: 0, y: 0, width: 132, height: 132)
         magnifier.cornerRadius = 66
@@ -418,21 +410,21 @@ private final class OverlayView: NSView {
     /// Barra de modos: lo demás no se muestra hasta que hace falta.
     private func buildHUD() {
         let entries: [(SelectionMode, String, String)] = [
-            (.screenshot, "viewfinder", "Capturar área o ventana"),
-            (.text, "text.viewfinder", "Copiar texto"),
-            (.timed, "timer", "Capturar en 3 segundos"),
-            (.scroll, "arrow.up.and.down", "Capturar con desplazamiento"),
-            (.recording, "record.circle", "Grabar video"),
+            (.screenshot, HotKeyAction.region.symbol, HotKeyAction.region.title),
+            (.text, HotKeyAction.text.symbol, HotKeyAction.text.title),
+            (.timed, HotKeyAction.timed.symbol, HotKeyAction.timed.title),
+            (.scroll, HotKeyAction.scroll.symbol, HotKeyAction.scroll.title),
+            (.recording, HotKeyAction.record.symbol, HotKeyAction.record.title),
         ]
-        let hint = NSTextField(labelWithString: "Esc para salir")
+        let hint = NSTextField(labelWithString: "Esc para cancelar")
         hint.font = .systemFont(ofSize: 12)
         hint.textColor = .secondaryLabelColor
         hint.sizeToFit()
 
-        let padding: CGFloat = 6
-        let width = padding + CGFloat(entries.count + 2) * (Design.actionSize + 2) + 10 + hint.frame.width + 14
+        let padding = Design.barPadding
+        let width = padding + CGFloat(entries.count + 2) * (Design.actionSize + 2) + 18 + hint.frame.width + 14
         let height = Design.actionSize + padding * 2
-        let glass = GlassView(frame: CGRect(x: 0, y: 0, width: width, height: height), radius: 14)
+        let glass = GlassView(frame: CGRect(x: 0, y: 0, width: width, height: height), radius: Design.barRadius)
 
         var x = padding
         for (mode, symbol, tooltip) in entries {
@@ -442,11 +434,18 @@ private final class OverlayView: NSView {
             modeButtons.append((mode, button))
             x += Design.actionSize + 2
         }
-        let full = GlassButton(symbol: "macwindow", tooltip: "Capturar toda la pantalla", target: self, action: #selector(fullScreenPressed))
+        // Los modos se eligen; estas dos son acciones, por eso van separadas.
+        x += 3
+        let divider = NSBox(frame: CGRect(x: x, y: padding + 7, width: 1, height: Design.actionSize - 14))
+        divider.boxType = .separator
+        glass.addSubview(divider)
+        x += 6
+        let full = GlassButton(symbol: HotKeyAction.fullScreen.symbol, tooltip: HotKeyAction.fullScreen.title, target: self, action: #selector(fullScreenPressed))
         full.frame.origin = CGPoint(x: x, y: padding)
         glass.addSubview(full)
         x += Design.actionSize + 2
-        let still = GlassButton(symbol: "pause.circle", tooltip: "Congelar la pantalla (F)", target: self, action: #selector(freezePressed))
+        let still = GlassButton(symbol: "pause", tooltip: "Congelar la pantalla (F)", target: self, action: #selector(freezePressed))
+        freezeButton = still
         still.frame.origin = CGPoint(x: x, y: padding)
         glass.addSubview(still)
         x += Design.actionSize + 12
@@ -472,6 +471,7 @@ private final class OverlayView: NSView {
 
     @objc private func freezePressed() {
         owner?.freeze()
+        freezeButton?.isActive = true
     }
 
     @objc private func fullScreenPressed() {
@@ -623,7 +623,9 @@ private final class OverlayView: NSView {
         if event.keyCode == UInt16(kVK_Escape) {
             owner?.finish(nil)
         } else if event.charactersIgnoringModifiers?.lowercased() == "f" {
-            owner?.freeze()
+            freezePressed()
+        } else if let digit = event.charactersIgnoringModifiers.flatMap({ Int($0) }), (1...modeButtons.count).contains(digit) {
+            owner?.choose(mode: modeButtons[digit - 1].0)
         } else {
             super.keyDown(with: event)
         }
@@ -669,7 +671,6 @@ private final class OverlayView: NSView {
         hud?.isHidden = startPoint != nil
         guard let rect else {
             frameLayer.path = nil
-            handles.forEach { $0.isHidden = true }
             sizePill.isHidden = true
             return
         }
@@ -682,15 +683,6 @@ private final class OverlayView: NSView {
             transform: nil
         )
         frameLayer.strokeColor = accent.cgColor
-
-        let corners = [
-            CGPoint(x: rect.minX, y: rect.minY), CGPoint(x: rect.maxX, y: rect.minY),
-            CGPoint(x: rect.minX, y: rect.maxY), CGPoint(x: rect.maxX, y: rect.maxY),
-        ]
-        for (handle, corner) in zip(handles, corners) {
-            handle.isHidden = !dragging
-            handle.position = corner
-        }
 
         let scale = screen.backingScaleFactor
         sizeLabel.stringValue = "\(Int(rect.width * scale)) × \(Int(rect.height * scale))"

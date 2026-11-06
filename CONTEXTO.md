@@ -56,6 +56,12 @@ Trampas conocidas:
 - La selección se dibuja con capas, sin redibujar todo.
 - Principios: quitar y revelar, un acento por pantalla, pocos iconos, movimiento con motivo, optimizar el caso común.
 
+## Reglas ultra minimalistas (auditoría contra Apple)
+
+R1. Nada cubre la captura al 100 %. R2. Materiales según su función, sin vidrio dentro de vidrio; dentro de una ventana, mezcla interna. R3. Máximo tres grupos en una barra y una acción principal. R4. Toda orden existe también en un menú. R5. Símbolos del sistema, un símbolo por concepto, sin círculos decorativos. R6. Radios concéntricos: barra 14, margen 6, botón 8. R7. Controles de 28 pt, mínimo 20. R8. Colores semánticos, contraste 4.5:1 en claro y oscuro. R9. Estilos de texto de macOS, cuerpo de 13 pt. R10. Con Reducir movimiento, sin viajes. R11. Todo tiene etiqueta de VoiceOver y expone su estado. R12. Todo se puede usar con teclado. R13. Las ventanas cambian de tamaño y su título nombra el contenido. R14. Verbos, sin artículos, una sola voz, puntos suspensivos solo si falta un dato. R15. Cada ajuste debe ganarse su sitio.
+
+Excepción decidida por el dueño: copiar rápido, guardar y ver la ruta se quedan visibles aunque superen tres grupos.
+
 ## Para qué sirve con Claude
 
 - Claude Code en Terminal pega imágenes con **Ctrl+V** (⌘V solo en iTerm2). También acepta rutas y arrastre.

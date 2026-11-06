@@ -9,17 +9,19 @@ final class Toast {
     private var panel: NSPanel?
     private var hideTask: Task<Void, Never>?
 
-    func show(_ text: String, seconds: Double = 2.8) {
+    func show(_ text: String, seconds: Double = 2.8, large: Bool = false) {
         hideTask?.cancel()
         panel?.orderOut(nil)
 
         let label = NSTextField(labelWithString: text)
-        label.font = .systemFont(ofSize: 13, weight: .medium)
+        label.font = large ? .systemFont(ofSize: 44, weight: .semibold) : .systemFont(ofSize: 13, weight: .medium)
+        label.lineBreakMode = .byTruncatingMiddle
         label.textColor = .labelColor
         label.alignment = .center
         label.sizeToFit()
 
-        let size = CGSize(width: ceil(label.frame.width) + 36, height: 38)
+        label.frame.size.width = min(label.frame.width, 480)
+        let size = large ? CGSize(width: 96, height: 96) : CGSize(width: ceil(label.frame.width) + 36, height: 38)
         let visible = NSScreen.underMouse.visibleFrame
         let frame = CGRect(
             x: (visible.midX - size.width / 2).rounded(),
@@ -45,10 +47,18 @@ final class Toast {
         panel.animationBehavior = .none
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
 
-        let background = GlassView(frame: CGRect(origin: .zero, size: size), radius: size.height / 2)
-        label.frame.origin = CGPoint(x: 18, y: ((size.height - label.frame.height) / 2).rounded())
+        let background = GlassView(frame: CGRect(origin: .zero, size: size), radius: large ? 24 : size.height / 2)
+        label.frame.origin = CGPoint(
+            x: ((size.width - label.frame.width) / 2).rounded(),
+            y: ((size.height - label.frame.height) / 2).rounded()
+        )
         background.addSubview(label)
         panel.contentView = background
+
+        NSAccessibility.post(element: NSApp as Any, notification: .announcementRequested, userInfo: [
+            .announcement: text,
+            .priority: NSAccessibilityPriorityLevel.high.rawValue,
+        ])
 
         // Sube un poco desde abajo, con el mismo resorte que el resto de la app.
         let target = frame

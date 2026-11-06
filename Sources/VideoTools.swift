@@ -1,4 +1,4 @@
-import AVFoundation
+@preconcurrency import AVFoundation
 import AVKit
 import AppKit
 import ImageIO
@@ -52,16 +52,17 @@ enum VideoTrimmer {
         if #available(macOS 15.0, *) {
             return (try? await session.export(to: output, as: .mp4)) != nil
         }
+        return await legacyExport(session, to: output)
+    }
+
+    /// Para macOS 13 y 14, que no tienen la exportación moderna.
+    @available(macOS, deprecated: 15.0)
+    private static func legacyExport(_ session: AVAssetExportSession, to output: URL) async -> Bool {
         session.outputURL = output
         session.outputFileType = .mp4
-        final class Box: @unchecked Sendable {
-            let session: AVAssetExportSession
-            init(_ session: AVAssetExportSession) { self.session = session }
-        }
-        let box = Box(session)
         return await withCheckedContinuation { continuation in
-            box.session.exportAsynchronously {
-                continuation.resume(returning: box.session.status == .completed)
+            session.exportAsynchronously {
+                continuation.resume(returning: session.status == .completed)
             }
         }
     }

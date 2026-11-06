@@ -458,7 +458,8 @@ let video = newFile("mp4", timeout: 10) {
     hotKey(kVK_ANSI_2)
     wait(0.5)
     shot("e2e-10b-aviso-grabando")
-    check(zasWindowCount(minimumWidth: screen.frame.width - 1) == 0, "capturar mientras graba avisa y no abre la selección")
+    // El panel de clics ocupa la pantalla: la selección sería una segunda ventana.
+    check(zasWindowCount(minimumWidth: screen.frame.width - 1) <= 1, "capturar mientras graba avisa y no abre la selección")
     for step in 0..<12 {
         moveMouse(to: CGPoint(x: 200 + step * 25, y: 250))
         wait(0.15)

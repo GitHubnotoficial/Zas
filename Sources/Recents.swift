@@ -75,6 +75,7 @@ final class RecentsStripView: NSView {
             tile.imageScaling = .scaleProportionallyUpOrDown
             tile.target = self
             tile.action = #selector(tilePressed(_:))
+            tile.setAccessibilityLabel("Captura reciente \(index + 1)")
             tile.wantsLayer = true
             tile.layer?.cornerRadius = 7
             tile.layer?.cornerCurve = .continuous

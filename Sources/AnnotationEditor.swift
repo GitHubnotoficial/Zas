@@ -154,7 +154,8 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
         self.image = image
         self.file = file
 
-        let toolbarHeight: CGFloat = 62
+        // Dos filas reservadas: herramientas y opciones. Nada flota encima de la captura.
+        let toolbarHeight: CGFloat = 106
         let padding: CGFloat = 24
         let minimumWidth: CGFloat = 900
         let minimumHeight: CGFloat = 340
@@ -184,7 +185,7 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
         scrollView = NSScrollView(frame: area)
         window = NSWindow(
             contentRect: CGRect(origin: .zero, size: contentSize),
-            styleMask: [.titled, .closable, .fullSizeContentView],
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
@@ -193,11 +194,14 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         window.title = "Anotar captura"
+        window.autorecalculatesKeyViewLoop = true
+        window.minSize = CGSize(width: minimumWidth, height: minimumHeight)
         window.isReleasedWhenClosed = false
         window.delegate = self
         window.collectionBehavior = [.fullScreenAuxiliary, .moveToActiveSpace]
 
         scrollView.documentView = canvas
+        scrollView.autoresizingMask = [.width, .height]
         scrollView.drawsBackground = false
         scrollView.hasHorizontalScroller = true
         scrollView.hasVerticalScroller = true
@@ -245,10 +249,10 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
         let tools: [AnnotationTool] = [
             .select, .arrow, .rectangle, .ellipse, .pencil, .highlight, .text, .counter, .pixelate, .spotlight, .eraser, .crop,
         ]
-        let padding: CGFloat = 6
+        let padding = Design.barPadding
         let barHeight = Design.actionSize + padding * 2
 
-        let bar = GlassView(frame: .zero, radius: 14)
+        let bar = GlassView(frame: .zero, radius: Design.barRadius, blending: .withinWindow)
         var x = padding
         func place(_ view: NSView, gap: CGFloat = 2) {
             view.frame.origin = CGPoint(x: x, y: ((barHeight - view.frame.height) / 2).rounded())
@@ -291,6 +295,7 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
 
         let done = NSButton(title: "Listo", target: self, action: #selector(copyAndClose))
         done.bezelStyle = .rounded
+        done.controlSize = .large
         done.keyEquivalent = "\r"
         done.sizeToFit()
         place(done, gap: padding + 2)
@@ -306,31 +311,32 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
     }
 
     private func buildZoomControls(in content: NSView) {
-        let pill = GlassView(frame: CGRect(x: 0, y: 0, width: 186, height: 34), radius: 11)
+        let pill = GlassView(frame: CGRect(x: 0, y: 0, width: 186, height: 38), radius: Design.barRadius, blending: .withinWindow)
         let out = GlassButton(symbol: "minus", tooltip: "Alejar (⌘-)", target: self, action: #selector(zoomOut), size: 28)
-        out.frame.origin = CGPoint(x: 3, y: 3)
+        out.frame.origin = CGPoint(x: 5, y: 5)
         pill.addSubview(out)
 
         let label = NSTextField(labelWithString: "100 %")
         label.font = .monospacedDigitSystemFont(ofSize: 12, weight: .medium)
         label.alignment = .center
-        label.frame = CGRect(x: 32, y: 9, width: 50, height: 16)
+        label.frame = CGRect(x: 33, y: 11, width: 50, height: 16)
         pill.addSubview(label)
         zoomLabel = label
 
         let plus = GlassButton(symbol: "plus", tooltip: "Acercar (⌘+)", target: self, action: #selector(zoomIn), size: 28)
-        plus.frame.origin = CGPoint(x: 84, y: 3)
+        plus.frame.origin = CGPoint(x: 83, y: 5)
         pill.addSubview(plus)
 
         let fit = NSButton(title: "Ajustar", target: self, action: #selector(zoomFit))
         fit.isBordered = false
         fit.font = .systemFont(ofSize: 12, weight: .medium)
-        fit.frame = CGRect(x: 116, y: 6, width: 64, height: 22)
+        fit.frame = CGRect(x: 114, y: 8, width: 64, height: 22)
+        fit.contentTintColor = .labelColor
         fit.toolTip = "Ver toda la imagen (⌘0)"
         pill.addSubview(fit)
 
-        pill.frame.origin = CGPoint(x: content.bounds.maxX - pill.frame.width - 12, y: 10)
-        pill.autoresizingMask = [.minXMargin, .maxYMargin]
+        pill.frame.origin = CGPoint(x: content.bounds.maxX - pill.frame.width - 12, y: content.bounds.height - 62 - 40)
+        pill.autoresizingMask = [.minXMargin, .minYMargin]
         content.addSubview(pill)
     }
 
@@ -373,11 +379,13 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
         subBar?.removeFromSuperview()
         subBar = nil
         let tool = canvas.tool
-        guard [.pencil, .highlight, .eraser, .pixelate, .rectangle, .arrow].contains(tool),
+        colorSwatch?.isEnabled = ![.eraser, .pixelate, .crop, .spotlight, .select].contains(tool)
+        colorSwatch?.alphaValue = colorSwatch?.isEnabled == true ? 1 : 0.3
+        guard [.pencil, .highlight, .eraser, .pixelate, .rectangle, .ellipse, .arrow, .text, .counter].contains(tool),
               let size = Self.sizes[tool], let content = window.contentView
         else { return }
 
-        let bar = GlassView(frame: .zero, radius: 12)
+        let bar = GlassView(frame: .zero, radius: Design.barRadius, blending: .withinWindow)
         var x: CGFloat = 12
         func addSegment(_ labels: [String], selected: Int, action: Selector) {
             let mode = NSSegmentedControl(labels: labels, trackingMode: .selectOne, target: self, action: action)
@@ -399,31 +407,31 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
             addSegment(["Flecha", "Línea"], selected: canvas.plainLine ? 1 : 0, action: #selector(lineChanged(_:)))
         }
 
-        let sizeEnabled = tool != .pixelate || canvas.pixelBrush
-        let label = NSTextField(labelWithString: "Tamaño")
-        label.font = .systemFont(ofSize: 12, weight: .medium)
-        label.textColor = sizeEnabled ? .labelColor : .tertiaryLabelColor
-        label.sizeToFit()
-        label.frame.origin = CGPoint(x: x, y: 11)
-        bar.addSubview(label)
-        x += label.frame.width + 8
+        if tool != .pixelate || canvas.pixelBrush {
+            let label = NSTextField(labelWithString: "Tamaño:")
+            label.font = .systemFont(ofSize: 12, weight: .medium)
+            label.sizeToFit()
+            label.frame.origin = CGPoint(x: x, y: 11)
+            bar.addSubview(label)
+            x += label.frame.width + 8
 
-        let slider = NSSlider(value: Double(canvas.lineWidth), minValue: Double(size.0), maxValue: Double(size.1), target: self, action: #selector(sizeChanged(_:)))
-        slider.isEnabled = sizeEnabled
-        slider.frame = CGRect(x: x, y: 8, width: 120, height: 22)
-        bar.addSubview(slider)
-        x += 128
+            let slider = NSSlider(value: Double(canvas.lineWidth), minValue: Double(size.0), maxValue: Double(size.1), target: self, action: #selector(sizeChanged(_:)))
+            slider.frame = CGRect(x: x, y: 8, width: 120, height: 22)
+            slider.setAccessibilityLabel("Tamaño")
+            bar.addSubview(slider)
+            x += 128
 
-        let value = NSTextField(labelWithString: "\(Int(canvas.lineWidth))")
-        value.font = .monospacedDigitSystemFont(ofSize: 12, weight: .medium)
-        value.alignment = .right
-        value.frame = CGRect(x: x, y: 11, width: 24, height: 16)
-        value.tag = 77
-        bar.addSubview(value)
-        x += 34
+            let value = NSTextField(labelWithString: "\(Int(canvas.lineWidth))")
+            value.font = .monospacedDigitSystemFont(ofSize: 12, weight: .medium)
+            value.alignment = .right
+            value.frame = CGRect(x: x, y: 11, width: 24, height: 16)
+            value.tag = 77
+            bar.addSubview(value)
+            x += 34
+        }
 
         if tool == .pixelate {
-            let strength = NSTextField(labelWithString: "Intensidad")
+            let strength = NSTextField(labelWithString: "Intensidad:")
             strength.font = .systemFont(ofSize: 12, weight: .medium)
             strength.sizeToFit()
             strength.frame.origin = CGPoint(x: x, y: 11)
@@ -431,6 +439,7 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
             x += strength.frame.width + 8
             let blocks = NSSlider(value: Double(canvas.blockSize), minValue: 6, maxValue: 40, target: self, action: #selector(blockChanged(_:)))
             blocks.frame = CGRect(x: x, y: 8, width: 100, height: 22)
+            blocks.setAccessibilityLabel("Intensidad")
             bar.addSubview(blocks)
             x += 112
         }
@@ -554,73 +563,45 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
         colorPopover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .maxY)
     }
 
-    /// Cada herramienta muestra solo lo que le sirve.
+    /// Mini paleta: solo color. El tamaño ya está a la vista en la fila de opciones.
     private func buildPalette() -> NSView {
         let tool = canvas.tool
-        let showsColor = tool != .eraser && tool != .pixelate && tool != .crop && tool != .spotlight
         let colors = tool == .highlight ? Self.markers : Self.palette
-        let size = Self.sizes[tool]
+        let side: CGFloat = 12
+        let dot: CGFloat = 26
+        let gap: CGFloat = 3
+        let width = side * 2 + CGFloat(colors.count) * dot + CGFloat(colors.count - 1) * gap
+        let wide = max(width, 196)
+        let height: CGFloat = tool == .highlight ? 50 : 88
+        let view = NSView(frame: CGRect(x: 0, y: 0, width: wide, height: height))
 
-        let width: CGFloat = 12 * 2 + 8 * 29
-        var height: CGFloat = 12
-        if showsColor { height += 30 }
-        if showsColor, tool != .highlight { height += 34 }
-        if size != nil { height += 38 }
-        if !showsColor, size == nil { height += 24 }
-        height += 8
-        let view = NSView(frame: CGRect(x: 0, y: 0, width: width, height: height))
+        var x = ((wide - width) / 2).rounded() + side
+        let y = height - 12 - dot
+        for (index, entry) in colors.enumerated() {
+            let button = DotButton(color: entry.1, diameter: 18, tooltip: entry.0, target: self, action: #selector(colorPressed(_:)))
+            button.tag = index
+            button.frame.origin = CGPoint(x: x, y: y)
+            button.isActive = Self.sameColor(entry.1, canvas.color)
+            button.setAccessibilityLabel(entry.0)
+            view.addSubview(button)
+            x += dot + gap
+        }
+        guard tool != .highlight else { return view }
 
-        var y = height - 12
-        if showsColor {
-            y -= 26
-            var x: CGFloat = 12
-            for (index, entry) in colors.enumerated() {
-                let button = DotButton(color: entry.1, diameter: 18, tooltip: entry.0, target: self, action: #selector(colorPressed(_:)))
-                button.tag = index
-                button.frame.origin = CGPoint(x: x, y: y)
-                button.isActive = Self.sameColor(entry.1, canvas.color)
-                view.addSubview(button)
-                x += 29
-            }
-            y -= 4
-        }
-        if showsColor, tool != .highlight {
-            y -= 30
-            let well = NSColorWell(frame: CGRect(x: 12, y: y + 2, width: 34, height: 24))
-            well.color = canvas.color
-            well.target = self
-            well.action = #selector(wellChanged(_:))
-            view.addSubview(well)
-            let label = NSTextField(labelWithString: "Cualquier color")
-            label.font = .systemFont(ofSize: 12, weight: .medium)
-            label.sizeToFit()
-            label.frame.origin = CGPoint(x: 54, y: y + 6)
-            view.addSubview(label)
-            let picker = GlassButton(symbol: "eyedropper", tooltip: "Tomar un color de la pantalla", target: self, action: #selector(sampleColor), size: 28)
-            picker.frame.origin = CGPoint(x: width - 40, y: y)
-            view.addSubview(picker)
-            y -= 4
-        }
-        if let size {
-            y -= 32
-            let slider = NSSlider(value: Double(canvas.lineWidth), minValue: Double(size.0), maxValue: Double(size.1), target: self, action: #selector(sizeChanged(_:)))
-            slider.frame = CGRect(x: 12, y: y + 4, width: width - 60, height: 22)
-            view.addSubview(slider)
-            let value = NSTextField(labelWithString: "\(Int(canvas.lineWidth))")
-            value.font = .monospacedDigitSystemFont(ofSize: 12, weight: .medium)
-            value.alignment = .right
-            value.frame = CGRect(x: width - 44, y: y + 7, width: 32, height: 16)
-            value.tag = 77
-            view.addSubview(value)
-        }
-        if !showsColor, size == nil {
-            let label = NSTextField(labelWithString: "Esta herramienta no tiene opciones.")
-            label.font = .systemFont(ofSize: 12)
-            label.textColor = .secondaryLabelColor
-            label.sizeToFit()
-            label.frame.origin = CGPoint(x: 12, y: 12)
-            view.addSubview(label)
-        }
+        let well = NSColorWell(frame: CGRect(x: 12, y: 12, width: 34, height: 24))
+        well.color = canvas.color
+        well.target = self
+        well.action = #selector(wellChanged(_:))
+        well.setAccessibilityLabel("Cualquier color")
+        view.addSubview(well)
+        let label = NSTextField(labelWithString: "Cualquier color")
+        label.font = .systemFont(ofSize: 12, weight: .medium)
+        label.sizeToFit()
+        label.frame.origin = CGPoint(x: 54, y: 16)
+        view.addSubview(label)
+        let picker = GlassButton(symbol: "eyedropper", tooltip: "Tomar un color de la pantalla", target: self, action: #selector(sampleColor), size: 28)
+        picker.frame.origin = CGPoint(x: wide - 40, y: 10)
+        view.addSubview(picker)
         return view
     }
 
@@ -703,11 +684,11 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
         TextReader.read(from: url) { text in
             try? FileManager.default.removeItem(at: url)
             guard !text.isEmpty else {
-                Toast.shared.show("No encontré texto en esta captura.")
+                Toast.shared.show("No hay texto en esta captura")
                 return
             }
             Capture.copyText(text)
-            Toast.shared.show("Texto copiado. También puedes seleccionarlo sobre la imagen.")
+            Toast.shared.show("Texto copiado")
         }
 
         let pane = LiveTextPane(frame: scrollView.frame, image: snapshot)

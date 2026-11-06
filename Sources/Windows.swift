@@ -116,17 +116,42 @@ private struct ShortcutField: NSViewRepresentable {
     }
 }
 
+private enum SettingsPane: CaseIterable {
+    case general, shortcuts, video
+
+    var title: String {
+        switch self {
+        case .general: return "General"
+        case .shortcuts: return "Atajos"
+        case .video: return "Video"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .general: return "gearshape"
+        case .shortcuts: return "command"
+        case .video: return "video"
+        }
+    }
+}
+
 private struct SettingsView: View {
     @ObservedObject var settings: Settings
+    let pane: SettingsPane
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
 
     var body: some View {
-        TabView {
-            general.tabItem { Label("General", systemImage: "gearshape") }
-            shortcuts.tabItem { Label("Atajos", systemImage: "command") }
-            video.tabItem { Label("Video", systemImage: "video") }
+        Group {
+            switch pane {
+            case .general: general
+            case .shortcuts: shortcuts
+            case .video: video
+            }
         }
-        .frame(width: 480, height: 560)
+        .formStyle(.grouped)
+        .frame(width: 480)
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     private var general: some View {
@@ -149,19 +174,13 @@ private struct SettingsView: View {
                         .lineLimit(1)
                         .truncationMode(.middle)
                         .foregroundStyle(.secondary)
-                    Button("Ver") {
+                    Button("Mostrar en Finder") {
                         NSWorkspace.shared.open(Capture.folder)
                     }
                     Button("Cambiar…", action: chooseFolder)
                 }
             }
-            LabeledContent("Versión \(version)") {
-                Button("Copiar comando para actualizar") {
-                    Capture.copyText(Self.updateCommand)
-                }
-            }
         }
-        .formStyle(.grouped)
     }
 
     private var shortcuts: some View {
@@ -173,9 +192,9 @@ private struct SettingsView: View {
                             .frame(width: 130, height: 24)
                     }
                     if settings.conflicts.contains(action) {
-                        Text("Este atajo ya lo usa otra app o acción. Elige otro.")
-                            .font(.footnote)
-                            .foregroundStyle(.orange)
+                        Label("Este atajo ya está en uso. Elige otro.", systemImage: "exclamationmark.triangle.fill")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
                     }
                 }
             }
@@ -186,55 +205,53 @@ private struct SettingsView: View {
                 }
             }
         }
-        .formStyle(.grouped)
     }
 
     private var video: some View {
         Form {
-            Picker("Al terminar, copiar", selection: $settings.videoCopiesSummary) {
-                Text("Resumen en imágenes").tag(true)
-                Text("Archivo de video").tag(false)
+            Section {
+                Picker("Al terminar, copiar", selection: $settings.videoCopiesSummary) {
+                    Text("Resumen en imágenes").tag(true)
+                    Text("Archivo de video").tag(false)
+                }
+                Picker("Tomar una imagen cada", selection: $settings.videoEvery) {
+                    Text("1 segundo").tag(1.0)
+                    Text("2 segundos").tag(2.0)
+                    Text("5 segundos").tag(5.0)
+                    Text("10 segundos").tag(10.0)
+                    Text("30 segundos").tag(30.0)
+                    Text("1 minuto").tag(60.0)
+                }
+                .disabled(!settings.videoCopiesSummary)
+                Picker("Detener la grabación a los", selection: $settings.videoLimit) {
+                    Text("Sin límite").tag(0.0)
+                    Text("10 segundos").tag(10.0)
+                    Text("30 segundos").tag(30.0)
+                    Text("1 minuto").tag(60.0)
+                    Text("5 minutos").tag(300.0)
+                }
+                Picker("Cuadros por segundo", selection: $settings.videoFPS) {
+                    Text("30").tag(30)
+                    Text("60").tag(60)
+                }
             }
-            Picker("Tomar una imagen cada", selection: $settings.videoEvery) {
-                Text("1 segundo").tag(1.0)
-                Text("2 segundos").tag(2.0)
-                Text("5 segundos").tag(5.0)
-                Text("10 segundos").tag(10.0)
-                Text("30 segundos").tag(30.0)
-                Text("1 minuto").tag(60.0)
+            Section("Mostrar en el video") {
+                Toggle("Cursor", isOn: $settings.videoCursor)
+                Toggle("Clics", isOn: $settings.videoClicks)
+                Toggle("Teclas", isOn: $settings.videoKeys)
+                Toggle("Cámara", isOn: $settings.videoCamera)
             }
-            Picker("Detener la grabación a los", selection: $settings.videoLimit) {
-                Text("Sin límite").tag(0.0)
-                Text("10 segundos").tag(10.0)
-                Text("30 segundos").tag(30.0)
-                Text("1 minuto").tag(60.0)
-                Text("5 minutos").tag(300.0)
-            }
-            Picker("Fluidez", selection: $settings.videoFPS) {
-                Text("30 cuadros por segundo").tag(30)
-                Text("60 cuadros por segundo").tag(60)
-            }
-            Toggle("Mostrar el cursor", isOn: $settings.videoCursor)
-            Toggle("Mostrar los clics", isOn: $settings.videoClicks)
-            Toggle("Mostrar las teclas", isOn: $settings.videoKeys)
-            Toggle("Mostrar la cámara", isOn: $settings.videoCamera)
-            Toggle("Grabar el sonido del Mac", isOn: $settings.systemAudio)
-            Toggle("Grabar con micrófono", isOn: $settings.recordMicrophone)
-                .disabled(!ScreenRecorder.supportsMicrophone)
-            if !ScreenRecorder.supportsMicrophone {
-                Text("Requiere macOS 15 o más nuevo.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+            Section("Sonido") {
+                Toggle("Sonido del Mac", isOn: $settings.systemAudio)
+                Toggle("Micrófono", isOn: $settings.recordMicrophone)
+                    .disabled(!ScreenRecorder.supportsMicrophone)
+                if !ScreenRecorder.supportsMicrophone {
+                    Text("Requiere macOS 15 o más nuevo.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
-        .formStyle(.grouped)
-    }
-
-    private static let updateCommand =
-        "curl -fsSL https://raw.githubusercontent.com/GitHubnotoficial/Zas/main/instalar-rapido.sh | bash"
-
-    private var version: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
     }
 
     private var displayPath: String {
@@ -273,6 +290,7 @@ private struct WelcomeView: View {
     let openSettings: () -> Void
     let relaunch: () -> Void
     let dismiss: () -> Void
+    @State private var openedSettings = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -280,15 +298,16 @@ private struct WelcomeView: View {
                 .resizable()
                 .frame(width: 84, height: 84)
                 .padding(.top, 36)
+                .accessibilityHidden(true)
 
-            Text(hasPermission ? "Zas está listo" : "Un permiso y listo")
-                .font(.system(size: 26, weight: .bold))
+            Text(hasPermission ? "Zas está listo" : "Permite grabar la pantalla")
+                .font(.largeTitle.weight(.bold))
                 .padding(.top, 16)
 
             Text(hasPermission
-                ? "Vive en la barra de menú. Prueba tu primera captura con este atajo."
-                : "macOS pide autorizar la Grabación de pantalla. Todo se queda en tu Mac.")
-                .font(.system(size: 14))
+                ? "Vive en la barra de menú. Haz tu primera captura con este atajo."
+                : "macOS lo pide para capturar. Todo se queda en tu Mac.")
+                .font(.body)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
@@ -297,37 +316,39 @@ private struct WelcomeView: View {
 
             if hasPermission {
                 Text(Settings.shared.shortcut(for: .region).displayString)
-                    .font(.system(size: 30, weight: .semibold, design: .rounded))
+                    .font(.title.weight(.semibold))
                     .padding(.vertical, 12)
                     .padding(.horizontal, 28)
                     .background(.quaternary, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                     .padding(.top, 22)
             }
 
-            Group {
-                if hasPermission {
-                    Button("Empezar", action: dismiss)
-                        .keyboardShortcut(.defaultAction)
-                        .controlSize(.large)
-                } else {
-                    VStack(spacing: 10) {
-                        Button(action: openSettings) {
-                            Text("Abrir Ajustes").frame(maxWidth: .infinity)
-                        }
-                        .keyboardShortcut(.defaultAction)
-                        .controlSize(.large)
-
-                        Button("Ya lo activé, reiniciar Zas", action: relaunch)
-                            .buttonStyle(.link)
-                            .font(.system(size: 13))
-                    }
-                    .padding(.horizontal, 44)
-                }
+            Button(action: primaryAction) {
+                Text(primaryTitle).frame(maxWidth: .infinity)
             }
+            .keyboardShortcut(.defaultAction)
+            .controlSize(.large)
+            .padding(.horizontal, 44)
             .padding(.top, 26)
             .padding(.bottom, 30)
         }
         .frame(width: 400)
+    }
+
+    private var primaryTitle: String {
+        if hasPermission { return "Empezar" }
+        return openedSettings ? "Reiniciar Zas" : "Abrir Ajustes"
+    }
+
+    private func primaryAction() {
+        if hasPermission {
+            dismiss()
+        } else if openedSettings {
+            relaunch()
+        } else {
+            openedSettings = true
+            openSettings()
+        }
     }
 }
 
@@ -355,7 +376,7 @@ private struct HistoryView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Picker("", selection: $filter) {
+            Picker("Mostrar", selection: $filter) {
                 ForEach(Filter.allCases, id: \.self) { Text($0.rawValue).tag($0) }
             }
             .pickerStyle(.segmented)
@@ -371,46 +392,15 @@ private struct HistoryView: View {
                 ScrollView {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 160), spacing: 12)], spacing: 12) {
                         ForEach(visible, id: \.self) { file in
-                            tile(file)
+                            HistoryTile(file: file, onOpen: onOpen, onChange: reload)
                         }
                     }
                     .padding(16)
                 }
             }
         }
-        .frame(width: 720, height: 520)
+        .frame(minWidth: 520, idealWidth: 720, minHeight: 360, idealHeight: 520)
         .onAppear(perform: reload)
-    }
-
-    private func tile(_ file: URL) -> some View {
-        VStack(spacing: 6) {
-            Group {
-                if let preview = Recents.preview(of: file) {
-                    Image(nsImage: preview).resizable().aspectRatio(contentMode: .fit)
-                } else {
-                    Image(systemName: "film").font(.largeTitle).foregroundStyle(.secondary)
-                }
-            }
-            .frame(width: 160, height: 100)
-            .background(.quaternary, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-            Text(Recents.title(for: file))
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .truncationMode(.middle)
-        }
-        .contentShape(Rectangle())
-        .onTapGesture { onOpen(file) }
-        .contextMenu {
-            Button("Copiar y mostrar") { onOpen(file) }
-            Button("Mostrar en Finder") { NSWorkspace.shared.activateFileViewerSelecting([file]) }
-            Button("Mover a la Papelera") {
-                NSWorkspace.shared.recycle([file]) { _, _ in
-                    Task { @MainActor in reload() }
-                }
-            }
-        }
     }
 
     private func reload() {
@@ -418,23 +408,92 @@ private struct HistoryView: View {
     }
 }
 
+private struct HistoryTile: View {
+    let file: URL
+    let onOpen: (URL) -> Void
+    let onChange: () -> Void
+    @State private var preview: NSImage?
+
+    private static let formatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "es")
+        formatter.dateFormat = "d MMM, HH:mm"
+        return formatter
+    }()
+
+    private var dateText: String {
+        let date = (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+        return date.map(Self.formatter.string) ?? Recents.title(for: file)
+    }
+
+    var body: some View {
+        Button {
+            onOpen(file)
+        } label: {
+            VStack(spacing: 6) {
+                Group {
+                    if let preview {
+                        Image(nsImage: preview).resizable().aspectRatio(contentMode: .fit)
+                    } else {
+                        Image(systemName: file.pathExtension == "mp4" ? "film" : "photo")
+                            .font(.title)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .frame(width: 160, height: 100)
+                .background(.quaternary, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                Text(dateText)
+                    .font(.callout)
+                    .foregroundStyle(.primary)
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(file.pathExtension == "mp4" ? "Video" : "Captura") del \(dateText)")
+        .task {
+            // Se decodifica aparte: quinientas capturas no deben trabar la ventana.
+            let url = file
+            preview = await Task.detached(priority: .utility) { Recents.preview(of: url) }.value
+        }
+        .contextMenu {
+            Button("Abrir") { onOpen(file) }
+            Button("Mostrar en Finder") { NSWorkspace.shared.activateFileViewerSelecting([file]) }
+            Button("Mover a la Papelera") {
+                NSWorkspace.shared.recycle([file]) { _, _ in
+                    Task { @MainActor in onChange() }
+                }
+            }
+        }
+    }
+}
+
 /// Crea y recuerda las dos ventanas de la app.
 @MainActor
 final class WindowCoordinator: NSObject, NSWindowDelegate {
     private var settingsWindow: NSWindow?
+    private var settingsTabs: NSTabViewController?
     private var welcomeWindow: NSWindow?
 
     func showSettings() {
         if settingsWindow == nil {
-            let host = NSHostingController(rootView: SettingsView(settings: .shared))
-            let window = NSWindow(contentViewController: host)
-            window.title = "Ajustes de Zas"
+            let tabs = NSTabViewController()
+            tabs.tabStyle = .toolbar
+            for pane in SettingsPane.allCases {
+                let host = NSHostingController(rootView: SettingsView(settings: .shared, pane: pane))
+                host.sizingOptions = [.preferredContentSize]
+                let item = NSTabViewItem(viewController: host)
+                item.label = pane.title
+                item.image = NSImage(systemSymbolName: pane.symbol, accessibilityDescription: pane.title)
+                tabs.addTabViewItem(item)
+            }
+            let window = NSWindow(contentViewController: tabs)
+            window.title = SettingsPane.general.title
             window.styleMask = [.titled, .closable]
+            window.toolbarStyle = .preference
             window.isReleasedWhenClosed = false
-            // SwiftUI calcula el tamaño tarde: hay que pedirlo antes de centrar.
-            window.setContentSize(host.view.fittingSize)
             window.center()
             settingsWindow = window
+            settingsTabs = tabs
         }
         NSApp.activate(ignoringOtherApps: true)
         settingsWindow?.makeKeyAndOrderFront(nil)
@@ -446,7 +505,7 @@ final class WindowCoordinator: NSObject, NSWindowDelegate {
         let host = NSHostingController(rootView: HistoryView(onOpen: onOpen))
         historyWindow?.close()
         let window = NSWindow(contentViewController: host)
-        window.title = "Historial de Zas"
+        window.title = "Historial"
         window.styleMask = [.titled, .closable, .resizable]
         window.isReleasedWhenClosed = false
         window.setContentSize(host.view.fittingSize)
@@ -472,6 +531,7 @@ final class WindowCoordinator: NSObject, NSWindowDelegate {
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         window.isMovableByWindowBackground = true
+        window.title = hasPermission ? "Bienvenida" : "Permiso"
         window.isReleasedWhenClosed = false
         window.standardWindowButton(.miniaturizeButton)?.isHidden = true
         window.standardWindowButton(.zoomButton)?.isHidden = true
@@ -484,10 +544,15 @@ final class WindowCoordinator: NSObject, NSWindowDelegate {
     }
 
     #if ZAS_TEST
+    func testSettingsPane(_ index: Int) {
+        settingsTabs?.selectedTabViewItemIndex = index
+    }
+
     func closeAll() {
         settingsWindow?.close()
         welcomeWindow?.close()
         settingsWindow = nil
+        settingsTabs = nil
         welcomeWindow = nil
         historyWindow?.close()
         historyWindow = nil
