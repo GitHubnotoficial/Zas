@@ -470,9 +470,28 @@ func sceneSelect(_ t: CGFloat) {
         if grow > 0 {
             stroked(rect, 0, .white, 1.6)
             let pill = CGRect(x: rect.minX, y: rect.maxY + 10, width: 118, height: 30)
-            rounded(pill, 15, NSColor.black.withAlphaComponent(0.85))
-            text("\(Int(rect.width * 2)) × \(Int(rect.height * 2))", 14, .medium, .white, at: CGPoint(x: pill.midX, y: pill.minY + 6), align: .center, mono: true)
+            rounded(pill, 15, NSColor(white: 0.96, alpha: 0.94))
+            text("\(Int(rect.width * 2)) × \(Int(rect.height * 2))", 14, .medium, ink, at: CGPoint(x: pill.midX, y: pill.minY + 7), align: .center)
             cursor(at: CGPoint(x: rect.maxX, y: rect.maxY))
+        }
+        if dim > 0 {
+            let bar = CGRect(x: 238, y: 416, width: 424, height: 46)
+            withAlpha(dim) {
+                shadow(16, 5, 0.35) {
+                    rounded(bar, 14, NSColor(white: 0.97, alpha: 0.93))
+                }
+                let modes = ["viewfinder", "text.viewfinder", "timer", "arrow.up.and.down", "record.circle"]
+                for (index, name) in modes.enumerated() {
+                    let box = CGRect(x: bar.minX + 7 + CGFloat(index) * 36, y: bar.minY + 7, width: 32, height: 32)
+                    if index == 0 { rounded(box, 8, .systemBlue) }
+                    symbol(name, box.insetBy(dx: 8, dy: 8), index == 0 ? .white : NSColor(white: 0.22, alpha: 1))
+                }
+                NSColor(white: 0, alpha: 0.12).setFill()
+                CGRect(x: bar.minX + 192, y: bar.minY + 12, width: 1, height: 22).fill()
+                symbol("display", CGRect(x: bar.minX + 208, y: bar.minY + 14, width: 18, height: 18), NSColor(white: 0.22, alpha: 1))
+                symbol("pause", CGRect(x: bar.minX + 244, y: bar.minY + 14, width: 18, height: 18), NSColor(white: 0.22, alpha: 1))
+                text("Esc para cancelar", 14, .regular, NSColor(white: 0.35, alpha: 1), at: CGPoint(x: bar.maxX - 14, y: bar.minY + 14), align: .right)
+            }
         }
     }
 }
@@ -523,18 +542,22 @@ func sceneAnnotate(_ t: CGFloat) {
         // Barra del editor, para que se vea la herramienta en uso.
         let bar = CGRect(x: 214, y: 424, width: 662, height: 46)
         shadow(14, 4, 0.3) {
-            rounded(bar, 12, NSColor(white: 0.96, alpha: 1))
+            rounded(bar, 14, NSColor(white: 0.97, alpha: 0.93))
         }
-        let names = ["cursorarrow", "arrow.up.right", "rectangle", "circle", "highlighter", "scribble", "textformat", "1.circle", "crop"]
+        let names = ["cursorarrow", "arrow.up.right", "rectangle", "circle", "scribble", "highlighter", "textformat", "1.circle", "square.grid.3x3.square", "scope", "eraser", "crop"]
         for (index, name) in names.enumerated() {
-            let box = CGRect(x: 226 + CGFloat(index) * 36, y: 433, width: 28, height: 28)
+            let box = CGRect(x: 222 + CGFloat(index) * 36, y: 431, width: 32, height: 32)
             let active = (index == 1 && t < 11) || (index == 2 && t >= 11 && t < 11.5) || (index == 6 && t >= 11.5)
-            if active { rounded(box, 7, .systemBlue) }
-            symbol(name, box.insetBy(dx: 6, dy: 6), active ? .white : NSColor(white: 0.25, alpha: 1))
+            if active { rounded(box, 8, .systemBlue) }
+            symbol(name, box.insetBy(dx: 8, dy: 8), active ? .white : NSColor(white: 0.22, alpha: 1))
         }
-        let copy = CGRect(x: 790, y: 433, width: 76, height: 28)
-        rounded(copy, 7, .systemBlue)
-        text("Copiar", 14, .semibold, .white, at: CGPoint(x: copy.midX, y: copy.minY + 5), align: .center)
+        NSColor.systemRed.setFill()
+        NSBezierPath(ovalIn: CGRect(x: 661, y: 438, width: 18, height: 18)).fill()
+        symbol("doc.on.doc", CGRect(x: 700, y: 438, width: 18, height: 18), NSColor(white: 0.22, alpha: 1))
+        symbol("square.and.arrow.down", CGRect(x: 736, y: 438, width: 18, height: 18), NSColor(white: 0.22, alpha: 1))
+        let done = CGRect(x: 790, y: 432, width: 74, height: 30)
+        rounded(done, 8, .systemBlue)
+        text("Listo", 14, .semibold, .white, at: CGPoint(x: done.midX, y: done.minY + 7), align: .center)
 
         arrow(from: CGPoint(x: 845, y: 70), to: CGPoint(x: 806, y: 296), expoOut(span(t, 10.5, 10.95)), .systemRed, width: 5.5)
         let box = expoOut(span(t, 11, 11.4))
@@ -719,7 +742,7 @@ func sceneMontage(_ t: CGFloat) {
         ("photo.on.rectangle", "Presenta", "fondos listos para compartir"),
         ("scissors", "Recorta", "tus videos al instante"),
         ("speaker.wave.2", "Con sonido", "el del Mac y tu voz"),
-        ("clock", "Historial", "nada se pierde"),
+        ("cursorarrow.click.2", "Clics y teclas", "visibles en tus videos"),
         ("arrow.clockwise", "Repite", "la misma área, con un atajo"),
         ("lock", "Solo en tu Mac", "nada sale de tu equipo"),
     ]
@@ -1094,7 +1117,7 @@ let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
     AVVideoWidthKey: width,
     AVVideoHeightKey: height,
     AVVideoCompressionPropertiesKey: [
-        AVVideoAverageBitRateKey: 9_000_000,
+        AVVideoAverageBitRateKey: 6_800_000,
         AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel,
     ] as [String: Any],
 ])
