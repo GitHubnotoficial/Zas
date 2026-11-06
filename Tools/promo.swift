@@ -343,12 +343,10 @@ func selectionRect(_ grow: CGFloat) -> CGRect {
 }
 
 func sceneSelect(_ t: CGFloat) {
-    caption("Selecciona lo que quieras.", t)
     let enter = easeOut(span(t, 0, 0.55))
     withAlpha(enter) {
         appWindow(windowRect.offsetBy(dx: 0, dy: (1 - enter) * 90))
     }
-    keycaps(["⇧", "⌘", "2"], center: CGPoint(x: 1650, y: 215), start: 0.35, t)
 
     let dim = span(t, 0.95, 1.2)
     let grow = easeInOut(span(t, 1.35, 2.5))
@@ -376,6 +374,8 @@ func sceneSelect(_ t: CGFloat) {
     let target = selectionRect(0).origin
     let tip = grow > 0 ? CGPoint(x: rect.maxX, y: rect.maxY) : CGPoint(x: mix(start.x, target.x, move), y: mix(start.y, target.y, move))
     cursor(at: tip)
+    caption("Selecciona lo que quieras.", t)
+    keycaps(["⇧", "⌘", "2"], center: CGPoint(x: 1720, y: 108), start: 0.35, t)
 }
 
 func thumbnailCard(_ rect: CGRect, badge: String?) {
@@ -387,14 +387,13 @@ func thumbnailCard(_ rect: CGRect, badge: String?) {
     NSColor.white.setFill()
     rect.fill()
     let line = rect.height / 6
-    text("Pedido 1045", line * 1.4, .regular, .darkGray, at: CGPoint(x: rect.minX + rect.width * 0.05, y: rect.minY + line * 1.9))
-    text("Error al guardar", line * 1.4, .medium, .systemRed, at: CGPoint(x: rect.minX + rect.width * 0.62, y: rect.minY + line * 1.9))
+    text("Pedido 1045", line * 1.05, .regular, .darkGray, at: CGPoint(x: rect.minX + rect.width * 0.05, y: rect.minY + line * 1.1))
+    text("Error al guardar", line * 1.05, .medium, .systemRed, at: CGPoint(x: rect.minX + rect.width * 0.58, y: rect.minY + line * 1.1))
     ctx.restoreGState()
     stroked(rect.insetBy(dx: 0.5, dy: 0.5), 15.5, NSColor(white: 1, alpha: 0.25), 1)
 }
 
 func sceneCopied(_ t: CGFloat) {
-    caption("Ya está copiada. Solo pega.", t)
     appWindow(windowRect)
     let source = selectionRect(1)
     let target = CGRect(x: 1400, y: 760, width: 460, height: 150)
@@ -425,7 +424,8 @@ func sceneCopied(_ t: CGFloat) {
             text("Copiado", 22, .bold, ink, at: CGPoint(x: pill.minX + 46, y: pill.minY + 8))
         }
     }
-    keycaps(["⌘", "V"], center: CGPoint(x: 330, y: 830), start: 1.25, t)
+    caption("Ya está copiada. Solo pega.", t)
+    keycaps(["⌘", "V"], center: CGPoint(x: 190, y: 830), start: 1.25, t)
 }
 
 func sceneAnnotate(_ t: CGFloat) {
@@ -465,7 +465,7 @@ func sceneAnnotate(_ t: CGFloat) {
         clip.addClip()
         appWindow(image) {
             let draw = easeInOut(span(t, 0.75, 1.5))
-            arrow(from: CGPoint(x: 330, y: 88), to: CGPoint(x: 628, y: 298), draw, .systemRed, width: 6)
+            arrow(from: CGPoint(x: 845, y: 64), to: CGPoint(x: 804, y: 300), draw, .systemRed, width: 6)
             let box = easeInOut(span(t, 1.75, 2.35))
             if box > 0 {
                 let target = CGRect(x: 628, y: 292, width: 170, height: 38)
@@ -477,9 +477,9 @@ func sceneAnnotate(_ t: CGFloat) {
             }
             let note = easeBack(span(t, 2.45, 2.85))
             if note > 0 {
-                let origin = CGPoint(x: 268, y: 58)
+                let origin = CGPoint(x: 870, y: 28)
                 scaled(note, around: origin) {
-                    text("Esto debería guardar", 22, .bold, .systemRed, at: origin)
+                    text("Esto debería guardar", 22, .bold, .systemRed, at: origin, align: .right)
                 }
             }
         }
@@ -506,7 +506,7 @@ func sceneVideo(_ t: CGFloat) {
         withAlpha(enter) {
             appWindow(windowRect)
         }
-        keycaps(["⇧", "⌘", "6"], center: CGPoint(x: 1650, y: 215), start: 0.2, t)
+        keycaps(["⇧", "⌘", "6"], center: CGPoint(x: 1720, y: 108), start: 0.2, t)
 
         let live = span(t, 0.6, 0.8)
         if live > 0 {
