@@ -9,6 +9,9 @@ jobs:
   macos:
     runs-on: macos-15
     timeout-minutes: 20
+    env:
+      ZAS_CERT_P12: ${{ secrets.ZAS_CERT_P12 }}
+      ZAS_CERT_PASSWORD: ${{ secrets.ZAS_CERT_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
 
@@ -18,6 +21,22 @@ jobs:
           uname -m
           xcrun swiftc --version
 
+      - name: Preparar firma
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/zas.keychain-db"
+          PASSWORD="$(uuidgen)"
+          security create-keychain -p "$PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$PASSWORD" "$KEYCHAIN"
+          echo "$ZAS_CERT_P12" | base64 --decode > "$RUNNER_TEMP/zas.p12"
+          security import "$RUNNER_TEMP/zas.p12" -k "$KEYCHAIN" -P "$ZAS_CERT_PASSWORD" -T /usr/bin/codesign -f pkcs12
+          rm "$RUNNER_TEMP/zas.p12"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$PASSWORD" "$KEYCHAIN" > /dev/null
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
+          security find-identity -p codesigning "$KEYCHAIN"
+          ID="$(security find-identity -p codesigning "$KEYCHAIN" | awk '$1 == "1)" { print $2; exit }')"
+          echo "ZAS_SIGN_ID=$ID" >> "$GITHUB_ENV"
+
       - name: Compilar
         run: bash compilar.sh
 
@@ -25,6 +44,37 @@ jobs:
         run: |
           ditto -c -k --keepParent build/Zas.app build/Zas-app.zip
           lipo -info build/Zas.app/Contents/MacOS/Zas
+
+      - name: Sonda de arranque
+        continue-on-error: true
+        run: |
+          mkdir -p sonda
+          cp -R build/Zas.app /Applications/Zas.app
+          screencapture -x sonda/1-antes.png || echo "screencapture falló"
+          open /Applications/Zas.app
+          sleep 6
+          pgrep -xl Zas || echo "ZAS NO ESTA CORRIENDO"
+          screencapture -x sonda/2-sin-permiso.png || true
+          ls -ld ~/Pictures/Zas || true
+          echo "--- esquema TCC"
+          sudo sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" ".schema access" | head -5 || true
+          NOW="$(date +%s)"
+          sudo sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" "INSERT OR REPLACE INTO access (service,client,client_type,auth_value,auth_reason,auth_version,flags,last_modified) VALUES ('kTCCServiceScreenCapture','local.zas.app',0,2,4,1,0,$NOW);" && echo "TCC insertado"
+          pkill -x Zas || true
+          sleep 2
+          open /Applications/Zas.app
+          sleep 6
+          pgrep -xl Zas || echo "ZAS NO ESTA CORRIENDO"
+          screencapture -x sonda/3-con-permiso.png || true
+          log show --last 2m --style compact --predicate 'process == "Zas" OR eventMessage CONTAINS "local.zas.app"' 2>/dev/null | tail -25 || true
+          ls -la sonda
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sonda
+          path: sonda
+          if-no-files-found: warn
 
       - uses: actions/upload-artifact@v4
         with:

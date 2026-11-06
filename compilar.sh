@@ -51,5 +51,7 @@ cat > "$BUNDLE/Contents/Info.plist" <<PLIST
 PLIST
 
 echo "Firmando..."
-codesign --force --deep --sign - "$BUNDLE"
+# En GitHub se firma con el certificado de Zas para que macOS recuerde el permiso entre versiones.
+codesign --force --deep --sign "${ZAS_SIGN_ID:--}" "$BUNDLE"
 codesign --verify --verbose "$BUNDLE"
+codesign --display --requirements - "$BUNDLE"
