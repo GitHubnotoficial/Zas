@@ -540,11 +540,11 @@ func sceneAnnotate(_ t: CGFloat) {
     headline("03", "Márcalo.", "Flechas, cuadros y texto.", start: 10, end: 12, t)
     stage(yaw: -0.17, pitch: 0.05, zoom: 1.02 + span(t, 10, 12) * 0.06, enter: span(t, 10, 10.55)) {
         // Barras del editor: arriba las herramientas, abajo arrastrar y compartir.
-        NSColor(white: 0.96, alpha: 0.97).setFill()
+        NSColor(white: 0.96, alpha: 1).setFill()
         // Cubre el título de la app de ejemplo: aquí la barra es la del editor.
         NSColor(srgbRed: 0.97, green: 0.97, blue: 0.98, alpha: 1).setFill()
         CGRect(x: 190, y: 44, width: designSize.width - 190, height: 20).fill()
-        NSColor(white: 0.96, alpha: 0.97).setFill()
+        NSColor(white: 0.96, alpha: 1).setFill()
         CGRect(x: 0, y: 0, width: designSize.width, height: 44).fill()
         CGRect(x: 0, y: designSize.height - 44, width: designSize.width, height: 44).fill()
         for (index, color) in [NSColor.systemRed, .systemYellow, .systemGreen].enumerated() {
