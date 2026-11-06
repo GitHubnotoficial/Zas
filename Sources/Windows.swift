@@ -433,7 +433,7 @@ private struct HistoryTile: View {
             VStack(spacing: 6) {
                 Group {
                     if let preview {
-                        Image(nsImage: preview).resizable().aspectRatio(contentMode: .fit)
+                        Image(nsImage: preview).resizable().scaledToFill()
                     } else {
                         Image(systemName: file.pathExtension == "mp4" ? "film" : "photo")
                             .font(.title)
@@ -453,7 +453,7 @@ private struct HistoryTile: View {
         .task {
             // Se decodifica aparte: quinientas capturas no deben trabar la ventana.
             let url = file
-            preview = await Task.detached(priority: .utility) { Recents.preview(of: url) }.value
+            preview = await Recents.previewInBackground(of: url)
         }
         .contextMenu {
             Button("Abrir") { onOpen(file) }
@@ -481,6 +481,8 @@ final class WindowCoordinator: NSObject, NSWindowDelegate {
             for pane in SettingsPane.allCases {
                 let host = NSHostingController(rootView: SettingsView(settings: .shared, pane: pane))
                 host.sizingOptions = [.preferredContentSize]
+                // El título de la ventana sale de aquí: sin esto, macOS pone "Untitled".
+                host.title = pane.title
                 let item = NSTabViewItem(viewController: host)
                 item.label = pane.title
                 item.image = NSImage(systemSymbolName: pane.symbol, accessibilityDescription: pane.title)
@@ -547,6 +549,8 @@ final class WindowCoordinator: NSObject, NSWindowDelegate {
     func testSettingsPane(_ index: Int) {
         settingsTabs?.selectedTabViewItemIndex = index
     }
+
+    var testSettingsTitle: String { settingsWindow?.title ?? "" }
 
     func closeAll() {
         settingsWindow?.close()

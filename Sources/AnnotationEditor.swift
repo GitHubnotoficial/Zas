@@ -662,7 +662,21 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
 
     @objc private func zoomIn() { setMagnification(min(scrollView.magnification * 1.25, 8)) }
     @objc private func zoomOut() { setMagnification(max(scrollView.magnification / 1.25, 0.25)) }
-    @objc private func zoomFit() { setMagnification(1) }
+    /// La imagen entera a la vista, sin agrandarla más de su tamaño real.
+    @objc private func zoomFit() {
+        let image = canvas.bounds.size
+        let room = scrollView.bounds.size
+        setMagnification(max(min(room.width / max(image.width, 1), room.height / max(image.height, 1), 1), 0.25))
+    }
+
+    // MARK: - Menú principal
+
+    @objc private func menuSave() { saveCopy() }
+
+    @objc private func menuTool(_ sender: NSMenuItem) {
+        guard let tool = AnnotationTool(rawValue: sender.tag) else { return }
+        select(tool: tool)
+    }
 
     private func refreshZoomLabel() {
         zoomLabel?.stringValue = "\(Int((scrollView.magnification * 100).rounded())) %"

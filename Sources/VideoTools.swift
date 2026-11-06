@@ -60,9 +60,10 @@ enum VideoTrimmer {
     private static func legacyExport(_ session: AVAssetExportSession, to output: URL) async -> Bool {
         session.outputURL = output
         session.outputFileType = .mp4
+        nonisolated(unsafe) let running = session
         return await withCheckedContinuation { continuation in
-            session.exportAsynchronously {
-                continuation.resume(returning: session.status == .completed)
+            running.exportAsynchronously {
+                continuation.resume(returning: running.status == .completed)
             }
         }
     }

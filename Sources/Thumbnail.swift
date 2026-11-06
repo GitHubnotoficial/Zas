@@ -67,8 +67,9 @@ final class ThumbnailController {
 
         let imageSize = image.size
         let aspect = max(imageSize.width, 1) / max(imageSize.height, 1)
-        let height = min(max((width / aspect).rounded(), 112), 168)
-        let size = CGSize(width: width, height: height)
+        // La tarjeta toma la forma de la captura para no dejar bandas. Sus límites dejan sitio a las acciones.
+        let height = min(max((width / aspect).rounded(), 84), 168)
+        let size = CGSize(width: min(max((height * aspect).rounded(), 160), width), height: height)
 
         let panel = CardPanel(
             contentRect: CGRect(origin: .zero, size: size),

@@ -1,3 +1,4 @@
+@preconcurrency import AVFoundation
 import AppKit
 import ImageIO
 
@@ -32,16 +33,43 @@ enum Recents {
         return name
     }
 
-    /// Imagen pequeña sin cargar el archivo completo en memoria.
+    private nonisolated static let previewSize = 400
+    private nonisolated(unsafe) static let previews = NSCache<NSString, NSImage>()
+
+    /// Imagen pequeña sin cargar el archivo completo en memoria. Un video usa un cuadro propio.
     nonisolated static func preview(of url: URL) -> NSImage? {
-        guard url.pathExtension.lowercased() == "png",
-              let source = CGImageSourceCreateWithURL(url as CFURL, nil),
-              let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
-                  kCGImageSourceCreateThumbnailFromImageAlways: true,
-                  kCGImageSourceThumbnailMaxPixelSize: 160,
-              ] as CFDictionary)
-        else { return nil }
-        return NSImage(cgImage: image, size: .zero)
+        let date = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+        let key = "\(url.path)|\(date?.timeIntervalSince1970 ?? 0)" as NSString
+        if let saved = previews.object(forKey: key) {
+            return saved
+        }
+        guard let image = url.pathExtension.lowercased() == "mp4" ? videoFrame(of: url) : imageFrame(of: url) else {
+            return nil
+        }
+        let preview = NSImage(cgImage: image, size: .zero)
+        previews.setObject(preview, forKey: key)
+        return preview
+    }
+
+    /// Para que quinientas capturas no traben una ventana.
+    nonisolated static func previewInBackground(of url: URL) async -> NSImage? {
+        struct Sent: @unchecked Sendable { let image: NSImage? }
+        return await Task.detached(priority: .utility) { Sent(image: preview(of: url)) }.value.image
+    }
+
+    private nonisolated static func imageFrame(of url: URL) -> CGImage? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+        return CGImageSourceCreateThumbnailAtIndex(source, 0, [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceThumbnailMaxPixelSize: previewSize,
+        ] as CFDictionary)
+    }
+
+    private nonisolated static func videoFrame(of url: URL) -> CGImage? {
+        let generator = AVAssetImageGenerator(asset: AVURLAsset(url: url))
+        generator.appliesPreferredTrackTransform = true
+        generator.maximumSize = CGSize(width: previewSize, height: previewSize)
+        return try? generator.copyCGImage(at: .zero, actualTime: nil)
     }
 }
 

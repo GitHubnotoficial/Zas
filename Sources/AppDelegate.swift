@@ -175,6 +175,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         let fileItem = NSMenuItem()
         let fileMenu = NSMenu(title: "Archivo")
+        fileMenu.addItem(withTitle: "Guardar copia", action: Selector(("menuSave")), keyEquivalent: "s")
         fileMenu.addItem(withTitle: "Cerrar", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
         fileItem.submenu = fileMenu
         main.addItem(fileItem)
@@ -191,6 +192,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         editMenu.addItem(withTitle: "Seleccionar todo", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
         editItem.submenu = editMenu
         main.addItem(editItem)
+
+        // Sin destino fijo: solo se activan cuando el editor está al frente.
+        let viewItem = NSMenuItem()
+        let viewMenu = NSMenu(title: "Ver")
+        viewMenu.addItem(withTitle: "Acercar", action: Selector(("zoomIn")), keyEquivalent: "+")
+        viewMenu.addItem(withTitle: "Alejar", action: Selector(("zoomOut")), keyEquivalent: "-")
+        viewMenu.addItem(withTitle: "Ajustar a la ventana", action: Selector(("zoomFit")), keyEquivalent: "0")
+        viewMenu.addItem(.separator())
+        viewMenu.addItem(withTitle: "Seleccionar texto", action: Selector(("toggleTextMode")), keyEquivalent: "")
+        viewItem.submenu = viewMenu
+        main.addItem(viewItem)
+
+        let toolsItem = NSMenuItem()
+        let toolsMenu = NSMenu(title: "Herramientas")
+        for tool in AnnotationTool.allCases where tool != .picture {
+            let item = toolsMenu.addItem(withTitle: tool.label, action: Selector(("menuTool:")), keyEquivalent: "")
+            item.tag = tool.rawValue
+        }
+        toolsItem.submenu = toolsMenu
+        main.addItem(toolsItem)
 
         NSApp.mainMenu = main
     }

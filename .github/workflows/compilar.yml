@@ -45,7 +45,7 @@ jobs:
       - name: Compilar las pruebas
         run: |
           xcrun swiftc -swift-version 5 -sdk "$(xcrun --show-sdk-path)" \
-            -D ZAS_TEST -o build/ZasPruebas Sources/*.swift Tests/*.swift
+            -target "$(uname -m)-apple-macos13.0" -D ZAS_TEST -o build/ZasPruebas Sources/*.swift Tests/*.swift
 
       - name: Dar permisos para las pruebas
         run: |

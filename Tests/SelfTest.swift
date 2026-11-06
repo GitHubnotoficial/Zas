@@ -18,6 +18,10 @@ enum SelfTest {
 
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory)
+        // Las pruebas no viven en un paquete .app: se les da el icono real para que las escenas sean fieles.
+        if let icon = NSImage(contentsOf: output.appendingPathComponent("icono.png")) {
+            app.applicationIconImage = icon
+        }
         Task { @MainActor in
             await runAll()
             print("RESULTADO: \(passes) correctas, \(failures) fallidas")
@@ -826,8 +830,10 @@ enum SelfTest {
             await shoot("\(label)-09-ajustes")
             windows.testSettingsPane(1)
             await shoot("\(label)-09a-atajos")
+            check(windows.testSettingsTitle == "Atajos", "la ventana de ajustes nombra su pestaña")
             windows.testSettingsPane(2)
             await shoot("\(label)-09c-video")
+            check(windows.testSettingsTitle == "Video", "el título sigue a la pestaña elegida")
             windows.closeAll()
             windows.showHistory { _ in }
             await shoot("\(label)-09b-historial")
