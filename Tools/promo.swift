@@ -11,7 +11,7 @@ let W = CGFloat(width)
 let H = CGFloat(height)
 let fps = 30
 let subframes = 4
-let duration: CGFloat = 24
+let duration: CGFloat = 30
 
 let yellow = NSColor(srgbRed: 1, green: 0.8, blue: 0.1, alpha: 1)
 let ink = NSColor(srgbRed: 0.05, green: 0.05, blue: 0.07, alpha: 1)
@@ -194,7 +194,7 @@ func tilted(_ image: CGImage, center: CGPoint, size: CGSize, yaw: CGFloat, pitch
 // MARK: - Fondo
 
 /// Golpes de la música: la imagen reacciona a ellos.
-let impacts: [CGFloat] = [4, 8, 16.5, 20]
+let impacts: [CGFloat] = [4, 8, 16.5, 26]
 
 func background(_ t: CGFloat) {
     NSColor(srgbRed: 0.02, green: 0.02, blue: 0.03, alpha: 1).setFill()
@@ -204,7 +204,7 @@ func background(_ t: CGFloat) {
     let cool = NSColor(srgbRed: 0.22, green: 0.3, blue: 0.95, alpha: 1)
     glow(CGPoint(x: W * 0.72 + cos(t * 0.4) * 240, y: H * 0.34 + sin(t * 0.5) * 150), 1050, warm, 0.05 + 0.2 * drop)
     glow(CGPoint(x: W * 0.16 + sin(t * 0.35) * 200, y: H * 0.86 + cos(t * 0.3) * 90), 950, cool, 0.03 + 0.15 * drop)
-    let beat = t >= 4 && t < 20 ? pow(1 - (t.truncatingRemainder(dividingBy: 0.5) / 0.5), 3) : 0
+    let beat = t >= 4 && t < 26 ? pow(1 - (t.truncatingRemainder(dividingBy: 0.5) / 0.5), 3) : 0
     glow(CGPoint(x: W / 2, y: H * 1.1), 900, warm, beat * 0.07)
 }
 
@@ -684,16 +684,47 @@ func scenePaste(_ t: CGFloat) {
     )
 }
 
-/// 18 a 20: lo demás, a golpe de compás.
+/// 18 a 20: el texto se selecciona sobre la imagen, con el azul del sistema.
+func sceneLiveText(_ t: CGFloat) {
+    headline("07", "Toma el texto.", "Sobre la imagen. Se copia solo.", start: 18, end: 20, t, size: 92)
+    stage(yaw: -0.18, pitch: 0.05, zoom: 1 + span(t, 18, 20) * 0.06, enter: span(t, 18, 18.5)) {
+        let sweep = easeInOut(span(t, 18.5, 19.4))
+        let row = CGRect(x: 236, y: 298, width: 600 * sweep, height: 28)
+        if sweep > 0 {
+            NSColor.systemBlue.withAlphaComponent(0.32).setFill()
+            NSBezierPath(roundedRect: row, xRadius: 4, yRadius: 4).fill()
+        }
+        cursor(at: CGPoint(x: row.maxX, y: row.midY), scale: 1.3)
+    }
+    let badge = easeBack(span(t, 19.4, 19.75))
+    if badge > 0 {
+        let pill = CGRect(x: 96, y: 620, width: 250, height: 62)
+        scaled(badge, around: CGPoint(x: pill.midX, y: pill.midY)) {
+            rounded(pill, 31, yellow)
+            symbol("checkmark", CGRect(x: pill.minX + 24, y: pill.minY + 18, width: 26, height: 26), ink)
+            text("Texto copiado", 25, .bold, ink, at: CGPoint(x: pill.minX + 60, y: pill.minY + 15))
+        }
+    }
+}
+
+/// 20 a 26: lo demás, a golpe de compás.
 func sceneMontage(_ t: CGFloat) {
     let tiles: [(String, String, String)] = [
-        ("text.viewfinder", "Copia texto", "de cualquier pantalla"),
-        ("timer", "Captura en 3 segundos", "para menús y avisos"),
-        ("clock", "Recientes", "nada se pierde"),
-        ("pin.fill", "Fija en pantalla", "siempre a la vista"),
+        ("arrow.up.and.down", "Desplaza", "páginas enteras en una imagen"),
+        ("pause.circle", "Congela", "menús y todo lo que se mueve"),
+        ("timer", "3 segundos", "para abrir lo que necesites"),
+        ("highlighter", "Resalta", "como un marcador de verdad"),
+        ("scope", "Enfoca", "lo demás se oscurece"),
+        ("square.grid.3x3.square", "Censura", "con recuadro o pincel"),
+        ("photo.on.rectangle", "Presenta", "fondos listos para compartir"),
+        ("scissors", "Recorta", "tus videos al instante"),
+        ("speaker.wave.2", "Con sonido", "el del Mac y tu voz"),
+        ("clock", "Historial", "nada se pierde"),
+        ("arrow.clockwise", "Repite", "la misma área, con un atajo"),
+        ("lock", "Solo en tu Mac", "nada sale de tu equipo"),
     ]
-    let index = min(Int((t - 18) / 0.5), 3)
-    let local = (t - 18) - CGFloat(index) * 0.5
+    let index = min(Int((t - 20) / 0.5), tiles.count - 1)
+    let local = (t - 20) - CGFloat(index) * 0.5
     let tile = tiles[index]
     let pop = expoOut(span(local, 0, 0.22))
     scaled(0.9 + pop * 0.1 + local * 0.05, around: CGPoint(x: W / 2, y: H / 2)) {
@@ -704,13 +735,13 @@ func sceneMontage(_ t: CGFloat) {
     }
 }
 
-/// 20 a 24: cierre.
+/// 26 a 30: cierre.
 func sceneEnd(_ t: CGFloat) {
-    let local = t - 20
+    let local = t - 26
     glow(CGPoint(x: W / 2, y: 400), 800, yellow, 0.1 + (1 - span(local, 0, 0.7)) * 0.4)
     logo(center: CGPoint(x: W / 2, y: 350), size: 240, span(local, 0, 0.7))
-    reveal("Zas", 118, at: CGPoint(x: W / 2, y: 496), align: .center, start: 20.25, end: 30, t)
-    reveal("Tu pantalla, lista para Claude.", 50, .semibold, at: CGPoint(x: W / 2, y: 652), align: .center, start: 20.6, end: 30, t, top: NSColor(white: 0.95, alpha: 1), bottom: NSColor(white: 0.75, alpha: 1))
+    reveal("Zas", 118, at: CGPoint(x: W / 2, y: 496), align: .center, start: 26.25, end: 40, t)
+    reveal("Tu pantalla, lista para Claude.", 50, .semibold, at: CGPoint(x: W / 2, y: 652), align: .center, start: 26.6, end: 40, t, top: NSColor(white: 0.95, alpha: 1), bottom: NSColor(white: 0.75, alpha: 1))
     let link = expoOut(span(local, 1, 1.5))
     withAlpha(link) {
         let pill = CGRect(x: W / 2 - 370, y: 766 + (1 - link) * 30, width: 740, height: 74)
@@ -728,8 +759,9 @@ let scenes: [(start: CGFloat, end: CGFloat, draw: (CGFloat) -> Void)] = [
     (12, 14.5, sceneRecord),
     (14.5, 16, sceneMoments),
     (16, 18, scenePaste),
-    (18, 20, sceneMontage),
-    (20, 24.1, sceneEnd),
+    (18, 20, sceneLiveText),
+    (20, 26, sceneMontage),
+    (26, 30.1, sceneEnd),
 ]
 
 func renderFrame(_ t: CGFloat) {
@@ -748,7 +780,7 @@ func renderFrame(_ t: CGFloat) {
         // Entrada y salida con empuje de cámara, en vez de un fundido plano.
         let enter = expoOut(span(t, scene.start, scene.start + 0.3))
         let leave = expoIn(span(t, scene.end - 0.14, scene.end))
-        let last = scene.end > 24
+        let last = scene.end > 30
         let zoom = (scene.start == 0 ? 1 : mix(0.965, 1, enter)) * (last ? 1 : 1 + leave * 0.09)
         withAlpha((last ? 1 : 1 - leave) * (scene.start == 0 ? 1 : min(enter * 2, 1))) {
             scaled(zoom, around: CGPoint(x: W / 2, y: H / 2)) {
@@ -758,7 +790,7 @@ func renderFrame(_ t: CGFloat) {
     }
     ctx.restoreGState()
     vignette()
-    let fade = span(t, 23.3, 24)
+    let fade = span(t, 29.3, 30)
     if fade > 0 {
         NSColor.black.withAlphaComponent(fade).setFill()
         CGRect(x: 0, y: 0, width: W, height: H).fill()
@@ -768,7 +800,7 @@ func renderFrame(_ t: CGFloat) {
 // MARK: - Sonido
 
 let sampleRate = 44100
-let audioSeconds = 24.0
+let audioSeconds = 30.0
 let sampleCount = Int(audioSeconds * Double(sampleRate))
 var music = [Float](repeating: 0, count: sampleCount * 2)
 var drums = [Float](repeating: 0, count: sampleCount * 2)
@@ -918,7 +950,7 @@ func composeAudio() {
     }
 
     // Cuerpo, de 4 a 20 segundos.
-    for (index, start) in stride(from: 4.0, to: 20, by: bar).enumerated() {
+    for (index, start) in stride(from: 4.0, to: 26, by: bar).enumerated() {
         pad(start, bar, chords[index % 4], level: 0.13)
         for eighth in 0..<8 {
             let at = start + Double(eighth) * 0.25
@@ -942,16 +974,16 @@ func composeAudio() {
     }
 
     // Cierre: un solo acorde que se apaga.
-    pad(20, 3.7, [55, 110, 164.81, 220, 261.63, 329.63], level: 0.17)
+    pad(26, 3.7, [55, 110, 164.81, 220, 261.63, 329.63], level: 0.17)
     for (index, note) in [880.0, 1046.5, 1318.5, 1760].enumerated() {
-        tone(20 + Double(index) * 0.25, note, length: 1.4, level: 0.075, pan: index % 2 == 0 ? -0.3 : 0.3, decay: 3, bright: 0.15, send: 0.8)
+        tone(26 + Double(index) * 0.25, note, length: 1.4, level: 0.075, pan: index % 2 == 0 ? -0.3 : 0.3, decay: 3, bright: 0.15, send: 0.8)
     }
 
     // Efectos, en el mismo instante que la imagen.
-    for hit in [4.0, 8.0, 16.5, 20.0] {
-        impact(hit, hit == 4 || hit == 20 ? 1 : 0.55)
+    for hit in [4.0, 8.0, 16.5, 26.0] {
+        impact(hit, hit == 4 || hit == 26 ? 1 : 0.55)
     }
-    for at in [5.8, 7.8, 9.8, 11.8, 14.3, 15.8, 17.8] {
+    for at in [5.8, 7.8, 9.8, 11.8, 14.3, 15.8, 17.8, 19.8, 25.7] {
         sweep(at, 0.3, rising: true, level: 0.3)
     }
     for at in [6.25, 6.35, 6.45, 12.25, 12.35, 12.45, 16.25, 16.35] {
@@ -969,9 +1001,13 @@ func composeAudio() {
     for index in 0..<11 {
         key(16.9 + Double(index) * 0.065)
     }
-    for at in [18.0, 18.5, 19.0, 19.5] {
-        sweep(at, 0.2, rising: false, level: 0.25)
+    for at in stride(from: 20.0, to: 26, by: 0.5) {
+        sweep(at, 0.2, rising: false, level: 0.22)
     }
+    for index in 0..<9 {
+        key(18.5 + Double(index) * 0.1)
+    }
+    tone(19.4, 1318.5, length: 0.24, level: 0.12, pan: 0, decay: 14, bright: 0.2, send: 0.5)
 
     mixAudio()
 }
@@ -979,7 +1015,7 @@ func composeAudio() {
 func mixAudio() {
     // La música baja un instante en cada bombo, como en una mezcla de club.
     var duck = [Float](repeating: 1, count: sampleCount)
-    for start in stride(from: 4.0, to: 20, by: 0.5) {
+    for start in stride(from: 4.0, to: 26, by: 0.5) {
         let first = Int(start * Double(sampleRate))
         for i in 0..<Int(0.42 * Double(sampleRate)) where first + i < sampleCount {
             let time = Double(i) / Double(sampleRate)
@@ -1088,7 +1124,7 @@ let grain: CGImage = {
     return context.makeImage()!
 }()
 
-let sheetTimes: [CGFloat] = [1.6, 3.2, 4.9, 7.4, 9.2, 11.8, 13.6, 15.5, 17.7, 18.3, 19.3, 22.6]
+let sheetTimes: [CGFloat] = [1.6, 4.9, 7.4, 9.2, 11.8, 13.6, 15.5, 17.7, 19.6, 20.3, 23.3, 28.2]
 var sheetImages: [CGImage] = []
 let totalFrames = Int(duration) * fps
 let subContext = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0, space: sRGB, bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue)!
