@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Zas: investigación y plantillas</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0}
+html{-webkit-font-smoothing:antialiased}
+body{font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text",Inter,"Segoe UI",sans-serif;background:#fbfbfd;color:#1d1d1f;line-height:1.45}
+a{color:#0066cc;text-decoration:none}a:hover{text-decoration:underline}
+.wrap{max-width:1180px;margin:0 auto;padding:0 28px}
+header.top{padding:88px 0 56px;text-align:center}
+header.top p.k{font-size:15px;font-weight:600;color:#86868b;margin-bottom:12px}
+header.top h1{font-size:60px;line-height:1.06;letter-spacing:-.03em;font-weight:700}
+header.top p.s{font-size:21px;color:#6e6e73;margin:18px auto 0;max-width:640px}
+section{padding:44px 0}
+h2.sec{font-size:36px;letter-spacing:-.02em;font-weight:700;margin-bottom:8px}
+p.sub{font-size:17px;color:#6e6e73;margin-bottom:28px;max-width:720px}
+.refs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
+.ref{background:#fff;border-radius:18px;padding:22px;box-shadow:0 1px 2px rgba(0,0,0,.04),0 0 0 .5px rgba(0,0,0,.06)}
+.ref h3{font-size:18px;font-weight:600;letter-spacing:-.01em}
+.ref .who{font-size:13px;color:#86868b;margin:2px 0 10px}
+.ref p{font-size:14px;color:#424245}
+.ref p b{font-weight:600;color:#1d1d1f}
+.ref a{display:inline-block;margin-top:10px;font-size:14px}
+.rules{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:14px}
+.rule{padding:16px 0;border-top:1px solid #d2d2d7}
+.rule b{display:block;font-size:15px;font-weight:600;margin-bottom:4px}
+.rule span{font-size:13.5px;color:#6e6e73}
+.dir{padding:56px 0 24px;border-top:1px solid #e5e5ea}
+.dirhead{display:flex;align-items:baseline;gap:16px;margin-bottom:6px}
+.dirhead .l{font-size:44px;font-weight:700;letter-spacing:-.03em;color:#c7c7cc}
+.dirhead h3{font-size:34px;font-weight:700;letter-spacing:-.02em}
+.dirsub{font-size:17px;color:#6e6e73;margin-bottom:22px;max-width:760px}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}
+.fig figcaption{font-size:13px;color:#86868b;margin-top:8px;text-align:center}
+.pick{background:#1d1d1f;color:#fff;border-radius:24px;padding:40px;text-align:center;margin:40px 0 88px}
+.pick h2{font-size:32px;letter-spacing:-.02em;font-weight:700}
+.pick p{color:#a1a1a6;font-size:17px;margin-top:8px}
+
+.scene{position:relative;aspect-ratio:16/10;border-radius:16px;overflow:hidden;background:var(--wall);container-type:inline-size;font-family:var(--font);color:var(--text)}
+.scene svg{display:block}
+.mb{position:absolute;inset:0 0 auto 0;height:5.2cqw;background:var(--bar);display:flex;align-items:center;justify-content:flex-end;gap:2.4cqw;padding:0 2.4cqw;font-size:2cqw;color:var(--bartext);backdrop-filter:blur(20px)}
+.mb .on{width:3.2cqw;height:3.2cqw;display:grid;place-items:center;border-radius:.8cqw;background:var(--baron)}
+.mb svg{width:2.5cqw;height:2.5cqw}
+.win{position:absolute;left:9%;top:15%;width:82%;height:78%;background:#fafafa;border-radius:1.6cqw;overflow:hidden;box-shadow:0 2cqw 6cqw rgba(0,0,0,.28),0 0 0 .5px rgba(0,0,0,.12);color:#1d1d1f;font-family:-apple-system,Inter,"Segoe UI",sans-serif}
+.win .side{position:absolute;inset:0 auto 0 0;width:21%;background:#eeeef1;padding:3.4cqw 1.6cqw;font-size:1.6cqw;color:#6e6e73}
+.win .side div{margin-bottom:1.1cqw}
+.win .dots{position:absolute;left:1.5cqw;top:1.3cqw;display:flex;gap:.6cqw}
+.win .dots i{width:1cqw;height:1cqw;border-radius:50%;background:#d1d1d6}
+.win .main{position:absolute;left:21%;right:0;top:0;bottom:0;padding:3cqw}
+.win h5{font-size:2.8cqw;font-weight:700;letter-spacing:-.02em;margin-bottom:1.8cqw}
+.win .row{display:flex;justify-content:space-between;font-size:1.6cqw;padding:1.45cqw 0;border-bottom:.5px solid #e5e5ea;color:#424245}
+.win .row b{font-weight:500;color:#34a853}.win .row b.e{color:#e5484d}
+
+.panel{background:var(--panel);border:var(--line);border-radius:var(--r);box-shadow:var(--shadow);backdrop-filter:var(--blur);-webkit-backdrop-filter:var(--blur)}
+.menu{position:absolute;right:3%;top:7%;width:43%;padding:1cqw;font-size:1.9cqw}
+.menu .it{display:flex;align-items:center;gap:1.3cqw;padding:1cqw 1.1cqw;border-radius:calc(var(--r)*.5)}
+.menu .it svg{width:2.3cqw;height:2.3cqw;color:var(--muted);flex:none}
+.menu .it span{flex:1}
+.menu .it kbd{font:inherit;font-size:1.65cqw;color:var(--muted)}
+.menu .it.sel{background:var(--accent);color:var(--onaccent)}
+.menu .it.sel svg,.menu .it.sel kbd{color:inherit}
+.menu hr{border:0;border-top:var(--hr);margin:.7cqw 1cqw}
+.menu .rec{display:flex;gap:1cqw;padding:.5cqw 1.1cqw .3cqw;overflow:hidden}
+.menu .rec i{flex:1;aspect-ratio:16/10;border-radius:.7cqw;background:#dcdce2;display:block;box-shadow:0 0 0 .5px rgba(127,127,127,.3)}
+.menu .lbl{font-size:1.5cqw;color:var(--muted);padding:.5cqw 1.1cqw 0}
+
+.dim{position:absolute;inset:0;background:var(--dim)}
+.cut{position:absolute;left:30%;top:53%;width:46%;height:14%;box-shadow:0 0 0 999px var(--dim);border:var(--selline);border-radius:var(--selr)}
+.cut i{position:absolute;width:1cqw;height:1cqw;background:#fff;border-radius:50%;box-shadow:0 0 0 .5px rgba(0,0,0,.3)}
+.size{position:absolute;left:30%;top:70%;padding:.7cqw 1.4cqw;font-size:1.7cqw;font-variant-numeric:tabular-nums}
+.hud{position:absolute;left:50%;bottom:4.5%;transform:translateX(-50%);display:flex;align-items:center;gap:.5cqw;padding:.8cqw}
+.hud button,.bar button{all:unset;display:grid;place-items:center;width:4cqw;height:4cqw;border-radius:calc(var(--r)*.5);color:var(--text)}
+.hud button svg,.bar button svg{width:2.4cqw;height:2.4cqw}
+.hud button.on,.bar button.on{background:var(--accent);color:var(--onaccent)}
+.hud .hint{font-size:1.6cqw;color:var(--muted);padding:0 1.2cqw;white-space:nowrap}
+
+.thumb{position:absolute;right:3%;bottom:5%;width:36%;aspect-ratio:16/10;overflow:hidden;background:#fff}
+.thumb .shot{position:absolute;inset:0;color:#1d1d1f;padding:2cqw;font-size:1.6cqw;font-family:-apple-system,Inter,"Segoe UI",sans-serif}
+.thumb .shot b{display:block;font-size:2cqw;margin-bottom:1cqw}
+.thumb .shot u{display:block;text-decoration:none;color:#e5484d;margin-top:.5cqw}
+.thumb .acts{position:absolute;inset:auto 0 0 0;padding:1cqw;display:flex;justify-content:center;gap:.8cqw;background:var(--strip);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)}
+.thumb .acts span{width:3.6cqw;height:3.6cqw;display:grid;place-items:center;color:var(--text);border-radius:.9cqw}
+.thumb .acts svg{width:2.2cqw;height:2.2cqw}
+.badge{position:absolute;right:3%;bottom:calc(5% + 24.6cqw);font-size:1.7cqw;padding:.7cqw 1.3cqw;display:flex;gap:.6cqw;align-items:center;font-weight:600}
+.badge svg{width:1.9cqw;height:1.9cqw;color:var(--accent2)}
+
+.editor{position:absolute;left:5%;right:5%;top:10%;bottom:6%;overflow:hidden;background:var(--canvas);border-radius:var(--wr);box-shadow:0 3cqw 8cqw rgba(0,0,0,.35),0 0 0 .5px rgba(127,127,127,.3)}
+.editor .pic{position:absolute;left:7%;right:7%;top:17%;bottom:6%;background:#fff;border-radius:.9cqw;color:#1d1d1f;padding:2.2cqw;font-size:1.5cqw;box-shadow:0 1cqw 3cqw rgba(0,0,0,.18);font-family:-apple-system,Inter,"Segoe UI",sans-serif}
+.editor .pic b{font-size:2.2cqw;display:block;margin-bottom:1.4cqw}
+.editor .pic div{display:flex;justify-content:space-between;padding:1cqw 0;border-bottom:.5px solid #e5e5ea}
+.editor .pic em{font-style:normal;color:#e5484d}
+.editor .mark{position:absolute;right:10%;top:60%;width:24%;height:10%;border:.35cqw solid #ff3b30;border-radius:.8cqw}
+.bar{position:absolute;left:50%;top:3.5%;transform:translateX(-50%);display:flex;align-items:center;gap:.25cqw;padding:.6cqw;white-space:nowrap}
+.bar .sep{width:1px;height:2.6cqw;background:var(--sep);margin:0 .6cqw}
+.bar .c{width:2.2cqw;height:2.2cqw;border-radius:50%;margin:0 .35cqw;background:#ff3b30;box-shadow:0 0 0 .25cqw var(--panelsolid),0 0 0 .4cqw var(--accent)}
+.bar .go{all:unset;background:var(--accent);color:var(--onaccent);font-size:1.7cqw;font-weight:600;padding:.8cqw 1.7cqw;border-radius:calc(var(--r)*.5);margin-left:.5cqw}
+
+.a{--font:-apple-system,"SF Pro Text",Inter,"Segoe UI",sans-serif;--wall:linear-gradient(135deg,#bcd3f5,#d9c9f2 45%,#f6d3c4);--bar:rgba(255,255,255,.35);--bartext:#1d1d1f;--baron:rgba(255,255,255,.55);--panel:rgba(255,255,255,.62);--panelsolid:#fff;--line:.5px solid rgba(255,255,255,.75);--r:2.2cqw;--wr:2cqw;--shadow:0 1.4cqw 5cqw rgba(30,30,60,.22),inset 0 .5px 0 rgba(255,255,255,.9);--blur:blur(26px) saturate(190%);--text:#1d1d1f;--muted:rgba(29,29,31,.55);--accent:#0a84ff;--onaccent:#fff;--accent2:#0a84ff;--hr:.5px solid rgba(0,0,0,.1);--dim:rgba(15,20,40,.22);--selline:1.5px solid #fff;--selr:.7cqw;--strip:rgba(255,255,255,.66);--canvas:rgba(245,245,250,.72);--sep:rgba(0,0,0,.12)}
+.b{--font:-apple-system,"SF Pro Text",Inter,"Segoe UI",sans-serif;--wall:#ecebe6;--bar:rgba(255,255,255,.7);--bartext:#1d1d1f;--baron:rgba(0,0,0,.06);--panel:#fff;--panelsolid:#fff;--line:.5px solid rgba(0,0,0,.08);--r:1.4cqw;--wr:1.4cqw;--shadow:0 .6cqw 2.6cqw rgba(0,0,0,.09);--blur:none;--text:#1d1d1f;--muted:#8e8e93;--accent:#2f6fed;--onaccent:#fff;--accent2:#34a853;--hr:.5px solid #e9e9ec;--dim:rgba(255,255,255,.5);--selline:1.5px solid #2f6fed;--selr:.3cqw;--strip:rgba(255,255,255,.92);--canvas:#f5f5f3;--sep:#e9e9ec}
+.c{--font:Inter,-apple-system,"Segoe UI",sans-serif;--wall:radial-gradient(90% 90% at 75% 10%,#2a2b52,#101116 70%);--bar:rgba(16,17,22,.6);--bartext:#edeef0;--baron:rgba(255,255,255,.14);--panel:#1a1b20;--panelsolid:#1a1b20;--line:.5px solid rgba(255,255,255,.1);--r:1.5cqw;--wr:1.5cqw;--shadow:0 2cqw 6cqw rgba(0,0,0,.55);--blur:none;--text:#edeef0;--muted:#8a8f98;--accent:#2c2d34;--onaccent:#fff;--accent2:#8b8df8;--hr:.5px solid rgba(255,255,255,.08);--dim:rgba(8,8,12,.62);--selline:1px solid rgba(255,255,255,.9);--selr:.3cqw;--strip:rgba(26,27,32,.94);--canvas:#121317;--sep:rgba(255,255,255,.1)}
+.d{--font:Inter,-apple-system,"Segoe UI",sans-serif;--wall:#0b0b0c;--bar:#0b0b0c;--bartext:#f5f5f7;--baron:#ffcc1a;--panel:#000;--panelsolid:#000;--line:.5px solid #343436;--r:.9cqw;--wr:1cqw;--shadow:0 2cqw 6cqw rgba(0,0,0,.7);--blur:none;--text:#f5f5f7;--muted:#77777c;--accent:#ffcc1a;--onaccent:#000;--accent2:#ffcc1a;--hr:.5px solid #2a2a2c;--dim:rgba(0,0,0,.72);--selline:1.5px solid #ffcc1a;--selr:0;--strip:rgba(0,0,0,.92);--canvas:#0b0b0c;--sep:#2e2e30}
+.d .mb .on{color:#000}
+@media(max-width:860px){.refs,.grid{grid-template-columns:minmax(0,1fr)}.rules{grid-template-columns:repeat(2,minmax(0,1fr))}header.top h1{font-size:42px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header class="top">
+<p class="k">Zas · Diseño</p>
+<h1>Menos interfaz.<br>Más pantalla.</h1>
+<p class="s">Primero la investigación. Después cuatro direcciones para el mismo producto. Tú eliges.</p>
+</header>
+
+<section>
+<h2 class="sec">Investigación</h2>
+<p class="sub">Abre cada enlace, mira cómo se siente y dime cuáles te gustan. Mi lectura es lo que tomaría de cada uno.</p>
+<div class="refs">
+<div class="ref"><h3>Apple macOS</h3><div class="who">La referencia de todo el Mac</div><p><b>Toma:</b> el vidrio solo en la capa que flota sobre el contenido, y nunca vidrio sobre vidrio.</p><a href="https://www.apple.com/macos/">Ver macOS</a></div>
+<div class="ref"><h3>Things 3</h3><div class="who">Tareas</div><p><b>Toma:</b> blanco, aire y animaciones suaves. Lo citan una y otra vez por su pulido.</p><a href="https://culturedcode.com/things/">Ver Things</a></div>
+<div class="ref"><h3>Raycast</h3><div class="who">Lanzador de teclado</div><p><b>Toma:</b> sus tres principios: rápido, simple y agradable. Compacto y hecho para el teclado.</p><a href="https://www.raycast.com/">Ver Raycast</a></div>
+<div class="ref"><h3>Linear</h3><div class="who">Gestión de proyectos</div><p><b>Toma:</b> su regla: no competir por una atención que no te has ganado. Bordes y contraste suaves.</p><a href="https://linear.app/">Ver Linear</a></div>
+<div class="ref"><h3>CleanShot X</h3><div class="who">Tu competencia directa</div><p><b>Toma:</b> la sensación nativa. <b>Evita:</b> mostrar demasiadas funciones: a algunos usuarios les abruma.</p><a href="https://cleanshot.com/">Ver CleanShot</a></div>
+<div class="ref"><h3>Shottr</h3><div class="who">Competencia ligera</div><p><b>Toma:</b> la velocidad y la precisión. Demuestra que una herramienta pequeña también convence.</p><a href="https://shottr.cc/">Ver Shottr</a></div>
+</div>
+</section>
+
+<section>
+<h2 class="sec">Lo que aplicaría a todo</h2>
+<p class="sub">Estas reglas valen para cualquier dirección que elijas.</p>
+<div class="rules">
+<div class="rule"><b>La captura manda</b><span>La interfaz aparece solo cuando hace falta.</span></div>
+<div class="rule"><b>Un acento</b><span>Un solo color fuerte por pantalla.</span></div>
+<div class="rule"><b>Pocos iconos</b><span>Macworld critica justo eso en los menús actuales.</span></div>
+<div class="rule"><b>Bordes finos</b><span>Líneas sutiles y radios consistentes.</span></div>
+<div class="rule"><b>Movimiento útil</b><span>Rápido, suave y siempre con un motivo.</span></div>
+</div>
+</section>
+
+<div id="dirs"></div>
+
+<div class="pick">
+<h2>¿Cuál te gusta?</h2>
+<p>Dime A, B, C o D. También puedes mezclar, por ejemplo: “el menú de A con el editor de C”.</p>
+</div>
+</div>
+
+<script>
+const I={
+ vf:'<path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3"/>',
+ win:'<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 9h18"/>',
+ timer:'<circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2M9 2h6"/>',
+ text:'<path d="M4 7V5h16v2M12 5v14M9 19h6"/>',
+ rec:'<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.5" fill="currentColor"/>',
+ gear:'<circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"/>',
+ arrow:'<path d="M6 18 18 6M9 6h9v9"/>',
+ box:'<rect x="4" y="6" width="16" height="12" rx="2"/>',
+ circ:'<circle cx="12" cy="12" r="8"/>',
+ pen:'<path d="M4 20l1-4L16 5l3 3L8 19z"/>',
+ num:'<circle cx="12" cy="12" r="8"/><path d="M11 9l2-1v8"/>',
+ blur:'<path d="M5 5h4v4H5zM15 5h4v4h-4zM10 10h4v4h-4zM5 15h4v4H5zM15 15h4v4h-4z"/>',
+ crop:'<path d="M7 3v14h14M3 7h14v14"/>',
+ copy:'<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/>',
+ term:'<path d="M5 7l5 5-5 5M12 17h7"/>',
+ pin:'<path d="M12 16v5M7 16h10l-2-5V5H9v6z"/>',
+ check:'<path d="M5 12.5l4.5 4.5L19 7.5"/>',
+ bolt:'<path d="M13 3 5 14h6l-1 7 9-12h-6z" fill="currentColor" stroke="none"/>'
+};
+const s=n=>`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${I[n]}</svg>`;
+const bar=`<div class="mb"><span class="on">${s('bolt')}</span><span>Vie 6 nov 11:32</span></div>`;
+const win=`<div class="win"><div class="dots"><i></i><i></i><i></i></div><div class="side"><div>Inicio</div><div>Pedidos</div><div>Clientes</div><div>Reportes</div></div><div class="main"><h5>Pedidos de hoy</h5><div class="row"><span>Pedido 1042</span><span>María Pérez</span><b>$ 128.000</b></div><div class="row"><span>Pedido 1043</span><span>Carlos Rojas</span><b>$ 54.500</b></div><div class="row"><span>Pedido 1044</span><span>Ana Gómez</span><b>$ 312.900</b></div><div class="row"><span>Pedido 1045</span><span>Luis Torres</span><b class="e">Error al guardar</b></div></div></div>`;
+const menu=`${bar}${win}<div class="panel menu">
+<div class="it sel">${s('vf')}<span>Capturar área</span><kbd>⇧⌘2</kbd></div>
+<div class="it">${s('win')}<span>Pantalla completa</span><kbd>⇧⌘1</kbd></div>
+<div class="it">${s('text')}<span>Copiar texto</span><kbd>⇧⌘7</kbd></div>
+<div class="it">${s('rec')}<span>Grabar video</span><kbd>⇧⌘6</kbd></div>
+<hr><div class="lbl">Recientes</div><div class="rec"><i></i><i></i><i></i><i></i></div><hr>
+<div class="it">${s('gear')}<span>Ajustes</span><kbd>⌘,</kbd></div></div>`;
+const sel=`${bar}${win}<div class="cut"><i style="left:-.5cqw;top:-.5cqw"></i><i style="right:-.5cqw;top:-.5cqw"></i><i style="left:-.5cqw;bottom:-.5cqw"></i><i style="right:-.5cqw;bottom:-.5cqw"></i></div><div class="panel size">1188 × 112</div>
+<div class="panel hud"><button class="on">${s('vf')}</button><button>${s('win')}</button><button>${s('text')}</button><button>${s('rec')}</button><span class="hint">Esc para salir</span></div>`;
+const thumb=`${bar}${win}<div class="panel badge">${s('check')}Copiado</div><div class="panel thumb"><div class="shot"><b>Pedidos de hoy</b>Pedido 1045 · Luis Torres<u>Error al guardar</u></div><div class="acts"><span>${s('copy')}</span><span>${s('pen')}</span><span>${s('term')}</span><span>${s('pin')}</span></div></div>`;
+const editor=`${bar}<div class="editor"><div class="panel bar"><button>${s('arrow')}</button><button class="on">${s('box')}</button><button>${s('circ')}</button><button>${s('pen')}</button><button>${s('text')}</button><button>${s('num')}</button><button>${s('blur')}</button><button>${s('crop')}</button><span class="sep"></span><span class="c"></span><span class="sep"></span><button class="go">Copiar</button></div><div class="pic"><b>Pedidos de hoy</b><div><span>Pedido 1042</span><span>$ 128.000</span></div><div><span>Pedido 1043</span><span>$ 54.500</span></div><div><span>Pedido 1044</span><span>$ 312.900</span></div><div><span>Pedido 1045</span><em>Error al guardar</em></div></div><div class="mark"></div></div>`;
+const dirs=[
+ ['a','A','Cristal','El Mac más actual. Vidrio translúcido que flota sobre tu trabajo y deja pasar el color de lo que hay detrás. Refinado y muy Apple.'],
+ ['b','B','Calma','Blanco, aire y casi nada de bordes, como Things. La opción más amable: parece que la interfaz no está ahí.'],
+ ['c','C','Comando','Oscuro, compacto y rápido, como Raycast y Linear. Se siente como una herramienta profesional para quien programa todo el día.'],
+ ['d','D','Tinta','Negro puro y un solo color: el amarillo del rayo de Zas. La más atrevida y la que tiene más identidad propia.']
+];
+document.getElementById('dirs').innerHTML=dirs.map(([c,l,n,d])=>`<div class="dir"><div class="dirhead"><span class="l">${l}</span><h3>${n}</h3></div><p class="dirsub">${d}</p><div class="grid">
+${[['Menú',menu],['Selección',sel],['Después de capturar',thumb],['Editor',editor]].map(([t,h])=>`<figure class="fig"><div class="scene ${c}">${h}</div><figcaption>${t}</figcaption></figure>`).join('')}</div></div>`).join('');
+</script>
+</body>
+</html>
