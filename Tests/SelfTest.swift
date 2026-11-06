@@ -200,13 +200,13 @@ enum SelfTest {
 
     private static func sampleAnnotations(on canvas: AnnotationCanvas) {
         canvas.add(Annotation(tool: .highlight, color: NSColor(srgbRed: 1, green: 0.84, blue: 0.04, alpha: 1), lineWidth: 28, points: [CGPoint(x: 634, y: 242), CGPoint(x: 700, y: 243), CGPoint(x: 760, y: 242)]))
-        canvas.add(Annotation(tool: .arrow, color: .systemRed, lineWidth: 5, points: [CGPoint(x: 560, y: 92), CGPoint(x: 660, y: 218)]))
-        canvas.add(Annotation(tool: .rectangle, color: .systemRed, lineWidth: 5, points: [CGPoint(x: 230, y: 222), CGPoint(x: 340, y: 262)]))
+        canvas.add(Annotation(tool: .arrow, color: Palette.markDefault, lineWidth: 5, points: [CGPoint(x: 420, y: 105), CGPoint(x: 660, y: 218)]))
+        canvas.add(Annotation(tool: .rectangle, color: Palette.markDefault, lineWidth: 5, points: [CGPoint(x: 230, y: 222), CGPoint(x: 340, y: 262)]))
         canvas.add(Annotation(tool: .ellipse, color: .systemBlue, lineWidth: 5, points: [CGPoint(x: 8, y: 478), CGPoint(x: 92, y: 518)]))
         canvas.add(Annotation(tool: .pixelate, color: .systemRed, lineWidth: 5, points: [CGPoint(x: 396, y: 424), CGPoint(x: 510, y: 454)]))
-        canvas.add(Annotation(tool: .counter, color: .systemRed, lineWidth: 5, points: [CGPoint(x: 800, y: 400)], number: 1))
-        canvas.add(Annotation(tool: .counter, color: .systemRed, lineWidth: 5, points: [CGPoint(x: 800, y: 330)], number: 2))
-        canvas.add(Annotation(tool: .text, color: .systemRed, lineWidth: 5, points: [CGPoint(x: 400, y: 60)], text: "Esto debería guardar"))
+        canvas.add(Annotation(tool: .counter, color: Palette.markDefault, lineWidth: 5, points: [CGPoint(x: 800, y: 400)], number: 1))
+        canvas.add(Annotation(tool: .counter, color: Palette.markDefault, lineWidth: 5, points: [CGPoint(x: 800, y: 330)], number: 2))
+        canvas.add(Annotation(tool: .text, color: Palette.markDefault, lineWidth: 5, points: [CGPoint(x: 400, y: 60)], text: "Esto debería guardar"))
         var squiggle: [CGPoint] = []
         for step in 0..<40 {
             squiggle.append(CGPoint(x: 240 + CGFloat(step) * 3.6, y: 120 + sin(CGFloat(step) * 0.7) * 7))
@@ -1130,6 +1130,9 @@ enum SelfTest {
             let overlay = SelectionOverlay()
             overlay.begin(mode: .screenshot) { _ in }
             await shoot("\(label)-01-seleccion-ventana")
+            // Sobre el escritorio, sin ventana resaltada: solo la cruz y las coordenadas.
+            overlay.simulateHover(at: CGPoint(x: 950, y: 90))
+            await shoot("\(label)-01b-cruz-coordenadas")
             overlay.simulateDrag(from: CGPoint(x: 310, y: 200), to: CGPoint(x: 760, y: 470))
             await shoot("\(label)-02-seleccion-area")
             overlay.testFreeze()
@@ -1191,7 +1194,7 @@ enum SelfTest {
 
             // La antigua fila de opciones ya no existe: el lienzo ocupa todo menos las dos barras.
             if let room = editor.testWindow.contentView?.bounds.height {
-                check(editor.testCanvasArea.height == room - Design.editorBar * 2, "el lienzo gana la altura de la fila de opciones")
+                check(editor.testCanvasArea.height == room - Design.editorBar - Design.editorBottomBar, "el lienzo gana la altura de la fila de opciones")
             }
             editor.testSelect(tool: .arrow)
             editor.testOpenSizePopover()

@@ -2,15 +2,132 @@ import AppKit
 import CoreImage
 import UniformTypeIdentifiers
 
+extension Design {
+    /// Tarjetas y controles que flotan sobre ellas. Son claros en los dos modos: van sobre una captura.
+    enum Card {
+        static let radius: CGFloat = 10
+        static let pillSize = CGSize(width: 64, height: 22)
+        static let circleSize = CGSize(width: 20, height: 20)
+        static let gap: CGFloat = 6
+        /// Aire a cada lado cuando un aviso no cabe en la píldora.
+        static let pillPadding: CGFloat = 8
+        static let titleSize: CGFloat = 11
+        static let symbolSize: CGFloat = 10
+        static let outlineWidth: CGFloat = 2
+        static let controlFill = NSColor(white: 1, alpha: 0.85)
+        static let controlHover = NSColor.white
+        static let ink = NSColor(white: 0.1, alpha: 1)
+        static let veil = NSColor.black.withAlphaComponent(0.42)
+        /// Sombra propia, más suave y amplia que la del sistema.
+        static let shadowColor = NSColor.black
+        static let shadowOpacity: Float = 0.28
+        static let shadowRadius: CGFloat = 14
+        static let shadowDrop: CGFloat = 6
+        /// Sitio alrededor de la tarjeta para que la sombra se apague antes del borde del panel.
+        static let shadowRoom: CGFloat = 44
+    }
+}
+
 enum ThumbnailKind {
     case screenshot
     case video
     case text
 }
 
+/// Solo pinta la sombra de una tarjeta. Va en una capa propia: AppKit gobierna la sombra
+/// de la capa de una vista y descartaría estos valores.
+private final class CardShadowView: NSView {
+    private let shape = CALayer()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        shape.shadowColor = Design.Card.shadowColor.cgColor
+        shape.shadowOpacity = Design.Card.shadowOpacity
+        shape.shadowRadius = Design.Card.shadowRadius
+        shape.shadowOffset = CGSize(width: 0, height: -Design.Card.shadowDrop)
+        layer?.addSublayer(shape)
+        refreshShape()
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) no se usa")
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        refreshShape()
+    }
+
+    private func refreshShape() {
+        let room = Design.Card.shadowRoom
+        let radius = Design.Card.radius
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        shape.frame = bounds
+        shape.shadowPath = CGPath(
+            roundedRect: bounds.insetBy(dx: room, dy: room),
+            cornerWidth: radius,
+            cornerHeight: radius,
+            transform: nil
+        )
+        CATransaction.commit()
+    }
+}
+
 /// Panel de una tarjeta. Recibe el gesto de dos dedos aunque nunca sea la ventana activa.
+/// La sombra del sistema no se puede ablandar, y agrandar el panel se quedaría los clics de
+/// alrededor: por eso va en un panel aparte, debajo de todas las tarjetas, que deja pasar el ratón.
 private final class CardPanel: NSPanel {
     var onSwipe: ((NSEvent) -> Void)?
+
+    private var shadowPanel: NSPanel?
+
+    func attachShadow() {
+        let shadow = NSPanel(
+            contentRect: shadowFrame(for: frame),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        shadow.level = NSWindow.Level(rawValue: NSWindow.Level.floating.rawValue - 1)
+        shadow.isOpaque = false
+        shadow.backgroundColor = .clear
+        shadow.hasShadow = false
+        shadow.hidesOnDeactivate = false
+        shadow.isReleasedWhenClosed = false
+        shadow.ignoresMouseEvents = true
+        shadow.animationBehavior = .none
+        shadow.collectionBehavior = collectionBehavior
+        let view = CardShadowView(frame: CGRect(origin: .zero, size: shadow.frame.size))
+        view.autoresizingMask = [.width, .height]
+        shadow.contentView = view
+        shadowPanel = shadow
+    }
+
+    private func shadowFrame(for card: CGRect) -> CGRect {
+        card.insetBy(dx: -Design.Card.shadowRoom, dy: -Design.Card.shadowRoom)
+    }
+
+    override func setFrame(_ frameRect: NSRect, display flag: Bool) {
+        super.setFrame(frameRect, display: flag)
+        shadowPanel?.setFrame(shadowFrame(for: frameRect), display: flag)
+    }
+
+    override func setFrameOrigin(_ point: NSPoint) {
+        super.setFrameOrigin(point)
+        shadowPanel?.setFrame(shadowFrame(for: frame), display: true)
+    }
+
+    override func orderFrontRegardless() {
+        shadowPanel?.orderFrontRegardless()
+        super.orderFrontRegardless()
+    }
+
+    override func orderOut(_ sender: Any?) {
+        shadowPanel?.orderOut(sender)
+        super.orderOut(sender)
+    }
 
     override func sendEvent(_ event: NSEvent) {
         if event.type == .scrollWheel, event.hasPreciseScrollingDeltas, event.momentumPhase == [] {
@@ -84,11 +201,12 @@ final class ThumbnailController {
         panel.level = .floating
         panel.isOpaque = false
         panel.backgroundColor = .clear
-        panel.hasShadow = true
+        panel.hasShadow = false
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
         panel.animationBehavior = .none
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
+        panel.attachShadow()
 
         let view = ThumbnailView(
             frame: CGRect(origin: .zero, size: size),
@@ -350,8 +468,6 @@ final class ThumbnailController {
             item.spring?.invalidate()
             item.spring = Spring.run(step: { [weak item] progress in
                 item?.panel.setFrame(start.moved(to: target, by: progress), display: true)
-            }, completion: { [weak item] in
-                item?.panel.invalidateShadow()
             })
         }
         // Al moverse bajo un cursor quieto, macOS no avisa de entradas ni salidas.
@@ -446,21 +562,21 @@ private final class OutlineView: NSView {
 }
 
 private final class CardControl: NSButton {
-    private static let ink = NSColor(white: 0.1, alpha: 1)
-
+    private let minimumWidth: CGFloat
     private var hovering = false
     private var hoverArea: NSTrackingArea?
 
     init(title: String? = nil, symbol: String? = nil, label: String, size: CGSize, target: AnyObject, action: Selector) {
+        minimumWidth = size.width
         super.init(frame: CGRect(origin: .zero, size: size))
         isBordered = false
         toolTip = label
-        contentTintColor = Self.ink
+        contentTintColor = Design.Card.ink
         self.target = target
         self.action = action
         if let symbol {
             image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)?
-                .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 11, weight: .semibold))
+                .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: Design.Card.symbolSize, weight: .semibold))
             imagePosition = .imageOnly
         }
         if let title {
@@ -478,14 +594,17 @@ private final class CardControl: NSButton {
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
+    /// Un aviso largo, como "Ruta copiada", ensancha la píldora en vez de cortarse.
     func showTitle(_ text: String) {
         let paragraph = NSMutableParagraphStyle()
         paragraph.alignment = .center
-        attributedTitle = NSAttributedString(string: text, attributes: [
-            .font: NSFont.systemFont(ofSize: 12, weight: .medium),
-            .foregroundColor: Self.ink,
+        let title = NSAttributedString(string: text, attributes: [
+            .font: NSFont.systemFont(ofSize: Design.Card.titleSize, weight: .medium),
+            .foregroundColor: Design.Card.ink,
             .paragraphStyle: paragraph,
         ])
+        attributedTitle = title
+        frame.size.width = max(minimumWidth, ceil(title.size().width) + Design.Card.pillPadding * 2)
     }
 
     override func updateTrackingAreas() {
@@ -509,7 +628,7 @@ private final class CardControl: NSButton {
     }
 
     private func refresh() {
-        layer?.backgroundColor = NSColor(white: 1, alpha: hovering ? 1 : 0.86).cgColor
+        layer?.backgroundColor = (hovering ? Design.Card.controlHover : Design.Card.controlFill).cgColor
     }
 }
 
@@ -585,7 +704,7 @@ private final class ThumbnailView: NSView, NSDraggingSource {
         cardSize = frame.size
         super.init(frame: frame)
         wantsLayer = true
-        layer?.cornerRadius = Design.cardRadius
+        layer?.cornerRadius = Design.Card.radius
         layer?.cornerCurve = .continuous
         layer?.masksToBounds = true
         setAccessibilityElement(true)
@@ -625,7 +744,7 @@ private final class ThumbnailView: NSView, NSDraggingSource {
         veil.frame = bounds
         outline.frame = bounds
 
-        let gap: CGFloat = 6
+        let gap = Design.Card.gap
         let height = pills.reduce(-gap) { $0 + $1.frame.height + gap }
         var top = ((bounds.height + height) / 2).rounded()
         for pill in pills {
@@ -649,7 +768,7 @@ private final class ThumbnailView: NSView, NSDraggingSource {
         veil.alphaValue = 0
         let scrim = NSView(frame: veil.bounds)
         scrim.wantsLayer = true
-        scrim.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.42).cgColor
+        scrim.layer?.backgroundColor = Design.Card.veil.cgColor
         scrim.autoresizingMask = [.width, .height]
         veil.addSubview(scrim)
         addSubview(veil)
@@ -667,11 +786,11 @@ private final class ThumbnailView: NSView, NSDraggingSource {
     }
 
     private func makePill(_ title: String, label: String, action: Selector) -> CardControl {
-        CardControl(title: title, label: label, size: CGSize(width: 92, height: 24), target: self, action: action)
+        CardControl(title: title, label: label, size: Design.Card.pillSize, target: self, action: action)
     }
 
     private func makeCircle(_ symbol: String, label: String, action: Selector) -> CardControl {
-        CardControl(symbol: symbol, label: label, size: CGSize(width: 24, height: 24), target: self, action: action)
+        CardControl(symbol: symbol, label: label, size: Design.Card.circleSize, target: self, action: action)
     }
 
     /// En reposo no se ve nada de esto: la captura manda. El resto de opciones está en el clic derecho.
@@ -703,16 +822,16 @@ private final class ThumbnailView: NSView, NSDraggingSource {
     /// Por encima de todo: señala cuál es la captura recién tomada.
     private func buildOutline() {
         outline.wantsLayer = true
-        outline.layer?.cornerRadius = Design.cardRadius
+        outline.layer?.cornerRadius = Design.Card.radius
         outline.layer?.cornerCurve = .continuous
-        outline.layer?.borderWidth = 2
+        outline.layer?.borderWidth = Design.Card.outlineWidth
         outline.alphaValue = 0
         addSubview(outline)
     }
 
     private func buildBadge() {
         badgeLabel.font = .systemFont(ofSize: 11, weight: .semibold)
-        badgeLabel.textColor = .labelColor
+        badgeLabel.textColor = Palette.text
         badge.addSubview(badgeLabel)
         addSubview(badge)
         refreshBadge()
@@ -721,7 +840,10 @@ private final class ThumbnailView: NSView, NSDraggingSource {
     private func refreshBadge() {
         setAccessibilityValue(badgeText)
         // Con el cursor encima, el aviso se lee en la propia píldora y no tapa ningún control.
-        pills.first?.showTitle(flashText ?? "Copiar")
+        if let copy = pills.first {
+            copy.showTitle(flashText ?? "Copiar")
+            layoutCard()
+        }
         guard let badgeText, !hovering else {
             badge.isHidden = true
             return
@@ -744,9 +866,7 @@ private final class ThumbnailView: NSView, NSDraggingSource {
 
     func flashOutline() {
         outlineTask?.cancel()
-        effectiveAppearance.performAsCurrentDrawingAppearance {
-            outline.layer?.borderColor = NSColor.controlAccentColor.cgColor
-        }
+        outline.layer?.borderColor = Palette.accent.cgColor
         isOutlined = true
         fade([outline], to: 1)
         outlineTask = Task { @MainActor [weak self] in
@@ -955,7 +1075,7 @@ private final class ThumbnailView: NSView, NSDraggingSource {
 
     override func draw(_ dirtyRect: NSRect) {
         NSGraphicsContext.current?.imageInterpolation = .high
-        NSColor.windowBackgroundColor.setFill()
+        Palette.window.setFill()
         bounds.fill()
 
         // La imagen llena la tarjeta sin deformarse. Si es muy alta o muy ancha, recorta antes que dejar bandas.

@@ -16,7 +16,7 @@ final class Toast {
         let label = NSTextField(labelWithString: text)
         label.font = large ? .systemFont(ofSize: 44, weight: .semibold) : .systemFont(ofSize: 13, weight: .medium)
         label.lineBreakMode = .byTruncatingMiddle
-        label.textColor = .labelColor
+        label.textColor = Palette.text
         label.alignment = .center
         label.sizeToFit()
 

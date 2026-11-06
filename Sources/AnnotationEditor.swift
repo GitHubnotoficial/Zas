@@ -30,12 +30,12 @@ private final class DotButton: NSButton {
     override func draw(_ dirtyRect: NSRect) {
         let center = CGPoint(x: bounds.midX, y: bounds.midY)
         if isActive {
-            NSColor.controlAccentColor.setStroke()
+            Palette.accent.setStroke()
             let ring = NSBezierPath(ovalIn: bounds.insetBy(dx: 1.5, dy: 1.5))
             ring.lineWidth = 2
             ring.stroke()
         }
-        (dotColor ?? NSColor.labelColor).setFill()
+        (dotColor ?? Palette.text).setFill()
         let radius = dotDiameter / 2
         let dot = NSBezierPath(ovalIn: CGRect(
             x: center.x - radius,
@@ -45,7 +45,7 @@ private final class DotButton: NSButton {
         ))
         dot.fill()
         // Contorno visible: si no, el blanco desaparece sobre la barra clara.
-        NSColor.tertiaryLabelColor.setStroke()
+        Palette.hairline.setStroke()
         dot.lineWidth = 1
         dot.stroke()
     }
@@ -114,12 +114,63 @@ private final class EditorWindow: NSWindow {
 /// Fondo liso y neutro de la ventana.
 private final class EditorSurface: NSView {
     override func draw(_ dirtyRect: NSRect) {
-        Design.canvasBackground.setFill()
-        bounds.fill()
+        Palette.canvas.setFill()
+        NSBezierPath(rect: bounds).fill()
     }
 }
 
-/// Barra superior o inferior: color de ventana y un filo fino hacia el lienzo.
+/// Fondo de los popovers de estilo: el sistema pone la forma y Zas el color.
+private final class PopoverSurface: NSView {
+    override func draw(_ dirtyRect: NSRect) {
+        Palette.group.setFill()
+        NSBezierPath(rect: bounds).fill()
+    }
+}
+
+/// Cápsula de las herramientas: todas caben en una sola pieza, con una línea entre cada dos.
+/// La activa crece, ocupa toda la altura y borra las líneas que la tocan.
+private final class ToolStrip: NSView {
+    private var items: [PillControl] = []
+
+    /// Botón que se muestra activo. `nil` cuando la herramienta vive fuera de la cápsula.
+    var active: PillControl? {
+        didSet { relayout() }
+    }
+
+    var totalWidth: CGFloat {
+        CGFloat(items.count) * Design.toolSize + Design.activeToolWidth - Design.toolSize
+    }
+
+    func add(_ item: PillControl) {
+        items.append(item)
+        addSubview(item)
+    }
+
+    func relayout() {
+        frame.size = CGSize(width: totalWidth, height: Design.pillHeight)
+        // Sin activa, el ancho que le toca se reparte: la cápsula no cambia de tamaño.
+        let plain = active == nil ? totalWidth / CGFloat(max(items.count, 1)) : Design.toolSize
+        var x: CGFloat = 0
+        for item in items {
+            let width = item === active ? Design.activeToolWidth : plain
+            item.frame = CGRect(x: x, y: 0, width: width, height: Design.pillHeight)
+            x += width
+        }
+        needsDisplay = true
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        Palette.group.setFill()
+        NSBezierPath(roundedRect: bounds, xRadius: bounds.height / 2, yRadius: bounds.height / 2).fill()
+
+        Palette.hairline.setFill()
+        for (left, right) in zip(items, items.dropFirst()) where left !== active && right !== active {
+            NSBezierPath(rect: CGRect(x: right.frame.minX.rounded(), y: bounds.midY - 7, width: 1, height: 14)).fill()
+        }
+    }
+}
+
+/// Barra superior o inferior: color propio y un filo fino hacia el lienzo.
 private final class EditorBar: NSView {
     private let lineAtBottom: Bool
 
@@ -136,10 +187,10 @@ private final class EditorBar: NSView {
     override var mouseDownCanMoveWindow: Bool { lineAtBottom }
 
     override func draw(_ dirtyRect: NSRect) {
-        NSColor.windowBackgroundColor.setFill()
-        bounds.fill()
-        NSColor.separatorColor.setFill()
-        CGRect(x: 0, y: lineAtBottom ? 0 : bounds.height - 1, width: bounds.width, height: 1).fill()
+        (lineAtBottom ? Palette.window : Palette.bottomBar).setFill()
+        NSBezierPath(rect: bounds).fill()
+        Palette.hairline.setFill()
+        NSBezierPath(rect: CGRect(x: 0, y: lineAtBottom ? 0 : bounds.height - 1, width: bounds.width, height: 1)).fill()
     }
 }
 
@@ -230,12 +281,16 @@ private final class DragPill: NSView, NSDraggingSource {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        NSColor.quaternaryLabelColor.setFill()
-        NSBezierPath(roundedRect: bounds, xRadius: bounds.height / 2, yRadius: bounds.height / 2).fill()
+        let capsule = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: bounds.height / 2 - 0.5, yRadius: bounds.height / 2 - 0.5)
+        Palette.group.setFill()
+        capsule.fill()
+        Palette.hairline.setStroke()
+        capsule.lineWidth = 1
+        capsule.stroke()
 
         let attributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 12, weight: .medium),
-            .foregroundColor: NSColor.labelColor,
+            .foregroundColor: Palette.text,
         ]
         let title = "Arrástrame" as NSString
         let size = title.size(withAttributes: attributes)
@@ -244,11 +299,11 @@ private final class DragPill: NSView, NSDraggingSource {
             withAttributes: attributes
         )
 
-        // Dos marcas de agarre, una a cada lado.
-        NSColor.tertiaryLabelColor.setFill()
-        for x in [CGFloat(11), bounds.maxX - 19] {
-            for y in [bounds.midY + 1, bounds.midY - 3] {
-                NSBezierPath(roundedRect: CGRect(x: x, y: y, width: 8, height: 2), xRadius: 1, yRadius: 1).fill()
+        // Tres rayas finas a cada lado: una pila de 11 puntos de alto.
+        Palette.secondaryText.setFill()
+        for x in [CGFloat(15), bounds.maxX - 23] {
+            for offset in [CGFloat(-5), 0, 5] {
+                NSBezierPath(rect: CGRect(x: x, y: (bounds.midY + offset - 0.5).rounded(), width: 8, height: 1)).fill()
             }
         }
     }
@@ -265,6 +320,7 @@ final class AnnotationEditor: NSObject, NSWindowDelegate, NSPopoverDelegate {
     }
 
     private static let palette: [(String, NSColor)] = [
+        ("Rosa", Palette.markDefault),
         ("Rojo", .systemRed),
         ("Anaranjado", .systemOrange),
         ("Amarillo", .systemYellow),
@@ -301,16 +357,17 @@ final class AnnotationEditor: NSObject, NSWindowDelegate, NSPopoverDelegate {
     private let previousApp = NSWorkspace.shared.frontmostApplication
     private let targetScreen: NSScreen
 
-    private var toolButtons: [AnnotationTool: GlassButton] = [:]
-    private var filledButton: GlassButton?
-    private var backgroundButton: GlassButton?
+    private var toolButtons: [AnnotationTool: PillControl] = [:]
+    private var filledButton: PillControl?
+    private var backgroundButton: PillControl?
+    private let toolStrip = ToolStrip()
     private var colorPill: PillControl?
     private var widthPill: PillControl?
     private var linePill: PillControl?
     private var zoomPill: PillControl?
-    private var undoButton: GlassButton?
-    private var redoButton: GlassButton?
-    private var textButton: GlassButton?
+    private var undoButton: PillControl?
+    private var redoButton: PillControl?
+    private var textButton: PillControl?
     private var liveText: LiveTextPane?
     private var escapeMonitor: Any?
 
@@ -324,7 +381,8 @@ final class AnnotationEditor: NSObject, NSWindowDelegate, NSPopoverDelegate {
     private var sharePicker: NSSharingServicePicker?
     private var pathExport: (revision: Int, url: URL)?
 
-    private var penColor: NSColor = .systemRed
+    private var sizeValue: ValueChip?
+    private var penColor = Palette.markDefault
     private var markerColor = AnnotationEditor.markers[0].1
     private var toolSizes: [AnnotationTool: CGFloat] = [:]
     private var savedRevision = 0
@@ -335,9 +393,9 @@ final class AnnotationEditor: NSObject, NSWindowDelegate, NSPopoverDelegate {
         self.file = file
 
         // Una barra arriba y otra abajo. Nada flota encima de la captura.
-        let barHeight = Design.editorBar
+        let bars = Design.editorBar + Design.editorBottomBar
         let padding: CGFloat = 24
-        let minimumWidth: CGFloat = 920
+        let minimumWidth: CGFloat = 980
         let minimumHeight: CGFloat = 420
 
         let screen = NSScreen.underMouse
@@ -346,19 +404,19 @@ final class AnnotationEditor: NSObject, NSWindowDelegate, NSPopoverDelegate {
         let fit = min(
             1,
             (visible.width - padding * 2) / max(image.size.width, 1),
-            (visible.height - barHeight * 2 - padding * 2) / max(image.size.height, 1)
+            (visible.height - bars - padding * 2) / max(image.size.height, 1)
         )
         let imageWidth = (image.size.width * fit).rounded()
         let imageHeight = (image.size.height * fit).rounded()
         let contentSize = CGSize(
             width: max(imageWidth + padding * 2, minimumWidth),
-            height: max(imageHeight + padding * 2 + barHeight * 2, minimumHeight)
+            height: max(imageHeight + padding * 2 + bars, minimumHeight)
         )
 
-        let area = CGRect(x: 0, y: barHeight, width: contentSize.width, height: contentSize.height - barHeight * 2)
+        let area = CGRect(x: 0, y: Design.editorBottomBar, width: contentSize.width, height: contentSize.height - bars)
         canvas = AnnotationCanvas(frame: CGRect(origin: .zero, size: area.size), image: image)
         scrollView = CanvasScrollView(frame: area)
-        backgroundPanel = BackgroundPanel(frame: CGRect(x: -BackgroundPanel.width, y: barHeight, width: BackgroundPanel.width, height: area.height))
+        backgroundPanel = BackgroundPanel(frame: CGRect(x: -BackgroundPanel.width, y: Design.editorBottomBar, width: BackgroundPanel.width, height: area.height))
         window = EditorWindow(
             contentRect: CGRect(origin: .zero, size: contentSize),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
@@ -372,6 +430,7 @@ final class AnnotationEditor: NSObject, NSWindowDelegate, NSPopoverDelegate {
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         window.titlebarSeparatorStyle = .none
+        window.backgroundColor = Palette.window
         window.title = "Anotar captura"
         window.autorecalculatesKeyViewLoop = true
         window.minSize = CGSize(width: minimumWidth, height: minimumHeight)
@@ -439,10 +498,24 @@ final class AnnotationEditor: NSObject, NSWindowDelegate, NSPopoverDelegate {
 
     // MARK: - Barras
 
+    /// Dibujo de cada herramienta en la barra.
+    private func toolContent(_ tool: AnnotationTool) -> PillControl.Content {
+        switch tool {
+        case .select: return .icon(.cursor)
+        case .rectangle: return .icon(.rectangle)
+        case .ellipse: return .icon(.ellipse)
+        case .arrow: return .icon(.arrow)
+        case .text: return .icon(.letter)
+        case .pixelate: return .icon(.mosaic)
+        case .spotlight: return .icon(.focus)
+        case .counter: return .icon(.number)
+        default: return .symbol(tool.symbol)
+        }
+    }
+
     /// Una sola fila junto a los semáforos: imagen, herramientas, estilo y, a la derecha, las salidas.
     private func buildTopBar(in content: NSView) {
         let barHeight = Design.editorBar
-        let size = Design.toolSize
         let bar = EditorBar(
             frame: CGRect(x: 0, y: content.bounds.height - barHeight, width: content.bounds.width, height: barHeight),
             lineAtBottom: true
@@ -450,38 +523,41 @@ final class AnnotationEditor: NSObject, NSWindowDelegate, NSPopoverDelegate {
         bar.autoresizingMask = [.width, .minYMargin]
 
         // Empieza después de los semáforos.
-        var x: CGFloat = 86
-        func place(_ view: NSView, gap: CGFloat = 2) {
+        var x: CGFloat = 84
+        func place(_ view: NSView, gap: CGFloat) {
             view.frame.origin = CGPoint(x: x, y: ((barHeight - view.frame.height) / 2).rounded())
             bar.addSubview(view)
             x += view.frame.width + gap
         }
-        func addTool(_ tool: AnnotationTool, gap: CGFloat = 2) {
-            let button = GlassButton(
-                symbol: tool.symbol,
-                tooltip: "\(tool.label) (\(tool.key))",
-                target: self,
-                action: #selector(toolPressed(_:)),
-                size: size
-            )
+        func imagePill(_ content: PillControl.Content, tooltip: String, action: Selector) -> PillControl {
+            PillControl(content: content, width: Design.imagePillWidth, tooltip: tooltip, chevron: false, target: self, action: action)
+        }
+        func stripButton(_ content: PillControl.Content, tooltip: String, action: Selector) -> PillControl {
+            let button = PillControl(content: content, width: Design.toolSize, surface: .clear, tooltip: tooltip, chevron: false, target: self, action: action)
+            toolStrip.add(button)
+            return button
+        }
+        func addTool(_ tool: AnnotationTool) {
+            let button = stripButton(toolContent(tool), tooltip: "\(tool.label) (\(tool.key))", action: #selector(toolPressed(_:)))
             button.tag = tool.rawValue
-            place(button, gap: gap)
             toolButtons[tool] = button
         }
 
-        // Grupo de imagen.
-        addTool(.crop)
-        place(GlassButton(symbol: "photo", tooltip: "Imagen: rotar, voltear, tamaño", target: self, action: #selector(imagePressed(_:)), size: size))
-        let background = GlassButton(symbol: "rectangle.inset.filled", tooltip: "Fondo", target: self, action: #selector(backgroundPressed), size: size)
-        place(background, gap: 14)
+        // Grupo de imagen: tres píldoras separadas.
+        let crop = imagePill(.symbol(AnnotationTool.crop.symbol), tooltip: "\(AnnotationTool.crop.label) (\(AnnotationTool.crop.key))", action: #selector(toolPressed(_:)))
+        crop.tag = AnnotationTool.crop.rawValue
+        crop.symbolSize = 15
+        place(crop, gap: 6)
+        toolButtons[.crop] = crop
+        place(imagePill(.icon(.picture), tooltip: "Imagen: rotar, voltear, tamaño", action: #selector(imagePressed(_:))), gap: 6)
+        let background = imagePill(.icon(.backdrop), tooltip: "Fondo", action: #selector(backgroundPressed))
+        place(background, gap: 12)
         backgroundButton = background
 
         // Herramientas.
         addTool(.select)
         addTool(.rectangle)
-        let filled = GlassButton(symbol: "rectangle.fill", tooltip: "Cuadro relleno", target: self, action: #selector(filledPressed), size: size)
-        place(filled)
-        filledButton = filled
+        filledButton = stripButton(.icon(.filledRectangle), tooltip: "Cuadro relleno", action: #selector(filledPressed))
         addTool(.ellipse)
         addTool(.arrow)
         addTool(.text)
@@ -490,30 +566,44 @@ final class AnnotationEditor: NSObject, NSWindowDelegate, NSPopoverDelegate {
         addTool(.counter)
         addTool(.pencil)
         addTool(.highlight)
-        addTool(.eraser, gap: 14)
+        addTool(.eraser)
+        toolStrip.relayout()
+        place(toolStrip, gap: 12)
 
         // Píldoras de estilo: sustituyen a la antigua fila de opciones.
-        let color = PillControl(content: .dot(penColor), width: 42, tooltip: "Color", target: self, action: #selector(swatchPressed(_:)))
-        place(color, gap: 4)
+        let color = PillControl(content: .dot(penColor), width: Design.stylePillWidth, tooltip: "Color", target: self, action: #selector(swatchPressed(_:)))
+        place(color, gap: 6)
         colorPill = color
-        let width = PillControl(content: .stroke(5), width: 42, tooltip: "Grosor", target: self, action: #selector(widthPressed(_:)))
-        place(width, gap: 4)
+        let width = PillControl(content: .stroke(5), width: Design.stylePillWidth, tooltip: "Grosor", target: self, action: #selector(widthPressed(_:)))
+        place(width, gap: 6)
         widthPill = width
-        let line = PillControl(content: .symbol(AnnotationTool.arrow.symbol), width: 42, tooltip: "Tipo de línea", target: self, action: #selector(linePressed(_:)))
-        place(line, gap: 4)
+        let line = PillControl(content: .icon(.arrow), width: Design.stylePillWidth, tooltip: "Tipo de línea", target: self, action: #selector(linePressed(_:)))
+        place(line, gap: 6)
         linePill = line
 
         // Salidas, pegadas a la derecha.
-        let done = NSButton(title: "Listo", target: self, action: #selector(copyAndClose))
-        done.bezelStyle = .rounded
-        done.controlSize = .large
+        let doneTitle = "Listo"
+        let done = PillControl(
+            content: .text(doneTitle),
+            width: PillControl.width(for: doneTitle, weight: .semibold),
+            surface: .accent,
+            tooltip: "Copiar, guardar y cerrar (⏎)",
+            chevron: false,
+            target: self,
+            action: #selector(copyAndClose)
+        )
+        done.textWeight = .semibold
         done.keyEquivalent = "\r"
-        done.toolTip = "Copiar, guardar y cerrar (⏎)"
-        done.sizeToFit()
-        let save = NSButton(title: "Guardar como…", target: self, action: #selector(savePressed(_:)))
-        save.bezelStyle = .rounded
-        save.controlSize = .large
-        save.sizeToFit()
+        done.setAccessibilityLabel(doneTitle)
+        let saveTitle = "Guardar como…"
+        let save = PillControl(
+            content: .text(saveTitle),
+            width: PillControl.width(for: saveTitle, weight: .medium),
+            tooltip: saveTitle,
+            chevron: false,
+            target: self,
+            action: #selector(savePressed(_:))
+        )
 
         var right = bar.bounds.width - 12
         for button in [done, save] {
@@ -521,7 +611,7 @@ final class AnnotationEditor: NSObject, NSWindowDelegate, NSPopoverDelegate {
             button.frame.origin = CGPoint(x: right, y: ((barHeight - button.frame.height) / 2).rounded())
             button.autoresizingMask = [.minXMargin]
             bar.addSubview(button)
-            right -= 8
+            right -= Design.barGap
         }
 
         content.addSubview(bar)
@@ -530,57 +620,68 @@ final class AnnotationEditor: NSObject, NSWindowDelegate, NSPopoverDelegate {
 
     /// Zoom e historia a la izquierda, arrastre al centro, salidas rápidas a la derecha.
     private func buildBottomBar(in content: NSView) {
-        let barHeight = Design.editorBar
+        let barHeight = Design.editorBottomBar
         let size = Design.toolSize
         let bar = EditorBar(frame: CGRect(x: 0, y: 0, width: content.bounds.width, height: barHeight), lineAtBottom: false)
         bar.autoresizingMask = [.width, .maxYMargin]
         let middle = ((barHeight - size) / 2).rounded()
 
         var x: CGFloat = 12
-        func place(_ view: NSView, gap: CGFloat = 2) {
+        func place(_ view: NSView, gap: CGFloat) {
             view.frame.origin = CGPoint(x: x, y: middle)
             bar.addSubview(view)
             x += view.frame.width + gap
         }
+        func historyButton(_ symbol: String, tooltip: String, target: AnyObject, action: Selector) -> PillControl {
+            let button = PillControl(content: .symbol(symbol), width: size, surface: .clear, tooltip: tooltip, chevron: false, target: target, action: action)
+            button.symbolSize = 13
+            return button
+        }
 
-        let zoom = PillControl(content: .text("100 %"), width: 78, tooltip: "Zoom", target: self, action: #selector(zoomPressed(_:)))
-        place(zoom, gap: 10)
+        let zoom = PillControl(content: .text("100%"), width: 68, tooltip: "Zoom", target: self, action: #selector(zoomPressed(_:)))
+        place(zoom, gap: 8)
         zoomPill = zoom
 
-        let undo = GlassButton(symbol: "arrow.uturn.backward", tooltip: "Deshacer (⌘Z)", target: canvas, action: #selector(AnnotationCanvas.undo(_:)), size: size)
-        place(undo)
+        let undo = historyButton("arrow.uturn.backward", tooltip: "Deshacer (⌘Z)", target: canvas, action: #selector(AnnotationCanvas.undo(_:)))
+        place(undo, gap: 2)
         undoButton = undo
-        let redo = GlassButton(symbol: "arrow.uturn.forward", tooltip: "Rehacer (⇧⌘Z)", target: canvas, action: #selector(AnnotationCanvas.redo(_:)), size: size)
-        place(redo)
+        let redo = historyButton("arrow.uturn.forward", tooltip: "Rehacer (⇧⌘Z)", target: canvas, action: #selector(AnnotationCanvas.redo(_:)))
+        place(redo, gap: 2)
         redoButton = redo
-        let text = GlassButton(symbol: "text.viewfinder", tooltip: "Seleccionar texto en la imagen", target: self, action: #selector(toggleTextMode), size: size)
-        place(text)
+        let text = historyButton("text.viewfinder", tooltip: "Seleccionar texto en la imagen", target: self, action: #selector(toggleTextMode))
+        place(text, gap: 2)
         textButton = text
 
-        let drag = DragPill(frame: CGRect(x: ((bar.bounds.width - 124) / 2).rounded(), y: middle, width: 124, height: size))
+        let dragWidth = Design.dragPillWidth
+        let drag = DragPill(frame: CGRect(x: ((bar.bounds.width - dragWidth) / 2).rounded(), y: middle, width: dragWidth, height: size))
         drag.autoresizingMask = [.minXMargin, .maxXMargin]
         drag.fileProvider = { [weak self] in self?.exportTemporaryFile() }
         bar.addSubview(drag)
 
+        func action(_ symbol: String, tooltip: String, _ selector: Selector) -> PillControl {
+            PillControl(content: .symbol(symbol), width: Design.bottomActionWidth, raised: true, tooltip: tooltip, chevron: false, target: self, action: selector)
+        }
         let buttons = [
-            PillControl(content: .symbol("square.and.arrow.up"), width: size, tooltip: "Compartir", chevron: false, target: self, action: #selector(sharePressed(_:))),
-            PillControl(content: .symbol("pin"), width: size, tooltip: "Fijar en la pantalla", chevron: false, target: self, action: #selector(pinPressed)),
-            PillControl(content: .symbol("doc.on.doc"), width: size, tooltip: "Copiar sin cerrar (⌘C)", chevron: false, target: self, action: #selector(quickCopy)),
-            PillControl(content: .symbol("terminal"), width: size, tooltip: "Copiar ruta para un agente", chevron: false, target: self, action: #selector(copyPathPressed)),
+            action("square.and.arrow.up", tooltip: "Compartir", #selector(sharePressed(_:))),
+            action("pin.fill", tooltip: "Fijar en la pantalla", #selector(pinPressed)),
+            action("doc.on.doc.fill", tooltip: "Copiar sin cerrar (⌘C)", #selector(quickCopy)),
+            action("terminal.fill", tooltip: "Copiar ruta para un agente", #selector(copyPathPressed)),
         ]
+        // Cada una trae aire para su sombra: la forma visible sigue alineada con el resto.
+        let room = PillControl.shadowRoom
         var right = bar.bounds.width - 12
         for button in buttons.reversed() {
-            right -= button.frame.width
-            button.frame.origin = CGPoint(x: right, y: middle)
+            right -= Design.bottomActionWidth
+            button.frame.origin = CGPoint(x: right - room, y: middle - room)
             button.autoresizingMask = [.minXMargin]
             bar.addSubview(button)
-            right -= 8
+            right -= Design.barGap
         }
 
         content.addSubview(bar)
     }
 
-    /// Centra los semáforos en la barra de 44 puntos, que comparten con las herramientas.
+    /// Centra los semáforos en la barra superior, que comparten con las herramientas.
     /// macOS los recoloca al cambiar el tamaño, así que se repite cada vez.
     private func alignWindowButtons() {
         let barHeight = Design.editorBar
@@ -657,19 +758,18 @@ final class AnnotationEditor: NSObject, NSWindowDelegate, NSPopoverDelegate {
         filledButton?.isActive = canvas.tool == .rectangle && canvas.filled
 
         // La misma herramienta traza flecha o línea: el botón muestra cuál.
-        let symbol = canvas.plainLine ? "line.diagonal" : AnnotationTool.arrow.symbol
-        let configuration = NSImage.SymbolConfiguration(pointSize: Design.toolSize * 0.42, weight: .medium)
-        if let picture = NSImage(systemSymbolName: symbol, accessibilityDescription: AnnotationTool.arrow.label)?.withSymbolConfiguration(configuration) {
-            toolButtons[.arrow]?.image = picture
-        }
+        toolButtons[.arrow]?.content = .icon(canvas.plainLine ? .line : .arrow)
+
+        let lit = canvas.tool == .rectangle && canvas.filled ? filledButton : toolButtons[canvas.tool]
+        toolStrip.active = canvas.tool == .crop ? nil : lit
     }
 
-    /// Símbolo de la variante elegida, en las herramientas que tienen más de una.
-    private var lineSymbol: String? {
+    /// Dibujo de la variante elegida, en las herramientas que tienen más de una.
+    private var lineContent: PillControl.Content? {
         switch canvas.tool {
-        case .arrow: return canvas.plainLine ? "line.diagonal" : AnnotationTool.arrow.symbol
-        case .rectangle: return canvas.filled ? "rectangle.fill" : "rectangle"
-        case .pixelate: return canvas.smoothBlur ? "drop" : "square.grid.3x3.square"
+        case .arrow: return .icon(canvas.plainLine ? .line : .arrow)
+        case .rectangle: return .icon(canvas.filled ? .filledRectangle : .rectangle)
+        case .pixelate: return canvas.smoothBlur ? .symbol("drop.fill") : .icon(.mosaic)
         default: return nil
         }
     }
@@ -684,10 +784,11 @@ final class AnnotationEditor: NSObject, NSWindowDelegate, NSPopoverDelegate {
         widthPill?.content = .stroke(canvas.lineWidth)
         widthPill?.setAccessibilityValue("\(Int(canvas.lineWidth))")
 
-        let symbol = lineSymbol
-        linePill?.isHidden = symbol == nil
-        if let symbol {
-            linePill?.content = .symbol(symbol)
+        // Las tres píldoras no se mueven: sin variantes, esta solo se apaga.
+        let variant = lineContent
+        linePill?.isEnabled = variant != nil
+        if let variant {
+            linePill?.content = variant
         }
     }
 
@@ -728,13 +829,14 @@ final class AnnotationEditor: NSObject, NSWindowDelegate, NSPopoverDelegate {
         menu.addItem(.separator())
         let sizes = NSMenu()
         for percent in [75, 50, 25] {
-            add("\(percent) %", #selector(resizeImage(_:)), tag: percent, to: sizes)
+            add("\(percent)%", #selector(resizeImage(_:)), tag: percent, to: sizes)
         }
         menu.addItem(withTitle: "Cambiar tamaño", action: nil, keyEquivalent: "").submenu = sizes
         menu.addItem(.separator())
         add("Añadir otra imagen…", #selector(addOtherImage))
         add(panelOpen ? "Ocultar el fondo" : "Mostrar el fondo", #selector(backgroundPressed))
-        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.height + 6), in: sender)
+        // La píldora dibuja con origen abajo: el menú cae justo debajo de ella.
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: -6), in: sender)
     }
 
     @objc private func rotateImage(_ sender: NSMenuItem) {
@@ -803,9 +905,9 @@ final class AnnotationEditor: NSObject, NSWindowDelegate, NSPopoverDelegate {
         let shift = width * max(progress, 0)
         scrollView.frame = CGRect(
             x: shift,
-            y: Design.editorBar,
+            y: Design.editorBottomBar,
             width: max(content.bounds.width - shift, 1),
-            height: max(content.bounds.height - Design.editorBar * 2, 1)
+            height: max(content.bounds.height - Design.editorBar - Design.editorBottomBar, 1)
         )
     }
 
@@ -912,7 +1014,7 @@ final class AnnotationEditor: NSObject, NSWindowDelegate, NSPopoverDelegate {
         let width = side * 2 + CGFloat(colors.count) * dot + CGFloat(colors.count - 1) * gap
         let wide = max(width, 196)
         let height: CGFloat = tool == .highlight ? 50 : 88
-        let view = NSView(frame: CGRect(x: 0, y: 0, width: wide, height: height))
+        let view = PopoverSurface(frame: CGRect(x: 0, y: 0, width: wide, height: height))
 
         var x = ((wide - width) / 2).rounded() + side
         let y = height - 12 - dot
@@ -935,6 +1037,7 @@ final class AnnotationEditor: NSObject, NSWindowDelegate, NSPopoverDelegate {
         view.addSubview(well)
         let label = NSTextField(labelWithString: "Cualquier color")
         label.font = .systemFont(ofSize: 12, weight: .medium)
+        label.textColor = Palette.text
         label.sizeToFit()
         label.frame.origin = CGPoint(x: 54, y: 16)
         view.addSubview(label)
@@ -953,36 +1056,35 @@ final class AnnotationEditor: NSObject, NSWindowDelegate, NSPopoverDelegate {
         let width: CGFloat = 262
         let rows = (showsSize ? 1 : 0) + (showsStrength ? 1 : 0)
         let height = CGFloat(max(rows, 1)) * rowHeight + 14
-        let view = NSView(frame: CGRect(x: 0, y: 0, width: width, height: height))
+        let view = PopoverSurface(frame: CGRect(x: 0, y: 0, width: width, height: height))
         var y = height - 7 - rowHeight
 
         func addLabel(_ text: String) {
             let label = NSTextField(labelWithString: text)
             label.font = .systemFont(ofSize: 12, weight: .medium)
+            label.textColor = Palette.text
             label.frame = CGRect(x: 12, y: y + 7, width: 72, height: 16)
             view.addSubview(label)
         }
 
         if showsSize, let size = Self.sizes[tool] {
             addLabel("Tamaño")
-            let slider = NSSlider(value: Double(canvas.lineWidth), minValue: Double(size.0), maxValue: Double(size.1), target: self, action: #selector(sizeChanged(_:)))
-            slider.frame = CGRect(x: 86, y: y + 4, width: 130, height: 22)
+            let slider = ZasSlider(value: Double(canvas.lineWidth), minValue: Double(size.0), maxValue: Double(size.1), target: self, action: #selector(sizeChanged(_:)))
+            slider.frame = CGRect(x: 86, y: y + 6, width: 120, height: 18)
             slider.setAccessibilityLabel("Tamaño")
             view.addSubview(slider)
 
-            let value = NSTextField(labelWithString: "\(Int(canvas.lineWidth))")
-            value.font = .monospacedDigitSystemFont(ofSize: 12, weight: .medium)
-            value.alignment = .right
-            value.frame = CGRect(x: 220, y: y + 7, width: 30, height: 16)
-            value.tag = 77
+            let value = ValueChip(text: "\(Int(canvas.lineWidth))", fill: Palette.pill)
+            value.frame.origin = CGPoint(x: width - 12 - value.frame.width, y: y + 4)
             view.addSubview(value)
+            sizeValue = value
             y -= rowHeight
         }
 
         if showsStrength {
             addLabel("Intensidad")
-            let blocks = NSSlider(value: Double(canvas.blockSize), minValue: 6, maxValue: 40, target: self, action: #selector(blockChanged(_:)))
-            blocks.frame = CGRect(x: 86, y: y + 4, width: 164, height: 22)
+            let blocks = ZasSlider(value: Double(canvas.blockSize), minValue: 6, maxValue: 40, target: self, action: #selector(blockChanged(_:)))
+            blocks.frame = CGRect(x: 86, y: y + 6, width: 164, height: 18)
             blocks.setAccessibilityLabel("Intensidad")
             view.addSubview(blocks)
         }
@@ -1012,7 +1114,7 @@ final class AnnotationEditor: NSObject, NSWindowDelegate, NSPopoverDelegate {
 
         let width = (rows.map { $0.frame.width }.max() ?? 120) + 24
         let height = CGFloat(rows.count) * 30 + 14
-        let view = NSView(frame: CGRect(x: 0, y: 0, width: width, height: height))
+        let view = PopoverSurface(frame: CGRect(x: 0, y: 0, width: width, height: height))
         var y = height - 12 - 22
         for row in rows {
             row.frame.origin = CGPoint(x: ((width - row.frame.width) / 2).rounded(), y: y)
@@ -1053,7 +1155,7 @@ final class AnnotationEditor: NSObject, NSWindowDelegate, NSPopoverDelegate {
         let value = CGFloat(sender.doubleValue.rounded())
         toolSizes[canvas.tool] = value
         canvas.lineWidth = value
-        (sender.superview?.viewWithTag(77) as? NSTextField)?.stringValue = "\(Int(value))"
+        sizeValue?.text = "\(Int(value))"
         widthPill?.content = .stroke(value)
         widthPill?.setAccessibilityValue("\(Int(value))")
     }
@@ -1092,7 +1194,7 @@ final class AnnotationEditor: NSObject, NSWindowDelegate, NSPopoverDelegate {
     @objc private func zoomPressed(_ sender: NSButton) {
         let menu = NSMenu()
         for percent in [50, 100, 200] {
-            let item = menu.addItem(withTitle: "\(percent) %", action: #selector(zoomPreset(_:)), keyEquivalent: "")
+            let item = menu.addItem(withTitle: "\(percent)%", action: #selector(zoomPreset(_:)), keyEquivalent: "")
             item.target = self
             item.tag = percent
         }
@@ -1118,7 +1220,7 @@ final class AnnotationEditor: NSObject, NSWindowDelegate, NSPopoverDelegate {
     }
 
     private func refreshZoomLabel() {
-        let percent = "\(Int((scrollView.magnification * canvas.fitScale * 100).rounded())) %"
+        let percent = "\(Int((scrollView.magnification * canvas.fitScale * 100).rounded()))%"
         zoomPill?.content = .text(percent)
         zoomPill?.setAccessibilityValue(percent)
     }
@@ -1249,7 +1351,7 @@ final class AnnotationEditor: NSObject, NSWindowDelegate, NSPopoverDelegate {
         menu.addItem(.separator())
         menu.addItem(withTitle: "Guardar como…", action: #selector(saveAs), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Guardar proyecto editable…", action: #selector(saveProject), keyEquivalent: "").target = self
-        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.height + 6), in: sender)
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: -6), in: sender)
     }
 
     private func nextCopyURL(in folder: URL) -> URL {
@@ -1410,6 +1512,7 @@ final class AnnotationEditor: NSObject, NSWindowDelegate, NSPopoverDelegate {
     func windowWillClose(_ notification: Notification) {
         closeTextMode()
         panelSpring?.invalidate()
+        backgroundPanel.releaseColorPanel()
         stylePopover?.close()
         if let magnifyObserver {
             NotificationCenter.default.removeObserver(magnifyObserver)

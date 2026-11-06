@@ -10,7 +10,7 @@ final class AnnotationCanvas: NSView {
         }
     }
 
-    var color: NSColor = .systemRed {
+    var color: NSColor = Palette.markDefault {
         didSet { applyToSelection { $0.color = color } }
     }
 
@@ -78,7 +78,7 @@ final class AnnotationCanvas: NSView {
     private var dragStartDocument: AnnotationDocument?
 
     private var textField: NSTextField?
-    private var textStyle: (color: NSColor, width: CGFloat) = (.systemRed, 5)
+    private var textStyle: (color: NSColor, width: CGFloat) = (Palette.markDefault, 5)
     private var editedMark: Annotation?
     private var textPoint: CGPoint = .zero
 
@@ -689,13 +689,13 @@ final class AnnotationCanvas: NSView {
             width: 260,
             height: fontSize + 12
         ))
-        field.font = .systemFont(ofSize: fontSize, weight: .bold)
+        field.font = Annotation.markFont(ofSize: fontSize)
         field.textColor = color
-        // El texto blanco o amarillo no se leería sobre el fondo blanco del campo.
-        field.drawsBackground = true
-        field.backgroundColor = Self.isLight(color) ? NSColor(white: 0.15, alpha: 1) : .white
+        // Se escribe directamente sobre la captura, sin caja, igual que quedará.
+        field.drawsBackground = false
         field.placeholderString = "Escribe y pulsa Enter"
-        field.isBordered = true
+        field.isBezeled = false
+        field.isBordered = false
         field.focusRingType = .none
         field.delegate = self
         field.target = self
@@ -703,11 +703,6 @@ final class AnnotationCanvas: NSView {
         addSubview(field)
         window?.makeFirstResponder(field)
         textField = field
-    }
-
-    private static func isLight(_ color: NSColor) -> Bool {
-        guard let rgb = color.usingColorSpace(.sRGB) else { return false }
-        return rgb.redComponent * 0.3 + rgb.greenComponent * 0.59 + rgb.blueComponent * 0.11 > 0.6
     }
 
     @objc private func textEntered() {
@@ -794,9 +789,9 @@ final class AnnotationCanvas: NSView {
     private func drawSelection(_ annotation: Annotation, scale: CGFloat) {
         let path = NSBezierPath(rect: annotation.bounds)
         path.lineWidth = 1.5 / scale
-        NSColor.controlAccentColor.setStroke()
+        Palette.accent.setStroke()
         path.stroke()
-        let radius = 5 / scale
+        let radius = 4.5 / scale
         for corner in Self.corners(of: annotation.bounds) {
             let handle = NSBezierPath(ovalIn: CGRect(x: corner.x - radius, y: corner.y - radius, width: radius * 2, height: radius * 2))
             NSColor.white.setFill()

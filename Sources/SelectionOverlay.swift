@@ -1,6 +1,40 @@
 import AppKit
 import Carbon
 
+extension Design {
+    /// Cruz y coordenadas que siguen al cursor antes de empezar a arrastrar.
+    enum Crosshair {
+        static let dim = NSColor.black.withAlphaComponent(0.3)
+        static let lineWidth: CGFloat = 1
+        static let lineColor = NSColor.white.withAlphaComponent(0.5)
+        /// La sombra oscura es lo que deja ver la línea blanca sobre una ventana clara.
+        static let shadowColor = NSColor.black
+        static let lineShadowOpacity: Float = 0.6
+        static let lineShadowRadius: CGFloat = 0.75
+        static let labelFontSize: CGFloat = 9
+        static let labelLineHeight: CGFloat = 10
+        static let labelSize = CGSize(width: 44, height: 24)
+        /// Sitio para que la sombra del texto no se corte en el borde de la vista.
+        static let labelInset: CGFloat = 2
+        static let labelOffset = CGSize(width: 3, height: 1)
+        static let labelColor = NSColor.white
+        static let labelShadowRadius: CGFloat = 1.5
+    }
+
+    /// Lupa de la pantalla congelada.
+    enum Loupe {
+        static let side: CGFloat = 82
+        static let radius: CGFloat = 8
+        /// Impar, para que el píxel del cursor quede justo en el centro.
+        static let pixels = 15
+        /// Baja lo justo para no tapar las coordenadas.
+        static let offset = CGSize(width: 16, height: 26)
+        static let borderWidth: CGFloat = 1
+        static let borderColor = NSColor.black.withAlphaComponent(0.55)
+        static let armColor = NSColor.black.withAlphaComponent(0.4)
+    }
+}
+
 enum SelectionMode {
     case screenshot
     case recording
@@ -271,6 +305,42 @@ final class SelectionOverlay {
     #endif
 }
 
+/// Coordenadas del cursor, sin fondo. Los clics las atraviesan.
+private final class CoordinatesView: NSView {
+    private static let attributes: [NSAttributedString.Key: Any] = {
+        let shadow = NSShadow()
+        shadow.shadowColor = Design.Crosshair.shadowColor
+        shadow.shadowBlurRadius = Design.Crosshair.labelShadowRadius
+        shadow.shadowOffset = .zero
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.minimumLineHeight = Design.Crosshair.labelLineHeight
+        paragraph.maximumLineHeight = Design.Crosshair.labelLineHeight
+        return [
+            .font: NSFont.monospacedSystemFont(ofSize: Design.Crosshair.labelFontSize, weight: .medium),
+            .foregroundColor: Design.Crosshair.labelColor,
+            .shadow: shadow,
+            .paragraphStyle: paragraph,
+        ]
+    }()
+
+    var text = "" {
+        didSet {
+            if text != oldValue {
+                needsDisplay = true
+            }
+        }
+    }
+
+    override var isFlipped: Bool { true }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let inset = Design.Crosshair.labelInset
+        (text as NSString).draw(in: bounds.insetBy(dx: inset, dy: inset), withAttributes: Self.attributes)
+    }
+}
+
 /// Se dibuja con capas: redibujar una pantalla 5K en cada movimiento del ratón pierde cuadros.
 private final class OverlayView: NSView {
     private let screen: NSScreen
@@ -286,6 +356,9 @@ private final class OverlayView: NSView {
     private let frameLayer = CAShapeLayer()
     private let frozenLayer = CALayer()
     private let magnifier = CALayer()
+    private let crossHorizontal = CALayer()
+    private let crossVertical = CALayer()
+    private let coordinates = CoordinatesView(frame: CGRect(origin: .zero, size: Design.Crosshair.labelSize))
     private var frozenImage: CGImage?
     private var mousePoint: NSPoint?
     private let sizePill = GlassView(frame: .zero, radius: 13)
@@ -327,7 +400,7 @@ private final class OverlayView: NSView {
         root.addSublayer(frozenLayer)
 
         dimLayer.frame = bounds
-        dimLayer.fillColor = NSColor.black.withAlphaComponent(0.3).cgColor
+        dimLayer.fillColor = Design.Crosshair.dim.cgColor
         dimLayer.fillRule = .evenOdd
         root.addSublayer(dimLayer)
 
@@ -336,17 +409,44 @@ private final class OverlayView: NSView {
         frameLayer.lineWidth = 1.5
         root.addSublayer(frameLayer)
 
-        magnifier.bounds = CGRect(x: 0, y: 0, width: 132, height: 132)
-        magnifier.cornerRadius = 66
+        let line = Design.Crosshair.lineWidth
+        crossHorizontal.bounds = CGRect(x: 0, y: 0, width: bounds.width, height: line)
+        crossVertical.bounds = CGRect(x: 0, y: 0, width: line, height: bounds.height)
+        for cross in [crossHorizontal, crossVertical] {
+            cross.anchorPoint = .zero
+            cross.backgroundColor = Design.Crosshair.lineColor.cgColor
+            cross.shadowColor = Design.Crosshair.shadowColor.cgColor
+            cross.shadowOpacity = Design.Crosshair.lineShadowOpacity
+            cross.shadowRadius = Design.Crosshair.lineShadowRadius
+            cross.shadowOffset = .zero
+            // Con la forma dada, moverla no vuelve a calcular la sombra.
+            cross.shadowPath = CGPath(rect: cross.bounds, transform: nil)
+            cross.isHidden = true
+            root.addSublayer(cross)
+        }
+
+        let side = Design.Loupe.side
+        magnifier.bounds = CGRect(x: 0, y: 0, width: side, height: side)
+        magnifier.cornerRadius = Design.Loupe.radius
+        magnifier.cornerCurve = .continuous
         magnifier.masksToBounds = true
-        magnifier.borderWidth = 3
-        // Azul: un borde blanco desaparece sobre una ventana clara.
-        magnifier.borderColor = NSColor.controlAccentColor.cgColor
-        let center = CALayer()
-        center.frame = CGRect(x: 60, y: 60, width: 12, height: 12)
-        center.borderWidth = 1
-        center.borderColor = NSColor.systemRed.cgColor
-        magnifier.addSublayer(center)
+        magnifier.borderWidth = Design.Loupe.borderWidth
+        magnifier.borderColor = Design.Loupe.borderColor.cgColor
+        // Cruz ancha de un píxel de grueso: sus cuatro brazos dejan libre el píxel central.
+        let pixel = side / CGFloat(Design.Loupe.pixels)
+        let low = (side - pixel) / 2
+        let high = (side + pixel) / 2
+        for frame in [
+            CGRect(x: 0, y: low, width: low, height: pixel),
+            CGRect(x: high, y: low, width: low, height: pixel),
+            CGRect(x: low, y: 0, width: pixel, height: low),
+            CGRect(x: low, y: high, width: pixel, height: low),
+        ] {
+            let arm = CALayer()
+            arm.frame = frame
+            arm.backgroundColor = Design.Loupe.armColor.cgColor
+            magnifier.addSublayer(arm)
+        }
         magnifier.magnificationFilter = .nearest
         magnifier.contentsGravity = .resize
         magnifier.isHidden = true
@@ -378,33 +478,70 @@ private final class OverlayView: NSView {
         ))
     }
 
-    /// Doce puntos alrededor del cursor, ampliados, para acertar al píxel.
+    /// Quince píxeles reales alrededor del cursor, ampliados, para acertar al píxel.
     private func refreshMagnifier() {
-        guard frozenImage != nil, let mousePoint,
-              let piece = crop(CGRect(
-                  x: min(max(mousePoint.x - 6, 0), bounds.width - 12),
-                  y: min(max(mousePoint.y - 6, 0), bounds.height - 12),
-                  width: 12,
-                  height: 12
-              ))
-        else {
+        guard let frozenImage, let mousePoint else {
+            magnifier.isHidden = true
+            return
+        }
+        let scale = CGFloat(frozenImage.width) / max(bounds.width, 1)
+        let count = CGFloat(Design.Loupe.pixels)
+        let reach = (count / 2).rounded(.down)
+        let left = (mousePoint.x * scale).rounded(.down) - reach
+        let top = (mousePoint.y * scale).rounded(.down) - reach
+        guard let piece = frozenImage.cropping(to: CGRect(
+            x: min(max(left, 0), CGFloat(frozenImage.width) - count),
+            y: min(max(top, 0), CGFloat(frozenImage.height) - count),
+            width: count,
+            height: count
+        )) else {
             magnifier.isHidden = true
             return
         }
         magnifier.contents = piece
+        // Abajo a la derecha del cursor. Junto a un borde, pasa al otro lado.
         let side = magnifier.bounds.width
-        let x = mousePoint.x + 28 + side > bounds.maxX ? mousePoint.x - 28 - side / 2 : mousePoint.x + 28 + side / 2
-        let y = mousePoint.y + 28 + side > bounds.maxY ? mousePoint.y - 28 - side / 2 : mousePoint.y + 28 + side / 2
-        magnifier.position = CGPoint(x: x, y: y)
+        let offset = Design.Loupe.offset
+        let x = mousePoint.x + offset.width + side > bounds.maxX ? mousePoint.x - offset.width - side / 2 : mousePoint.x + offset.width + side / 2
+        let y = mousePoint.y + offset.height + side > bounds.maxY ? mousePoint.y - offset.height - side / 2 : mousePoint.y + offset.height + side / 2
+        magnifier.position = CGPoint(x: x.rounded(), y: y.rounded())
         magnifier.isHidden = false
+    }
+
+    /// Solo antes de arrastrar, y nunca sobre la barra de modos, donde el cursor es la flecha.
+    /// Es parte del panel: se va con él antes de capturar y al congelar.
+    private func refreshCrosshair() {
+        guard startPoint == nil, let point = mousePoint, hud?.frame.contains(point) != true else {
+            crossHorizontal.isHidden = true
+            crossVertical.isHidden = true
+            coordinates.isHidden = true
+            return
+        }
+        crossHorizontal.position = CGPoint(x: 0, y: point.y.rounded(.down))
+        crossVertical.position = CGPoint(x: point.x.rounded(.down), y: 0)
+        crossHorizontal.isHidden = false
+        crossVertical.isHidden = false
+
+        // En píxeles, igual que la píldora de tamaño.
+        let scale = screen.backingScaleFactor
+        coordinates.text = "\(Int(point.x * scale))\n\(Int(point.y * scale))"
+        let size = coordinates.frame.size
+        let offset = Design.Crosshair.labelOffset
+        coordinates.frame.origin = CGPoint(
+            x: point.x + offset.width + size.width > bounds.maxX ? point.x - offset.width - size.width : point.x + offset.width,
+            y: point.y + offset.height + size.height > bounds.maxY ? point.y - offset.height - size.height : point.y + offset.height
+        )
+        coordinates.isHidden = false
     }
 
     private func buildPill() {
         sizeLabel.font = .monospacedDigitSystemFont(ofSize: 12, weight: .medium)
-        sizeLabel.textColor = .labelColor
+        sizeLabel.textColor = Palette.text
         sizePill.addSubview(sizeLabel)
         sizePill.isHidden = true
         addSubview(sizePill)
+        coordinates.isHidden = true
+        addSubview(coordinates)
     }
 
     /// Barra de modos: lo demás no se muestra hasta que hace falta.
@@ -418,7 +555,7 @@ private final class OverlayView: NSView {
         ]
         let hint = NSTextField(labelWithString: "Esc para cancelar")
         hint.font = .systemFont(ofSize: 12)
-        hint.textColor = .secondaryLabelColor
+        hint.textColor = Palette.secondaryText
         hint.sizeToFit()
 
         let padding = Design.barPadding
@@ -486,7 +623,7 @@ private final class OverlayView: NSView {
     func refreshMode() {
         let current = owner?.mode ?? .screenshot
         for (mode, button) in modeButtons {
-            button.activeColor = mode == .recording ? .systemRed : .controlAccentColor
+            button.activeColor = mode == .recording ? .systemRed : Palette.accent
             button.isActive = mode == current
         }
         refresh()
@@ -655,6 +792,7 @@ private final class OverlayView: NSView {
         CATransaction.setDisableActions(true)
         defer { CATransaction.commit() }
         refreshMagnifier()
+        refreshCrosshair()
 
         let dragging = selectionRect.map { $0.width > 0 && $0.height > 0 } ?? false
         let isWindow = !dragging && hoveredRect != nil

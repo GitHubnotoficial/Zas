@@ -163,12 +163,13 @@ func newestCard() -> CGRect? {
 
 /// Un sitio de la tarjeta donde no hay botones: las píldoras y los círculos dejan libre el borde del centro.
 func freeSpot(in card: CGRect) -> CGPoint { CGPoint(x: card.minX + 16, y: card.midY) }
-func copyButton(in card: CGRect) -> CGPoint { CGPoint(x: card.midX, y: card.midY - 15) }
-func saveButton(in card: CGRect) -> CGPoint { CGPoint(x: card.midX, y: card.midY + 15) }
-func closeButton(in card: CGRect) -> CGPoint { CGPoint(x: card.minX + 18, y: card.minY + 18) }
-func pinButton(in card: CGRect) -> CGPoint { CGPoint(x: card.maxX - 18, y: card.minY + 18) }
-func annotateButton(in card: CGRect) -> CGPoint { CGPoint(x: card.minX + 18, y: card.maxY - 18) }
-func pathButton(in card: CGRect) -> CGPoint { CGPoint(x: card.maxX - 18, y: card.maxY - 18) }
+/// Centros exactos: píldoras de 22 con 6 entre ellas, círculos de 20 a 6 del borde.
+func copyButton(in card: CGRect) -> CGPoint { CGPoint(x: card.midX, y: card.midY - 14) }
+func saveButton(in card: CGRect) -> CGPoint { CGPoint(x: card.midX, y: card.midY + 14) }
+func closeButton(in card: CGRect) -> CGPoint { CGPoint(x: card.minX + 16, y: card.minY + 16) }
+func pinButton(in card: CGRect) -> CGPoint { CGPoint(x: card.maxX - 16, y: card.minY + 16) }
+func annotateButton(in card: CGRect) -> CGPoint { CGPoint(x: card.minX + 16, y: card.maxY - 16) }
+func pathButton(in card: CGRect) -> CGPoint { CGPoint(x: card.maxX - 16, y: card.maxY - 16) }
 
 /// Una captura fijada de la región de 300 × 250.
 func pinnedFrame() -> CGRect? {
@@ -467,7 +468,7 @@ withFreshCard("Fijar") { card in
     moveMouse(to: CGPoint(x: pinned.midX, y: pinned.midY))
     wait(0.4)
     shot("e2e-07b-fijada")
-    click(at: CGPoint(x: pinned.minX + 19, y: pinned.minY + 19))
+    click(at: CGPoint(x: pinned.minX + 16, y: pinned.minY + 16))
     wait(0.5)
     check(pinnedFrame() == nil, "la captura fijada se cierra con su ×")
 }

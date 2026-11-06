@@ -47,7 +47,11 @@ final class PinController: NSObject {
         view.autoresizingMask = [.width, .height]
 
         let close = PinCloseButton(target: self, action: #selector(closePin(_:)))
-        close.frame = CGRect(x: 8, y: size.height - 30, width: 22, height: 22)
+        let circle = Design.Card.circleSize
+        close.frame = CGRect(
+            origin: CGPoint(x: Design.Card.gap, y: size.height - Design.Card.gap - circle.height),
+            size: circle
+        )
         close.autoresizingMask = [.maxXMargin, .minYMargin]
         close.isHidden = true
         view.addSubview(close)
@@ -81,16 +85,16 @@ private final class PinCloseButton: NSButton {
     init(target: AnyObject, action: Selector) {
         super.init(frame: .zero)
         image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Cerrar")?
-            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 9, weight: .bold))
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: Design.Card.symbolSize, weight: .semibold))
         imagePosition = .imageOnly
         isBordered = false
-        contentTintColor = .white
+        contentTintColor = Design.Card.ink
         toolTip = "Cerrar"
         self.target = target
         self.action = action
         wantsLayer = true
-        layer?.cornerRadius = 11
-        layer?.backgroundColor = NSColor.black.withAlphaComponent(0.65).cgColor
+        layer?.cornerRadius = Design.Card.circleSize.height / 2
+        layer?.backgroundColor = Design.Card.controlFill.cgColor
     }
 
     required init?(coder: NSCoder) {
@@ -107,11 +111,11 @@ private final class PinView: NSView {
         self.image = image
         super.init(frame: frame)
         wantsLayer = true
-        layer?.cornerRadius = Design.cardRadius
+        layer?.cornerRadius = Design.Card.radius
         layer?.cornerCurve = .continuous
         layer?.masksToBounds = true
         layer?.borderWidth = 0.5
-        layer?.borderColor = NSColor.separatorColor.cgColor
+        refreshBorder()
         setAccessibilityElement(true)
         setAccessibilityRole(.image)
         setAccessibilityLabel("Captura fijada")
@@ -119,6 +123,17 @@ private final class PinView: NSView {
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) no se usa")
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        refreshBorder()
+    }
+
+    private func refreshBorder() {
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            layer?.borderColor = Palette.hairline.cgColor
+        }
     }
 
     override var mouseDownCanMoveWindow: Bool { true }

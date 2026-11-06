@@ -263,7 +263,7 @@ struct Backdrop: Codable, Equatable {
     var kind: Kind = .gradient
     /// Posición en `BackdropArt.gradients`.
     var gradient = 0
-    /// Color liso en sRGB: rojo, verde y azul.
+    /// Color liso en sRGB: rojo, verde y azul. Un cuarto valor en 0 deja el fondo transparente.
     var color: [CGFloat] = [1, 1, 1]
     /// Imagen propia, ya reducida.
     var picture: Data?
@@ -398,6 +398,7 @@ enum BackdropArt {
         case .softGray:
             drawSoft(white: false, in: rect, context: context)
         case .solid:
+            guard backdrop.color.count < 4 || backdrop.color[3] > 0 else { break }
             context.setFillColor(color(backdrop.color).cgColor)
             context.fill(rect)
         case .ownBlur:

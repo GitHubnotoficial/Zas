@@ -2,9 +2,22 @@ import AppKit
 
 private final class FlippedView: NSView {
     override var isFlipped: Bool { true }
+
+    /// Alturas de las líneas finas entre secciones.
+    var lines: [CGFloat] = [] {
+        didSet { needsDisplay = true }
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        Palette.hairline.setFill()
+        for y in lines {
+            NSBezierPath(rect: CGRect(x: BackgroundPanel.side, y: y, width: bounds.width - BackgroundPanel.side * 2, height: 1)).fill()
+        }
+    }
 }
 
-/// Muestra del panel: un degradado, una imagen o un color, con anillo azul en la elegida.
+/// Muestra del panel: un degradado, una imagen o un color. La elegida lleva un anillo azul separado por un hueco.
+/// El marco guarda sitio para el anillo: la muestra visible queda en el centro.
 private final class SwatchButton: NSButton {
     var paint: ((CGRect, CGContext) -> Void)? {
         didSet { needsDisplay = true }
@@ -20,10 +33,18 @@ private final class SwatchButton: NSButton {
     override var isFlipped: Bool { false }
 
     private let radius: CGFloat
+    private let ringGap: CGFloat
+    private let ringWidth: CGFloat
 
-    init(side: CGFloat, radius: CGFloat, label: String, target: AnyObject, action: Selector) {
+    private var room: CGFloat { ringGap + ringWidth }
+    private var area: CGRect { bounds.insetBy(dx: room, dy: room) }
+
+    init(side: CGFloat, radius: CGFloat, ringGap: CGFloat = 2, ringWidth: CGFloat = 2.5, label: String, target: AnyObject, action: Selector) {
         self.radius = radius
-        super.init(frame: CGRect(x: 0, y: 0, width: side, height: side))
+        self.ringGap = ringGap
+        self.ringWidth = ringWidth
+        let full = side + (ringGap + ringWidth) * 2
+        super.init(frame: CGRect(x: 0, y: 0, width: full, height: full))
         title = ""
         isBordered = false
         toolTip = label
@@ -36,36 +57,113 @@ private final class SwatchButton: NSButton {
         fatalError("init(coder:) no se usa")
     }
 
+    /// Coloca la muestra visible, sin contar el sitio del anillo.
+    func place(at point: CGPoint) {
+        frame.origin = CGPoint(x: point.x - room, y: point.y - room)
+    }
+
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     override func drawFocusRingMask() {
-        NSBezierPath(roundedRect: bounds, xRadius: radius, yRadius: radius).fill()
+        NSBezierPath(roundedRect: area, xRadius: radius, yRadius: radius).fill()
     }
 
     override var focusRingMaskBounds: NSRect { bounds }
 
     override func draw(_ dirtyRect: NSRect) {
         guard let context = NSGraphicsContext.current?.cgContext else { return }
-        let area = isChosen ? bounds.insetBy(dx: 3, dy: 3) : bounds
-        let inner = max(radius - (isChosen ? 3 : 0), 1)
-        let shape = NSBezierPath(roundedRect: area, xRadius: inner, yRadius: inner)
+        let shape = NSBezierPath(roundedRect: area, xRadius: radius, yRadius: radius)
 
+        Palette.group.setFill()
+        shape.fill()
         NSGraphicsContext.saveGraphicsState()
         shape.addClip()
         paint?(area, context)
         NSGraphicsContext.restoreGraphicsState()
 
         // Contorno suave: si no, las muestras claras se pierden en el panel.
-        NSColor.separatorColor.setStroke()
+        Palette.hairline.setStroke()
         shape.lineWidth = 0.5
         shape.stroke()
 
         if isChosen {
-            NSColor.controlAccentColor.setStroke()
-            let ring = NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 1), xRadius: radius - 1, yRadius: radius - 1)
-            ring.lineWidth = 2
+            Palette.accent.setStroke()
+            let reach = ringGap + ringWidth / 2
+            let ring = NSBezierPath(roundedRect: area.insetBy(dx: -reach, dy: -reach), xRadius: radius + reach, yRadius: radius + reach)
+            ring.lineWidth = ringWidth
             ring.stroke()
         }
+    }
+}
+
+/// Casilla propia: su dibujo es de Zas, su papel y su estado siguen siendo los de una casilla del sistema.
+private final class PanelCheckbox: NSButton {
+    private let label: String
+
+    override var isFlipped: Bool { false }
+
+    override var isEnabled: Bool {
+        didSet { alphaValue = isEnabled ? 1 : 0.45 }
+    }
+
+    override var state: NSControl.StateValue {
+        didSet { needsDisplay = true }
+    }
+
+    private static let gap: CGFloat = 7
+    private static var attributes: [NSAttributedString.Key: Any] {
+        [.font: NSFont.systemFont(ofSize: 12, weight: .medium), .foregroundColor: Palette.text]
+    }
+
+    init(title: String, target: AnyObject, action: Selector) {
+        label = title
+        let text = (title as NSString).size(withAttributes: PanelCheckbox.attributes)
+        super.init(frame: CGRect(x: 0, y: 0, width: Design.checkbox + PanelCheckbox.gap + text.width.rounded(.up), height: Design.checkbox))
+        setButtonType(.switch)
+        self.title = ""
+        isBordered = false
+        self.target = target
+        self.action = action
+        setAccessibilityLabel(title)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) no se usa")
+    }
+
+    override func drawFocusRingMask() {
+        NSBezierPath(roundedRect: CGRect(x: 0, y: 0, width: Design.checkbox, height: Design.checkbox), xRadius: Design.checkboxRadius, yRadius: Design.checkboxRadius).fill()
+    }
+
+    override var focusRingMaskBounds: NSRect { bounds }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let side = Design.checkbox
+        let top = (bounds.height - side) / 2
+        let frame = CGRect(x: 0, y: top, width: side, height: side)
+        let box = NSBezierPath(roundedRect: frame, xRadius: Design.checkboxRadius, yRadius: Design.checkboxRadius)
+        let isOn = state == .on
+        (isOn ? Palette.accent : Palette.pill).setFill()
+        box.fill()
+        Palette.softEdge.setStroke()
+        box.lineWidth = 0.5
+        box.stroke()
+
+        if isOn {
+            let check = NSBezierPath()
+            check.move(to: CGPoint(x: frame.minX + 4.8, y: frame.midY))
+            check.line(to: CGPoint(x: frame.minX + 7.8, y: frame.midY - 3.2))
+            check.line(to: CGPoint(x: frame.minX + 13.2, y: frame.midY + 3.6))
+            check.lineWidth = 2
+            check.lineCapStyle = .round
+            check.lineJoinStyle = .round
+            Palette.onAccent.setStroke()
+            check.stroke()
+        }
+
+        let text = label as NSString
+        let size = text.size(withAttributes: Self.attributes)
+        text.draw(at: CGPoint(x: side + Self.gap, y: bounds.midY - size.height / 2), withAttributes: Self.attributes)
     }
 }
 
@@ -78,7 +176,9 @@ private struct BackdropPreset: Codable {
 /// Panel Fondo. Solo edita una receta: quien la aplica y la deshace es el lienzo.
 @MainActor
 final class BackgroundPanel: NSView {
-    static let width: CGFloat = 260
+    static let width: CGFloat = 232
+    /// Relleno lateral. La referencia manda: cinco muestras de 34 con 9 de separación llenan justo este ancho.
+    static let side: CGFloat = 13
 
     /// Cada cambio del fondo. El segundo valor es `false` mientras un deslizador sigue en movimiento.
     var onChange: ((Backdrop?, Bool) -> Void)?
@@ -87,12 +187,14 @@ final class BackgroundPanel: NSView {
     private static let presetsKey = "editor.fondo.ajustes"
     private static let lastPictureKey = "editor.fondo.ultimaImagen"
 
+    /// Dos filas de nueve. El último punto de cada fila no es un color: es transparente o uno propio.
     private static let solidColors: [(name: String, value: UInt32)] = [
-        ("Negro", 0x111114), ("Blanco", 0xFFFFFF), ("Rojo", 0xE5484D), ("Naranja", 0xF5873C), ("Amarillo", 0xF7C948),
-        ("Verde", 0x2FA866), ("Azul", 0x2F7CF6), ("Añil", 0x4F46C8), ("Violeta", 0x9B4DDB), ("Rosa", 0xE85C9C),
-        ("Grafito", 0x3B3F4A), ("Gris", 0xBFC3CC), ("Rubor", 0xF7B5B0), ("Durazno", 0xFBD0A6), ("Vainilla", 0xFBEFB0),
-        ("Salvia", 0xBDE5C8), ("Celeste", 0xB4DCF8), ("Bígaro", 0xC4CCF7), ("Malva", 0xDFC4F4), ("Pétalo", 0xF8C8E0),
+        ("Negro", 0x111114), ("Blanco", 0xFFFFFF), ("Rojo", 0xE5484D), ("Naranja", 0xF5873C),
+        ("Amarillo", 0xF7C948), ("Verde", 0x2FA866), ("Azul", 0x2F7CF6), ("Violeta", 0x9B4DDB),
+        ("Grafito", 0x3B3F4A), ("Gris", 0xBFC3CC), ("Rubor", 0xF7B5B0), ("Durazno", 0xFBD0A6),
+        ("Vainilla", 0xFBEFB0), ("Salvia", 0xBDE5C8), ("Celeste", 0xB4DCF8), ("Malva", 0xDFC4F4),
     ]
+    private static let perRow = 9
 
     private let scroll = NSScrollView()
     private let body = FlippedView()
@@ -105,9 +207,12 @@ final class BackgroundPanel: NSView {
     private var capture: NSImage?
     private var captureBlur: NSImage?
 
-    private let presetPopup = NSPopUpButton(frame: .zero, pullsDown: true)
+    private var presetButton: PillControl?
+    private var presetMenu = NSMenu()
     private var gradientButtons: [SwatchButton] = []
     private var solidButtons: [SwatchButton] = []
+    private var clearButton: SwatchButton?
+    private var customButton: SwatchButton?
     private var pictureButton: SwatchButton?
     private var blurButton: SwatchButton?
     private var softWhiteButton: SwatchButton?
@@ -116,8 +221,8 @@ final class BackgroundPanel: NSView {
     private var insetSlider: NSSlider?
     private var shadowSlider: NSSlider?
     private var cornersSlider: NSSlider?
-    private var balanceBox: NSButton?
-    private var marginValue: NSTextField?
+    private var balanceBox: PanelCheckbox?
+    private var marginValue: ValueChip?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -129,10 +234,9 @@ final class BackgroundPanel: NSView {
         scroll.frame = bounds
         scroll.autoresizingMask = [.width, .height]
         scroll.drawsBackground = false
-        scroll.hasVerticalScroller = true
-        scroll.scrollerStyle = .overlay
-        scroll.autohidesScrollers = true
-        scroll.autohidesScrollers = true
+        // Se desplaza con la rueda o el trackpad, sin barra a la vista.
+        scroll.hasVerticalScroller = false
+        scroll.hasHorizontalScroller = false
         scroll.documentView = body
         addSubview(scroll)
         build()
@@ -144,122 +248,176 @@ final class BackgroundPanel: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        NSColor.windowBackgroundColor.setFill()
-        bounds.fill()
-        NSColor.separatorColor.setFill()
-        CGRect(x: bounds.maxX - 1, y: 0, width: 1, height: bounds.height).fill()
+        Palette.window.setFill()
+        NSBezierPath(rect: bounds).fill()
+        Palette.hairline.setFill()
+        NSBezierPath(rect: CGRect(x: bounds.maxX - 1, y: 0, width: 1, height: bounds.height)).fill()
     }
 
     // MARK: - Construcción
 
     private func build() {
-        let side: CGFloat = 14
+        let side = Self.side
         let inner = Self.width - side * 2
-        var y: CGFloat = 12
+        let swatch: CGFloat = 34
+        let pitch = swatch + 9
+        var y: CGFloat = 14
+        var lines: [CGFloat] = []
 
-        func caption(_ text: String) {
+        func title(_ text: String, x: CGFloat, y: CGFloat, width: CGFloat) {
             let label = NSTextField(labelWithString: text)
-            label.font = .systemFont(ofSize: 11, weight: .medium)
-            label.textColor = .secondaryLabelColor
-            label.frame = CGRect(x: side, y: y, width: inner, height: 14)
+            label.font = .systemFont(ofSize: 12, weight: .semibold)
+            label.textColor = Palette.secondaryText
+            label.frame = CGRect(x: x, y: y, width: width, height: 16)
             body.addSubview(label)
-            y += 20
+        }
+        func caption(_ text: String) {
+            title(text, x: side, y: y, width: inner)
+            y += 24
+        }
+        func sectionBreak() {
+            y += 12
+            lines.append(y)
+            y += 12
         }
 
-        // Ajustes guardados.
-        presetPopup.frame = CGRect(x: side, y: y, width: inner - 32, height: 24)
-        presetPopup.controlSize = .small
-        presetPopup.font = .systemFont(ofSize: 12)
-        presetPopup.setAccessibilityLabel("Ajustes guardados")
-        body.addSubview(presetPopup)
-        let save = GlassButton(symbol: "plus", tooltip: "Guardar el ajuste actual", target: self, action: #selector(savePreset), size: 24)
-        save.frame.origin = CGPoint(x: Self.width - side - 24, y: y)
+        // Ajustes guardados: fila con su flecha y, fuera, un + fino.
+        let presets = PillControl(
+            content: .leadingText("Ajustes guardados"),
+            width: inner - 26,
+            height: 32,
+            radius: Design.panelRadius,
+            tooltip: "Ajustes guardados",
+            target: self,
+            action: #selector(presetsPressed(_:))
+        )
+        presets.frame.origin = CGPoint(x: side, y: y)
+        body.addSubview(presets)
+        presetButton = presets
+        let save = PillControl(content: .symbol("plus"), width: 20, height: 32, radius: 6, surface: .clear, tooltip: "Guardar el ajuste actual", chevron: false, target: self, action: #selector(savePreset))
+        save.symbolSize = 13
+        save.symbolWeight = .light
+        save.tint = Palette.secondaryText
+        save.frame.origin = CGPoint(x: Self.width - side - 20, y: y)
         body.addSubview(save)
         rebuildPresets()
-        y += 34
+        y += 40
 
         // Ninguno.
-        let none = NSButton(title: "Ninguno", target: self, action: #selector(nonePressed))
-        none.bezelStyle = .rounded
-        none.controlSize = .regular
-        none.frame = CGRect(x: side - 4, y: y - 2, width: inner + 8, height: 30)
-        none.setAccessibilityLabel("Quitar el fondo")
+        let none = PillControl(content: .text("Ninguno"), width: inner, height: 36, radius: Design.panelRadius, surface: .group, tooltip: "Quitar el fondo", chevron: false, target: self, action: #selector(nonePressed))
+        none.frame.origin = CGPoint(x: side, y: y)
         body.addSubview(none)
-        y += 38
+        y += 36 + 14
 
-        // Degradados: cinco columnas de 40 puntos.
+        // Degradados: cinco por fila.
         caption("Degradados")
         for (index, gradient) in BackdropArt.gradients.enumerated() {
-            let button = SwatchButton(side: 40, radius: 9, label: gradient.name, target: self, action: #selector(gradientPressed(_:)))
+            let button = SwatchButton(side: swatch, radius: 10, label: gradient.name, target: self, action: #selector(gradientPressed(_:)))
             button.tag = index
             button.paint = { rect, context in
                 BackdropArt.drawGradient(index, in: rect, context: context)
             }
-            button.frame.origin = CGPoint(x: side + CGFloat(index % 5) * 48, y: y + CGFloat(index / 5) * 48)
+            button.place(at: CGPoint(x: side + CGFloat(index % 5) * pitch, y: y + CGFloat(index / 5) * pitch))
             body.addSubview(button)
             gradientButtons.append(button)
         }
-        y += 4 * 48 + 6
+        y += 4 * pitch - 9
+        sectionBreak()
 
         // Imágenes.
         caption("Imágenes")
-        let picture = SwatchButton(side: 40, radius: 9, label: "Última imagen", target: self, action: #selector(lastPicturePressed))
-        picture.frame.origin = CGPoint(x: side, y: y)
+        let picture = SwatchButton(side: swatch, radius: 10, label: "Última imagen", target: self, action: #selector(lastPicturePressed))
+        picture.place(at: CGPoint(x: side, y: y))
         body.addSubview(picture)
         pictureButton = picture
-        let add = PillControl(content: .symbol("plus"), width: 40, tooltip: "Elegir una imagen propia", chevron: false, target: self, action: #selector(addPicturePressed))
-        add.frame.origin = CGPoint(x: side + 48, y: y + 6)
+        let add = PillControl(content: .symbol("plus"), width: swatch, height: swatch, radius: 10, surface: .group, tooltip: "Elegir una imagen propia", chevron: false, target: self, action: #selector(addPicturePressed))
+        add.symbolSize = 13
+        add.frame.origin = CGPoint(x: side + pitch, y: y)
         body.addSubview(add)
-        y += 54
+        y += swatch
+        sectionBreak()
 
         // Difuminado.
         caption("Difuminado")
-        let blur = SwatchButton(side: 40, radius: 9, label: "La captura difuminada", target: self, action: #selector(softPressed(_:)))
+        let blur = SwatchButton(side: swatch, radius: 10, label: "La captura difuminada", target: self, action: #selector(softPressed(_:)))
         blur.tag = 0
-        let white = SwatchButton(side: 40, radius: 9, label: "Blanco suave", target: self, action: #selector(softPressed(_:)))
+        let white = SwatchButton(side: swatch, radius: 10, label: "Blanco suave", target: self, action: #selector(softPressed(_:)))
         white.tag = 1
         white.paint = { rect, context in
             BackdropArt.drawSoft(white: true, in: rect, context: context)
         }
-        let gray = SwatchButton(side: 40, radius: 9, label: "Gris suave", target: self, action: #selector(softPressed(_:)))
+        let gray = SwatchButton(side: swatch, radius: 10, label: "Gris suave", target: self, action: #selector(softPressed(_:)))
         gray.tag = 2
         gray.paint = { rect, context in
             BackdropArt.drawSoft(white: false, in: rect, context: context)
         }
         for (index, button) in [blur, white, gray].enumerated() {
-            button.frame.origin = CGPoint(x: side + CGFloat(index) * 48, y: y)
+            button.place(at: CGPoint(x: side + CGFloat(index) * pitch, y: y))
             body.addSubview(button)
         }
         blurButton = blur
         softWhiteButton = white
         softGrayButton = gray
-        y += 54
+        y += swatch
+        sectionBreak()
 
-        // Color liso: dos filas de diez.
+        // Color liso: los puntos llenan el ancho, como las muestras de arriba.
         caption("Color liso")
-        let dot: CGFloat = 19
-        let dotGap = (inner - dot * 10) / 9
+        let dot: CGFloat = 16
+        let dotPitch = (inner - dot) / CGFloat(Self.perRow - 1)
+        let dotRow: CGFloat = dot + 8
+        func dotButton(_ label: String, action: Selector) -> SwatchButton {
+            SwatchButton(side: dot, radius: dot / 2, ringGap: 1.5, ringWidth: 2, label: label, target: self, action: action)
+        }
+        func placeDot(_ button: SwatchButton, column: Int, row: Int) {
+            button.place(at: CGPoint(x: (side + CGFloat(column) * dotPitch).rounded(), y: y + CGFloat(row) * dotRow))
+            body.addSubview(button)
+        }
+        let plain = Self.perRow - 1
         for (index, entry) in Self.solidColors.enumerated() {
-            let button = SwatchButton(side: dot, radius: dot / 2, label: entry.name, target: self, action: #selector(solidPressed(_:)))
+            let button = dotButton(entry.name, action: #selector(solidPressed(_:)))
             button.tag = index
             let hex = entry.value
             button.paint = { rect, context in
                 context.setFillColor(NSColor.hex(hex).cgColor)
                 context.fill(rect)
             }
-            button.frame.origin = CGPoint(
-                x: side + CGFloat(index % 10) * (dot + dotGap),
-                y: y + CGFloat(index / 10) * (dot + 7)
-            )
-            body.addSubview(button)
+            placeDot(button, column: index % plain, row: index / plain)
             solidButtons.append(button)
         }
-        y += 2 * dot + 7 + 16
+        let clear = dotButton("Transparente", action: #selector(clearPressed))
+        clear.paint = { rect, context in
+            context.setFillColor(NSColor.white.cgColor)
+            context.fill(rect)
+            context.setFillColor(Palette.checker.cgColor)
+            context.fill(CGRect(x: rect.minX, y: rect.minY, width: rect.width / 2, height: rect.height / 2))
+            context.fill(CGRect(x: rect.midX, y: rect.midY, width: rect.width / 2, height: rect.height / 2))
+        }
+        placeDot(clear, column: plain, row: 0)
+        clearButton = clear
+        let custom = dotButton("Color propio", action: #selector(customPressed))
+        custom.paint = { rect, context in
+            // Rueda de color: una cuña por matiz.
+            let center = CGPoint(x: rect.midX, y: rect.midY)
+            let steps = 48
+            for step in 0..<steps {
+                let start = CGFloat(step) / CGFloat(steps) * 360
+                let wedge = NSBezierPath()
+                wedge.move(to: center)
+                wedge.appendArc(withCenter: center, radius: rect.width, startAngle: start, endAngle: start + 360 / CGFloat(steps) + 1)
+                wedge.close()
+                NSColor(hue: CGFloat(step) / CGFloat(steps), saturation: 0.75, brightness: 1, alpha: 1).setFill()
+                wedge.fill()
+            }
+        }
+        placeDot(custom, column: plain, row: 1)
+        customButton = custom
+        y += dotRow * 2 - 8
+        sectionBreak()
 
         // Deslizadores.
         func slider(_ name: String, min: Double, max: Double, x: CGFloat, width: CGFloat, y: CGFloat) -> NSSlider {
-            let control = NSSlider(value: min, minValue: min, maxValue: max, target: self, action: #selector(sliderChanged(_:)))
-            control.controlSize = .small
+            let control = ZasSlider(value: min, minValue: min, maxValue: max, target: self, action: #selector(sliderChanged(_:)))
             control.isContinuous = true
             control.frame = CGRect(x: x, y: y, width: width, height: 18)
             control.setAccessibilityLabel(name)
@@ -268,44 +426,38 @@ final class BackgroundPanel: NSView {
             return control
         }
 
-        caption("Margen")
-        let value = NSTextField(labelWithString: "0")
-        value.font = .monospacedDigitSystemFont(ofSize: 11, weight: .medium)
-        value.textColor = .secondaryLabelColor
-        value.alignment = .right
-        value.frame = CGRect(x: Self.width - side - 40, y: y - 20, width: 40, height: 14)
+        // Margen, a todo el ancho y con su valor a la derecha.
+        title("Margen", x: side, y: y + 3, width: inner - Design.valueChip.width)
+        let value = ValueChip(text: "0", fill: Palette.group)
+        value.frame.origin = CGPoint(x: Self.width - side - value.frame.width, y: y)
         body.addSubview(value)
         marginValue = value
-        marginSlider = slider("Margen", min: 0, max: 240, x: side, width: inner, y: y)
         y += 28
+        marginSlider = slider("Margen", min: 0, max: 240, x: side, width: inner, y: y)
+        y += 18 + 12
 
-        let half = (inner - 14) / 2
+        // Interior, con la casilla en su misma fila.
         caption("Interior")
-        insetSlider = slider("Interior", min: 0, max: 80, x: side, width: half, y: y)
-        let box = NSButton(checkboxWithTitle: "Autoequilibrar", target: self, action: #selector(balanceChanged(_:)))
-        box.controlSize = .small
-        box.font = .systemFont(ofSize: 11)
-        box.sizeToFit()
-        box.frame.origin = CGPoint(x: side + half + 14, y: y)
+        insetSlider = slider("Interior", min: 0, max: 80, x: side, width: 88, y: y)
+        let box = PanelCheckbox(title: "Autoequilibrar", target: self, action: #selector(balanceChanged(_:)))
+        box.frame.origin = CGPoint(x: Self.width - side - box.frame.width, y: y)
         box.toolTip = "Centra el contenido igualando el color del borde"
-        box.setAccessibilityLabel("Autoequilibrar")
         body.addSubview(box)
         balanceBox = box
-        y += 28
+        y += 18 + 12
 
+        // Sombra y Esquinas en dos columnas.
+        let half = (inner - 14) / 2
         for (index, name) in ["Sombra", "Esquinas"].enumerated() {
-            let label = NSTextField(labelWithString: name)
-            label.font = .systemFont(ofSize: 11, weight: .medium)
-            label.textColor = .secondaryLabelColor
-            label.frame = CGRect(x: side + CGFloat(index) * (half + 14), y: y, width: half, height: 14)
-            body.addSubview(label)
+            title(name, x: side + CGFloat(index) * (half + 14), y: y, width: half)
         }
-        y += 20
+        y += 24
         shadowSlider = slider("Sombra", min: 0, max: 1, x: side, width: half, y: y)
         cornersSlider = slider("Esquinas", min: 0, max: 40, x: side + half + 14, width: half, y: y)
-        y += 32
+        y += 18 + 16
 
         body.frame = CGRect(x: 0, y: 0, width: Self.width, height: y)
+        body.lines = lines
     }
 
     // MARK: - Estado
@@ -342,9 +494,15 @@ final class BackgroundPanel: NSView {
         softWhiteButton?.isChosen = current?.kind == .softWhite
         softGrayButton?.isChosen = current?.kind == .softGray
         let isSolid = current?.kind == .solid
+        let isClear = isSolid && current.map { Self.isTransparent($0) } == true
+        var matched = isClear
         for (index, button) in solidButtons.enumerated() {
-            button.isChosen = isSolid && current.map { Self.isSame($0.color, Self.solidColors[index].value) } == true
+            let same = isSolid && !isClear && current.map { Self.isSame($0.color, Self.solidColors[index].value) } == true
+            button.isChosen = same
+            matched = matched || same
         }
+        clearButton?.isChosen = isClear
+        customButton?.isChosen = isSolid && !matched
 
         pictureButton?.isEnabled = lastPicture != nil
         pictureButton?.alphaValue = lastPicture != nil ? 1 : 0.4
@@ -361,12 +519,16 @@ final class BackgroundPanel: NSView {
         shadowSlider?.doubleValue = Double(style.shadow)
         cornersSlider?.doubleValue = Double(style.corners)
         balanceBox?.state = style.autoBalance ? .on : .off
-        marginValue?.stringValue = "\(Int(style.margin))"
+        marginValue?.text = "\(Int(style.margin))"
         marginSlider?.setAccessibilityValue("\(Int(style.margin)) puntos")
 
         let enabled = current != nil
         [marginSlider, insetSlider, shadowSlider, cornersSlider].forEach { $0?.isEnabled = enabled }
         balanceBox?.isEnabled = enabled
+    }
+
+    private static func isTransparent(_ backdrop: Backdrop) -> Bool {
+        backdrop.color.count >= 4 && backdrop.color[3] == 0
     }
 
     private static func isSame(_ color: [CGFloat], _ value: UInt32) -> Bool {
@@ -436,6 +598,42 @@ final class BackgroundPanel: NSView {
         }
     }
 
+    @objc private func clearPressed() {
+        choose {
+            $0.kind = .solid
+            $0.color = [0, 0, 0, 0]
+        }
+    }
+
+    /// El color propio se elige en el panel de colores del sistema.
+    @objc private func customPressed() {
+        let colors = NSColorPanel.shared
+        colors.showsAlpha = false
+        colors.isContinuous = false
+        colors.setTarget(self)
+        colors.setAction(#selector(customColorChanged(_:)))
+        colors.orderFront(nil)
+    }
+
+    @objc private func customColorChanged(_ sender: NSColorPanel) {
+        guard let rgb = sender.color.usingColorSpace(.sRGB) else { return }
+        choose {
+            $0.kind = .solid
+            $0.color = [rgb.redComponent, rgb.greenComponent, rgb.blueComponent]
+        }
+    }
+
+    /// Al cerrar el editor, el panel de colores deja de apuntar aquí.
+    func releaseColorPanel() {
+        guard NSColorPanel.sharedColorPanelExists else { return }
+        NSColorPanel.shared.setTarget(nil)
+        NSColorPanel.shared.setAction(nil)
+    }
+
+    @objc private func presetsPressed(_ sender: NSButton) {
+        presetMenu.popUp(positioning: nil, at: NSPoint(x: 0, y: -4), in: sender)
+    }
+
     @objc private func lastPicturePressed() {
         guard let lastPicture else { return }
         usePicture(lastPicture)
@@ -501,9 +699,9 @@ final class BackgroundPanel: NSView {
         if let activePreset, saved.indices.contains(activePreset) {
             title = saved[activePreset].name
         }
+        presetButton?.content = .leadingText(title)
+        presetButton?.setAccessibilityValue(title)
         let menu = NSMenu()
-        // En un menú desplegable, la primera opción es solo el título del botón.
-        menu.addItem(withTitle: title, action: nil, keyEquivalent: "")
         if saved.isEmpty {
             menu.addItem(withTitle: "Todavía no hay ajustes", action: nil, keyEquivalent: "")
         }
@@ -517,7 +715,7 @@ final class BackgroundPanel: NSView {
             let remove = menu.addItem(withTitle: "Borrar \(saved[activePreset].name)", action: #selector(removePreset), keyEquivalent: "")
             remove.target = self
         }
-        presetPopup.menu = menu
+        presetMenu = menu
     }
 
     @objc private func presetChosen(_ sender: NSMenuItem) {

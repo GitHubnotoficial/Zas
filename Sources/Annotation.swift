@@ -101,12 +101,45 @@ struct Annotation {
 
     var textAttributes: [NSAttributedString.Key: Any] {
         [
-            .font: NSFont.systemFont(ofSize: fontSize, weight: .bold),
+            .font: Annotation.markFont(ofSize: fontSize),
             .foregroundColor: color,
-            // Borde blanco para que se lea sobre cualquier fondo.
-            .strokeColor: NSColor.white,
-            .strokeWidth: -3,
         ]
+    }
+
+    /// Letra de las marcas: negrita redondeada.
+    static func markFont(ofSize size: CGFloat) -> NSFont {
+        let bold = NSFont.systemFont(ofSize: size, weight: .bold)
+        guard let rounded = bold.fontDescriptor.withDesign(.rounded) else { return bold }
+        return NSFont(descriptor: rounded, size: size) ?? bold
+    }
+
+    /// Punto de control de la flecha. Las largas se arquean un poco, siempre hacia su izquierda,
+    /// y el arco sale de los dos extremos: no hay nada que guardar y sirve igual para marcas antiguas.
+    var arrowControl: CGPoint {
+        guard points.count > 1 else { return points.first ?? .zero }
+        let start = points[0]
+        let end = points[1]
+        let middle = CGPoint(x: (start.x + end.x) / 2, y: (start.y + end.y) / 2)
+        let length = hypot(end.x - start.x, end.y - start.y)
+        guard !plainLine, length > 160 else { return middle }
+        let ramp = min((length - 160) / 140, 1)
+        // El control dista el doble que la curva: esta se separa un 6 % del largo, como mucho.
+        let reach = length * 0.12 * ramp
+        return CGPoint(
+            x: middle.x - (end.y - start.y) / length * reach,
+            y: middle.y + (end.x - start.x) / length * reach
+        )
+    }
+
+    /// Punto de la curva de la flecha, de 0 en la cola a 1 en la punta.
+    func arrowPoint(at t: CGFloat) -> CGPoint {
+        guard points.count > 1 else { return points.first ?? .zero }
+        let control = arrowControl
+        let rest = 1 - t
+        return CGPoint(
+            x: rest * rest * points[0].x + 2 * rest * t * control.x + t * t * points[1].x,
+            y: rest * rest * points[0].y + 2 * rest * t * control.y + t * t * points[1].y
+        )
     }
 
     /// Caja para seleccionar la marca con el cursor.
@@ -138,12 +171,17 @@ struct Annotation {
 
     func hitTest(_ point: CGPoint) -> Bool {
         let slack = max(lineWidth, 6)
-        guard bounds.insetBy(dx: -slack, dy: -slack).contains(point) else { return false }
+        // El arco de una flecha larga puede salirse del rectángulo de sus extremos.
+        let reach = tool == .arrow ? bounds.union(CGRect(origin: arrowControl, size: .zero)) : bounds
+        guard reach.insetBy(dx: -slack, dy: -slack).contains(point) else { return false }
 
         switch tool {
         case .arrow:
             guard points.count > 1 else { return false }
-            return Annotation.distance(from: point, toSegment: points[0], points[1]) <= slack + lineWidth
+            let curve = (0...16).map { arrowPoint(at: CGFloat($0) / 16) }
+            return zip(curve, curve.dropFirst()).contains {
+                Annotation.distance(from: point, toSegment: $0, $1) <= slack + lineWidth
+            }
         case .rectangle, .ellipse:
             // Hueco por dentro: se puede tocar lo que hay debajo.
             let inner = rect.insetBy(dx: slack + lineWidth, dy: slack + lineWidth)
@@ -296,38 +334,74 @@ enum AnnotationRenderer {
             line.stroke()
             return
         }
-        let angle = atan2(end.y - start.y, end.x - start.x)
         let length = hypot(end.x - start.x, end.y - start.y)
-        let headLength = min(12 + annotation.lineWidth * 3, length * 0.7)
-        let headAngle: CGFloat = 0.46
+        guard length > 0.5 else { return }
 
-        annotation.color.set()
+        let width = annotation.lineWidth
+        let headLength = min(14 + width * 2.6, length * 0.6)
+        let headHalf = headLength * 0.56
+        let baseT = max(1 - headLength / length, 0.05)
+        let base = annotation.arrowPoint(at: baseT)
+        let angle = atan2(end.y - base.y, end.x - base.x)
+        let axis = CGPoint(x: cos(angle), y: sin(angle))
+        let normal = CGPoint(x: -axis.y, y: axis.x)
+        annotation.color.setFill()
 
-        let line = NSBezierPath()
-        line.lineWidth = annotation.lineWidth
-        line.lineCapStyle = .round
-        line.move(to: start)
-        line.line(to: CGPoint(
-            x: end.x - cos(angle) * headLength * 0.8,
-            y: end.y - sin(angle) * headLength * 0.8
-        ))
-        line.stroke()
+        // Trazo: nace fino y engorda hasta perderse dentro de la cabeza.
+        let tailHalf = max(width * 0.2, 0.5)
+        let neckHalf = max(width * 0.62, 1.2)
+        let neckT = baseT + (1 - baseT) * 0.3
+        let steps = 32
+        var left: [CGPoint] = []
+        var right: [CGPoint] = []
+        for step in 0...steps {
+            let progress = CGFloat(step) / CGFloat(steps)
+            let t = neckT * progress
+            let point = annotation.arrowPoint(at: t)
+            let ahead = annotation.arrowPoint(at: min(t + 0.01, 1))
+            let behind = annotation.arrowPoint(at: max(t - 0.01, 0))
+            let run = max(hypot(ahead.x - behind.x, ahead.y - behind.y), 0.001)
+            let side = CGPoint(x: -(ahead.y - behind.y) / run, y: (ahead.x - behind.x) / run)
+            let half = tailHalf + (neckHalf - tailHalf) * pow(progress, 0.85)
+            left.append(CGPoint(x: point.x + side.x * half, y: point.y + side.y * half))
+            right.append(CGPoint(x: point.x - side.x * half, y: point.y - side.y * half))
+        }
+        let body = NSBezierPath()
+        body.move(to: left[0])
+        left.dropFirst().forEach { body.line(to: $0) }
+        right.reversed().forEach { body.line(to: $0) }
+        body.close()
+        body.fill()
+        NSBezierPath(ovalIn: CGRect(x: start.x - tailHalf, y: start.y - tailHalf, width: tailHalf * 2, height: tailHalf * 2)).fill()
 
-        let head = NSBezierPath()
-        head.move(to: end)
-        head.line(to: CGPoint(
-            x: end.x - cos(angle - headAngle) * headLength,
-            y: end.y - sin(angle - headAngle) * headLength
-        ))
-        head.line(to: CGPoint(
-            x: end.x - cos(angle + headAngle) * headLength,
-            y: end.y - sin(angle + headAngle) * headLength
-        ))
-        head.close()
-        head.lineJoinStyle = .round
-        head.lineWidth = 1
-        head.fill()
-        head.stroke()
+        // Cabeza llena de esquinas algo redondeadas, con la espalda apenas hundida.
+        // La punta se adelanta lo que le quita el redondeo: sigue llegando al sitio exacto.
+        let radius = min(1.2 + width * 0.22, headLength * 0.14)
+        let spread = atan2(headHalf, headLength)
+        let overshoot = radius * (1 / sin(spread) - 1)
+        func onHead(along: CGFloat, across: CGFloat) -> CGPoint {
+            CGPoint(
+                x: end.x - axis.x * along + normal.x * across,
+                y: end.y - axis.y * along + normal.y * across
+            )
+        }
+        roundedPolygon([
+            onHead(along: -overshoot, across: 0),
+            onHead(along: headLength, across: headHalf),
+            onHead(along: headLength * 0.82, across: 0),
+            onHead(along: headLength, across: -headHalf),
+        ], radius: radius).fill()
+    }
+
+    private static func roundedPolygon(_ points: [CGPoint], radius: CGFloat) -> NSBezierPath {
+        let path = NSBezierPath()
+        guard let first = points.first, let last = points.last else { return path }
+        path.move(to: CGPoint(x: (last.x + first.x) / 2, y: (last.y + first.y) / 2))
+        for (index, corner) in points.enumerated() {
+            path.appendArc(from: corner, to: points[(index + 1) % points.count], radius: radius)
+        }
+        path.close()
+        return path
     }
 
     private static func strokePath(_ annotation: Annotation) -> NSBezierPath {
@@ -361,13 +435,9 @@ enum AnnotationRenderer {
         let circle = annotation.bounds
         annotation.color.setFill()
         NSBezierPath(ovalIn: circle).fill()
-        NSColor.white.setStroke()
-        let ring = NSBezierPath(ovalIn: circle)
-        ring.lineWidth = 2
-        ring.stroke()
 
         let attributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: annotation.counterRadius * 1.05, weight: .bold),
+            .font: Annotation.markFont(ofSize: annotation.counterRadius * 1.15),
             .foregroundColor: NSColor.white,
         ]
         let label = "\(annotation.number)" as NSString
