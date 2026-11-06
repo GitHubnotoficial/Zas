@@ -104,10 +104,15 @@ func newFile(_ ext: String, timeout: Double = 4, _ action: () -> Void) -> URL? {
 }
 
 func pixelSize(_ url: URL?) -> (Int, Int)? {
-    guard let url, let rep = (try? Data(contentsOf: url)).flatMap({ NSBitmapImageRep(data: $0) }) else {
-        return nil
+    guard let url else { return nil }
+    // El archivo aparece antes de que screencapture termine de escribirlo.
+    for _ in 0..<30 {
+        if let rep = (try? Data(contentsOf: url)).flatMap({ NSBitmapImageRep(data: $0) }) {
+            return (rep.pixelsWide, rep.pixelsHigh)
+        }
+        wait(0.1)
     }
-    return (rep.pixelsWide, rep.pixelsHigh)
+    return nil
 }
 
 func windowFrame(owner: String) -> CGRect? {
