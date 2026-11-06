@@ -79,7 +79,11 @@ Trampas conocidas:
 
 ## Estado
 
-Consulta `CHANGELOG` en los releases de GitHub y la versión en `compilar.sh`. Pendiente permanente: probar en un Mac físico, pegar en Claude Code, micrófono y gesto de trackpad.
+Versión en `compilar.sh`. Hecho frente a CleanShot: área, ventana, pantalla, temporizador, desplazamiento, congelar con lupa, texto con Live Text, tarjetas, fijar, historial, editor completo (flecha, línea, cuadro, relleno, círculo, lápiz, resaltador, texto, números, censura y desenfoque, foco, borrador, recorte, rotar, voltear, tamaño, fondos, combinar imágenes, cuentagotas), video con micrófono, audio del Mac, FPS, cursor, resumen para Claude, GIF y recorte.
+
+No hecho, a propósito: nube (necesita servidor y cuentas), Studio Mode (editor de video completo), mostrar clics y teclas (el video excluye las ventanas de Zas y las teclas piden permiso de Accesibilidad), cámara, proyectos editables, No molestar automático.
+
+Pendiente permanente: probar en un Mac físico, pegar de verdad en Claude Code, micrófono, audio del Mac con sonido real, gesto de trackpad y captura con desplazamiento sobre una app real.
 
 ## Herramientas fuera del repositorio
 

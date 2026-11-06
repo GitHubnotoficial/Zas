@@ -48,12 +48,20 @@ enum VideoTrimmer {
         guard let session = AVAssetExportSession(asset: AVURLAsset(url: video), presetName: AVAssetExportPresetPassthrough) else {
             return false
         }
+        session.timeRange = CMTimeRange(start: start, end: end)
+        if #available(macOS 15.0, *) {
+            return (try? await session.export(to: output, as: .mp4)) != nil
+        }
         session.outputURL = output
         session.outputFileType = .mp4
-        session.timeRange = CMTimeRange(start: start, end: end)
+        final class Box: @unchecked Sendable {
+            let session: AVAssetExportSession
+            init(_ session: AVAssetExportSession) { self.session = session }
+        }
+        let box = Box(session)
         return await withCheckedContinuation { continuation in
-            session.exportAsynchronously {
-                continuation.resume(returning: session.status == .completed)
+            box.session.exportAsynchronously {
+                continuation.resume(returning: box.session.status == .completed)
             }
         }
     }

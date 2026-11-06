@@ -345,7 +345,13 @@ private final class OverlayView: NSView {
         magnifier.cornerRadius = 66
         magnifier.masksToBounds = true
         magnifier.borderWidth = 3
-        magnifier.borderColor = NSColor.white.cgColor
+        // Azul: un borde blanco desaparece sobre una ventana clara.
+        magnifier.borderColor = NSColor.controlAccentColor.cgColor
+        let center = CALayer()
+        center.frame = CGRect(x: 60, y: 60, width: 12, height: 12)
+        center.borderWidth = 1
+        center.borderColor = NSColor.systemRed.cgColor
+        magnifier.addSublayer(center)
         magnifier.magnificationFilter = .nearest
         magnifier.contentsGravity = .resize
         magnifier.isHidden = true
