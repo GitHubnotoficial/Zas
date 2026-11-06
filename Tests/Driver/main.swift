@@ -1,6 +1,7 @@
 // Usa Zas ya instalada como lo haría una persona: atajos reales, ratón real y portapapeles real.
 // Se compila aparte y necesita el permiso de Accesibilidad para enviar eventos.
 // Uso: ZasConductor <carpeta-de-imágenes>
+import AVFoundation
 import AppKit
 import Carbon
 
@@ -147,6 +148,13 @@ let region = newFile("png") {
     drag(from: CGPoint(x: 160, y: 130), to: CGPoint(x: 460, y: 380))
 }
 check(region != nil, "⇧⌘2 y arrastrar crea el archivo")
+
+// macOS 15 muestra su propio aviso en la primera captura. Se acepta como lo haría una persona.
+wait(1.5)
+shot("e2e-00-aviso-macos")
+click(at: CGPoint(x: screen.frame.width / 2 + 80, y: 428))
+wait(1)
+
 if let size = pixelSize(region) {
     check(size == (300 * scale, 250 * scale), "el área mide lo arrastrado (\(size))")
 }
@@ -263,6 +271,33 @@ if let video {
 wait(1)
 check((NSPasteboard.general.readObjects(forClasses: [NSURL.self]) as? [URL])?.first?.pathExtension == "mp4", "el video queda copiado como archivo")
 shot("e2e-11-video-listo")
+
+// 9. Cerrar la app mientras graba no debe perder el video.
+let interrupted = newFile("mp4", timeout: 12) {
+    hotKey(kVK_ANSI_6)
+    wait(0.7)
+    drag(from: CGPoint(x: 140, y: 140), to: CGPoint(x: 540, y: 400))
+    for step in 0..<20 {
+        moveMouse(to: CGPoint(x: 180 + step * 15, y: 260))
+        wait(0.1)
+    }
+    NSRunningApplication.runningApplications(withBundleIdentifier: "local.zas.app").first?.terminate()
+}
+check(interrupted != nil, "cerrar Zas mientras graba guarda el video")
+if let interrupted {
+    wait(1)
+    let semaphore = DispatchSemaphore(value: 0)
+    final class Box: @unchecked Sendable { var seconds = 0.0 }
+    let box = Box()
+    Task.detached {
+        box.seconds = (try? await AVURLAsset(url: interrupted).load(.duration))?.seconds ?? 0
+        semaphore.signal()
+    }
+    semaphore.wait()
+    check(box.seconds > 1, "ese video se puede reproducir (\(String(format: "%.1f", box.seconds)) s)")
+}
+wait(1)
+check(NSRunningApplication.runningApplications(withBundleIdentifier: "local.zas.app").isEmpty, "Zas termina de cerrarse tras guardar")
 
 print("RESULTADO: \(passes) correctas, \(failures) fallidas")
 exit(failures == 0 ? 0 : 1)

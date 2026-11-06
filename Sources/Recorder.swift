@@ -28,7 +28,11 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
     /// Se llama si la grabación se corta sola (por ejemplo, si se desconecta la pantalla).
     var onUnexpectedStop: (@MainActor (Error) -> Void)?
 
+    /// El usuario pidió micrófono, pero macOS no dio acceso: el video queda sin audio.
+    private(set) var microphoneDenied = false
+
     private let queue = DispatchQueue(label: "zas.recorder")
+    private var reportedFailure = false
     private var stream: SCStream?
     private var writer: AVAssetWriter?
     private var videoInput: AVAssetWriterInput?
@@ -89,6 +93,7 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
         var capturesMicrophone = false
         if microphone, #available(macOS 15.0, *) {
             capturesMicrophone = await AVCaptureDevice.requestAccess(for: .audio)
+            microphoneDenied = !capturesMicrophone
             if capturesMicrophone {
                 configuration.captureMicrophone = true
                 let input = AVAssetWriterInput(mediaType: .audio, outputSettings: [
@@ -114,13 +119,20 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
         self.audioInput = audioInput
         self.outputURL = url
 
-        let stream = SCStream(filter: filter, configuration: configuration, delegate: self)
-        try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: queue)
-        if capturesMicrophone, #available(macOS 15.0, *) {
-            try stream.addStreamOutput(self, type: .microphone, sampleHandlerQueue: queue)
+        do {
+            let stream = SCStream(filter: filter, configuration: configuration, delegate: self)
+            try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: queue)
+            if capturesMicrophone, #available(macOS 15.0, *) {
+                try stream.addStreamOutput(self, type: .microphone, sampleHandlerQueue: queue)
+            }
+            try await stream.startCapture()
+            self.stream = stream
+        } catch {
+            // Sin esto quedaría un archivo incompleto en la carpeta.
+            writer.cancelWriting()
+            try? FileManager.default.removeItem(at: url)
+            throw error
         }
-        try await stream.startCapture()
-        self.stream = stream
     }
 
     /// Detiene la grabación y devuelve el archivo final, o `nil` si no quedó nada.
@@ -132,8 +144,13 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
 
         return await withCheckedContinuation { (continuation: CheckedContinuation<URL?, Never>) in
             queue.async { [self] in
-                guard let writer, let videoInput, let outputURL, sessionStarted else {
+                guard let writer, let videoInput, let outputURL, sessionStarted,
+                      writer.status == .writing
+                else {
                     self.writer?.cancelWriting()
+                    if let outputURL = self.outputURL {
+                        try? FileManager.default.removeItem(at: outputURL)
+                    }
                     continuation.resume(returning: nil)
                     return
                 }
@@ -143,7 +160,12 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
                 let now = CMClockGetTime(CMClockGetHostTimeClock())
                 writer.endSession(atSourceTime: CMTimeMaximum(lastTime, now))
                 writer.finishWriting {
-                    continuation.resume(returning: writer.status == .completed ? outputURL : nil)
+                    if writer.status == .completed {
+                        continuation.resume(returning: outputURL)
+                    } else {
+                        try? FileManager.default.removeItem(at: outputURL)
+                        continuation.resume(returning: nil)
+                    }
                 }
             }
         }
@@ -155,6 +177,19 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
         of type: SCStreamOutputType
     ) {
         guard sampleBuffer.isValid, let writer else { return }
+
+        // Por ejemplo, disco lleno: se avisa una sola vez en lugar de seguir contando.
+        guard writer.status == .writing else {
+            if !reportedFailure {
+                reportedFailure = true
+                let error = writer.error ?? RecorderError.writerSetupFailed
+                let handler = onUnexpectedStop
+                Task { @MainActor in
+                    handler?(error)
+                }
+            }
+            return
+        }
 
         if type == .screen {
             guard let videoInput, Self.isCompleteFrame(sampleBuffer) else { return }

@@ -12,9 +12,10 @@ final class PinController: NSObject {
             visible.width * 0.5 / max(image.size.width, 1),
             visible.height * 0.5 / max(image.size.height, 1)
         )
+        // La misma escala en ambos lados: una captura delgada no se deforma.
         let size = CGSize(
-            width: max((image.size.width * ratio).rounded(), 80),
-            height: max((image.size.height * ratio).rounded(), 60)
+            width: max((image.size.width * ratio).rounded(), 1),
+            height: max((image.size.height * ratio).rounded(), 1)
         )
         // Cada nueva se corre un poco para que no tape exacto a la anterior.
         let offset = CGFloat(panels.count % 6) * 24

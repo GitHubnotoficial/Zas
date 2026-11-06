@@ -23,14 +23,17 @@ fi
 bash compilar.sh
 
 echo "Instalando en /Applications..."
-pkill -x "$APP_NAME" 2>/dev/null || true
-sleep 0.5
+# Cierre ordenado: si estaba grabando, el video termina bien.
+osascript -e "quit app \"$APP_NAME\"" >/dev/null 2>&1 || true
+sleep 1
+cp -R "build/$APP_NAME.app" "/Applications/.$APP_NAME-nuevo.app"
 rm -rf "/Applications/$APP_NAME.app"
-cp -R "build/$APP_NAME.app" "/Applications/$APP_NAME.app"
+mv "/Applications/.$APP_NAME-nuevo.app" "/Applications/$APP_NAME.app"
 
-# Cada compilación cambia la firma, y macOS deja de reconocer el permiso anterior.
-# Se borra para que no quede un permiso activado que en realidad no funciona.
+# Cada compilación local cambia la firma, y macOS deja de reconocer los permisos anteriores.
+# Se borran para que no quede un permiso activado que en realidad no funciona.
 tccutil reset ScreenCapture "$BUNDLE_ID" >/dev/null 2>&1 || true
+tccutil reset Microphone "$BUNDLE_ID" >/dev/null 2>&1 || true
 
 open "/Applications/$APP_NAME.app"
 

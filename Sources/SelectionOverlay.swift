@@ -338,6 +338,15 @@ private final class OverlayView: NSView {
         }
     }
 
+    /// Respaldo por si otra app tiene ocupado el Esc como atajo global.
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == UInt16(kVK_Escape) {
+            owner?.finish(nil)
+        } else {
+            super.keyDown(with: event)
+        }
+    }
+
     private var selectionRect: CGRect? {
         guard let startPoint, let currentPoint else { return nil }
         return CGRect(

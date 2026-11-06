@@ -133,7 +133,13 @@ final class AnnotationCanvas: NSView {
     }
 
     @objc func undo(_ sender: Any?) {
-        commitText()
+        // Con texto a medio escribir, deshacer solo descarta ese texto.
+        if let field = textField {
+            textField = nil
+            field.removeFromSuperview()
+            window?.makeFirstResponder(self)
+            return
+        }
         guard let previous = undoStack.popLast() else { return }
         redoStack.append(document)
         document = previous
@@ -351,7 +357,6 @@ final class AnnotationCanvas: NSView {
 
     @objc private func textEntered() {
         commitText()
-        window?.makeFirstResponder(self)
     }
 
     func commitText() {
@@ -359,6 +364,8 @@ final class AnnotationCanvas: NSView {
         textField = nil
         let text = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         field.removeFromSuperview()
+        // Devuelve el teclado al lienzo: si no, ⌘Z, Supr y las teclas de herramienta dejan de responder.
+        window?.makeFirstResponder(self)
         if !text.isEmpty {
             add(Annotation(tool: .text, color: color, lineWidth: lineWidth, points: [textPoint], text: text))
         }

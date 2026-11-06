@@ -4,6 +4,9 @@ import SwiftUI
 
 /// Captura un atajo nuevo: al hacer clic escucha la siguiente combinación de teclas.
 final class ShortcutRecorderButton: NSButton {
+    /// Mientras se elige un atajo, los globales se apagan: si no, se comerían la combinación.
+    static var onRecordingChanged: ((Bool) -> Void)?
+
     var onChange: ((Shortcut) -> Void)?
 
     var shortcut: Shortcut {
@@ -31,11 +34,25 @@ final class ShortcutRecorderButton: NSButton {
 
     @objc private func beginRecording() {
         guard monitor == nil else { return }
+        ShortcutRecorderButton.onRecordingChanged?(true)
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            self?.handle(event)
+            guard let self else { return event }
+            // Una tecla en otra ventana cancela: no debe convertirse en atajo.
+            guard event.window === self.window else {
+                self.stopRecording()
+                return event
+            }
+            self.handle(event)
             return nil
         }
         refreshTitle()
+    }
+
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        super.viewWillMove(toWindow: newWindow)
+        if newWindow == nil {
+            stopRecording()
+        }
     }
 
     private func handle(_ event: NSEvent) {
@@ -55,11 +72,11 @@ final class ShortcutRecorderButton: NSButton {
     }
 
     private func stopRecording() {
-        if let monitor {
-            NSEvent.removeMonitor(monitor)
-        }
-        monitor = nil
+        guard let monitor else { return }
+        NSEvent.removeMonitor(monitor)
+        self.monitor = nil
         refreshTitle()
+        ShortcutRecorderButton.onRecordingChanged?(false)
     }
 }
 
@@ -114,9 +131,16 @@ private struct SettingsView: View {
 
             Section("Atajos") {
                 ForEach(HotKeyAction.allCases, id: \.self) { action in
-                    LabeledContent(action.title) {
-                        ShortcutField(action: action, settings: settings)
-                            .frame(width: 130, height: 24)
+                    VStack(alignment: .leading, spacing: 4) {
+                        LabeledContent(action.title) {
+                            ShortcutField(action: action, settings: settings)
+                                .frame(width: 130, height: 24)
+                        }
+                        if settings.conflicts.contains(action) {
+                            Text("Este atajo ya lo usa otra app o acción. Elige otro.")
+                                .font(.footnote)
+                                .foregroundStyle(.orange)
+                        }
                     }
                 }
                 HStack {

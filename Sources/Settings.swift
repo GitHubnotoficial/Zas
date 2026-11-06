@@ -134,6 +134,9 @@ final class Settings: ObservableObject {
         }
     }
 
+    /// Atajos que macOS no aceptó, porque otra app o acción ya los usa.
+    @Published var conflicts: Set<HotKeyAction> = []
+
     var welcomed: Bool {
         get { defaults.bool(forKey: Key.welcomed) }
         set { defaults.set(newValue, forKey: Key.welcomed) }

@@ -17,7 +17,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var editors: [AnnotationEditor] = []
 
     private var hotKeyIDs: [UInt32] = []
-    private var conflictingShortcuts: [HotKeyAction] = []
+    private var captureInFlight = false
 
     private var recorder: ScreenRecorder?
     private var isStopping = false
@@ -46,6 +46,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.registerHotKeys()
             }
 
+        ShortcutRecorderButton.onRecordingChanged = { [weak self] recording in
+            if recording {
+                self?.unregisterHotKeys()
+            } else {
+                self?.registerHotKeys()
+            }
+        }
+
         _ = Capture.folder
 
         let hasPermission = CGPreflightScreenCaptureAccess()
@@ -57,6 +65,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if hasPermission {
             Settings.shared.welcomed = true
         }
+    }
+
+    /// Si se cierra la app mientras graba, primero termina el video: si no, quedaría inservible.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let recorder else { return .terminateNow }
+
+        let alreadyStopping = isStopping
+        isStopping = true
+        hideRecordingUI()
+        Task { @MainActor in
+            if alreadyStopping {
+                while self.recorder != nil {
+                    try? await Task.sleep(nanoseconds: 50_000_000)
+                }
+            } else {
+                _ = await recorder.stop()
+            }
+            NSApp.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
     }
 
     // MARK: - Menús
@@ -132,10 +160,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return item
     }
 
-    private func registerHotKeys() {
+    private func unregisterHotKeys() {
         hotKeyIDs.forEach { HotKeys.shared.unregister($0) }
         hotKeyIDs.removeAll()
-        conflictingShortcuts.removeAll()
+    }
+
+    private func registerHotKeys() {
+        unregisterHotKeys()
+        var conflicts: Set<HotKeyAction> = []
 
         for action in HotKeyAction.allCases {
             let shortcut = Settings.shared.shortcut(for: action)
@@ -145,12 +177,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if let id {
                 hotKeyIDs.append(id)
             } else {
-                conflictingShortcuts.append(action)
+                conflicts.insert(action)
             }
 
             actionItems[action]?.keyEquivalent = shortcut.menuKeyEquivalent
             actionItems[action]?.keyEquivalentModifierMask = shortcut.menuModifiers
         }
+        Settings.shared.conflicts = conflicts
     }
 
     private func perform(_ action: HotKeyAction) {
@@ -250,10 +283,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func canStartCapture() -> Bool {
-        !overlay.isActive && recorder == nil
+        !overlay.isActive && recorder == nil && !captureInFlight
     }
 
     private func snap(_ selection: Selection) {
+        captureInFlight = true
         let arguments = selection.captureArguments
         // Pausa corta para que las ventanas de Zas ya no salgan en la imagen.
         Task { @MainActor in
@@ -266,6 +300,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let url = Capture.newFileURL(extension: "png")
         Capture.run(arguments: arguments, to: url) { [weak self] succeeded in
             guard let self else { return }
+            self.captureInFlight = false
             self.thumbnail.resume()
             guard succeeded else {
                 self.showError("No se pudo capturar", "macOS no entregó la imagen. Inténtalo de nuevo.")
@@ -278,12 +313,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func readText(_ selection: Selection) {
+        captureInFlight = true
         let arguments = selection.captureArguments
         let url = Capture.temporaryFileURL()
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 120_000_000)
             Capture.run(arguments: arguments, to: url) { [weak self] succeeded in
                 guard succeeded else {
+                    self?.captureInFlight = false
                     self?.thumbnail.resume()
                     return
                 }
@@ -295,6 +332,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func finishText(_ text: String, imageURL: URL) {
+        captureInFlight = false
         thumbnail.resume()
         guard !text.isEmpty else {
             showError("No encontré texto", "Prueba seleccionando un área con letras más grandes o más claras.")
@@ -330,7 +368,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             stopRecording()
             return
         }
-        guard !overlay.isActive, ensurePermission() else { return }
+        guard canStartCapture(), ensurePermission() else { return }
         thumbnail.suspend()
         overlay.begin(mode: .recording) { [weak self] selection in
             guard let self else { return }
@@ -389,6 +427,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.thumbnail.resume()
             if let url {
                 self.finishVideo(url)
+                if recorder.microphoneDenied {
+                    self.showError(
+                        "El video quedó sin voz",
+                        "macOS no dio acceso al micrófono. Actívalo en Ajustes del Sistema, Privacidad y seguridad, Micrófono."
+                    )
+                }
             } else {
                 self.showError("No se pudo guardar el video", "La grabación no generó ningún archivo.")
             }

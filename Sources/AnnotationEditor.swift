@@ -112,6 +112,7 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
     let canvas: AnnotationCanvas
     private let window: NSWindow
     private let previousApp = NSWorkspace.shared.frontmostApplication
+    private let targetScreen: NSScreen
 
     private var toolButtons: [AnnotationTool: ToolButton] = [:]
     private var colorButtons: [DotButton] = []
@@ -129,7 +130,9 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
         let minimumWidth: CGFloat = 860
         let minimumHeight: CGFloat = 320
 
-        let visible = NSScreen.underMouse.visibleFrame.insetBy(dx: 40, dy: 30)
+        let screen = NSScreen.underMouse
+        targetScreen = screen
+        let visible = screen.visibleFrame.insetBy(dx: 40, dy: 30)
         let fit = min(
             1,
             (visible.width - padding * 2) / max(image.size.width, 1),
@@ -284,7 +287,13 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
     }
 
     func show() {
-        window.center()
+        // Se abre en la pantalla de la captura, que puede no ser la principal.
+        let visible = targetScreen.visibleFrame
+        let size = window.frame.size
+        window.setFrameOrigin(NSPoint(
+            x: (visible.midX - size.width / 2).rounded(),
+            y: (visible.midY - size.height / 2).rounded()
+        ))
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
         window.makeFirstResponder(canvas)
@@ -298,16 +307,19 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
     private func select(tool: AnnotationTool) {
         canvas.commitText()
 
+        // Cambiar de herramienta suelta la selección: si no, el color iría a esa marca.
+        let previousTool = canvas.tool
+        canvas.tool = tool
+
         // El resaltador empieza en amarillo y al salir vuelve el color anterior.
-        if tool == .highlight, canvas.tool != .highlight {
+        if tool == .highlight, previousTool != .highlight {
             colorBeforeHighlight = colorButtons.firstIndex { $0.isActive }
             selectColor(index: 1)
-        } else if tool != .highlight, canvas.tool == .highlight, let previous = colorBeforeHighlight {
+        } else if tool != .highlight, previousTool == .highlight, let previous = colorBeforeHighlight {
             selectColor(index: previous)
             colorBeforeHighlight = nil
         }
 
-        canvas.tool = tool
         for (candidate, button) in toolButtons {
             button.isActive = candidate == tool
         }
@@ -358,11 +370,12 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
         else { return }
 
         window.close()
-        previousApp?.activate(options: [])
         onFinish?(copied, output)
     }
 
     func windowWillClose(_ notification: Notification) {
+        // Devuelve el foco a la app donde se estaba trabajando, se copie o no.
+        previousApp?.activate(options: [])
         onClose?()
     }
 

@@ -100,7 +100,10 @@ final class ThumbnailController {
             panel.invalidateShadow()
         }
         layoutItems()
-        startTimer(item)
+        // Mientras está escondida no corre el tiempo: se cuenta desde que se vuelva a ver.
+        if !isSuspended {
+            startTimer(item)
+        }
     }
 
     /// Esconde la pila para que no salga en una captura.
@@ -118,7 +121,9 @@ final class ThumbnailController {
         isSuspended = false
         for item in items {
             item.panel.orderFrontRegardless()
-            startTimer(item)
+            if !item.view.isHovering {
+                startTimer(item)
+            }
         }
         layoutItems()
     }
@@ -237,6 +242,7 @@ private final class ThumbnailView: NSView, NSDraggingSource {
     private let kind: ThumbnailKind
 
     private var hovering = false
+    var isHovering: Bool { hovering }
     private var mouseDownPoint: NSPoint?
     private var dragged = false
     private var trackingArea: NSTrackingArea?

@@ -5,6 +5,9 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   macos:
     runs-on: macos-15
@@ -78,11 +81,6 @@ jobs:
             sudo sqlite3 "$DB" "INSERT OR REPLACE INTO access (service,client,client_type,auth_value,auth_reason,auth_version,flags,last_modified) VALUES ('$SERVICE','$PWD/build/ZasConductor',1,2,4,1,0,$NOW);"
           done
           sudo sqlite3 "$USERDB" "INSERT OR REPLACE INTO access (service,client,client_type,auth_value,auth_reason,auth_version,flags,last_modified) VALUES ('kTCCServicePostEvent','$PWD/build/ZasConductor',1,2,4,1,0,$NOW);" || true
-          # macOS 15 pregunta con un aviso propio: aquí se da por aceptado para que no tape la app.
-          APPROVALS="$HOME/Library/Group Containers/group.com.apple.replayd/ScreenCaptureApprovals.plist"
-          mkdir -p "$(dirname "$APPROVALS")"
-          defaults write "$APPROVALS" local.zas.app -date "2100-01-01 00:00:00 +0000"
-          killall replayd || true
           defaults write local.zas.app welcomed -bool true
           open /Applications/Zas.app
           sleep 4
@@ -92,6 +90,28 @@ jobs:
         run: |
           ditto -c -k --keepParent build/Zas.app build/Zas-app.zip
           lipo -info build/Zas.app/Contents/MacOS/Zas
+
+      # Solo se llega aquí si la compilación y todas las pruebas pasaron.
+      - name: Publicar
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="$(grep '^VERSION=' compilar.sh | cut -d'"' -f2)"
+          cp build/Zas-app.zip build/Zas.zip
+          if ! gh release view "v$VERSION" > /dev/null 2>&1; then
+            gh release create "v$VERSION" --title "Zas $VERSION" --latest --notes "Capturas y video para Mac. Instrucciones en el LEEME."
+          fi
+          gh release upload "v$VERSION" build/Zas.zip --clobber
+
+      - name: El instalador de un comando funciona
+        run: |
+          pkill -x Zas || true
+          rm -rf /Applications/Zas.app
+          curl -fsSL "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${GITHUB_SHA}/instalar-rapido.sh" | bash
+          sleep 5
+          pgrep -xl Zas
+          codesign --display --requirements - /Applications/Zas.app
+          xattr /Applications/Zas.app
 
       - uses: actions/upload-artifact@v4
         if: always()
