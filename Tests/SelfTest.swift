@@ -588,7 +588,6 @@ enum SelfTest {
         let copyPill = CGPoint(x: cardCenter.x, y: cardCenter.y + 15)
         check(!thumbs.testHitsButton(index: 0, at: copyPill), "en reposo, un clic en el centro es de la tarjeta")
         thumbs.simulateHover(index: 0)
-        await wait(0.4)
         check(thumbs.testHitsButton(index: 0, at: copyPill), "con el cursor encima, el centro es la píldora Copiar")
         check(!thumbs.testHitsButton(index: 0, at: CGPoint(x: 16, y: 70)), "fuera de los botones, el clic sigue siendo de la tarjeta")
         check(thumbs.testHitsButton(index: 0, at: CGPoint(x: 18, y: 122)), "arriba a la izquierda hay un círculo")
