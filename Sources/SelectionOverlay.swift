@@ -81,9 +81,17 @@ struct Selection {
     let screen: NSScreen
     let rect: CGRect
     var windowID: CGWindowID?
+    /// Tamaño completo de la ventana: `rect` solo cubre la parte que cabe en esta pantalla.
+    var windowSize: CGSize?
 
     static func fullScreen(_ screen: NSScreen) -> Selection {
         Selection(screen: screen, rect: CGRect(origin: .zero, size: screen.frame.size))
+    }
+
+    /// Tamaño real de la captura en puntos. No se deduce del archivo:
+    /// `screencapture` no siempre anota la densidad de una pantalla Retina.
+    var imagePointSize: CGSize {
+        windowSize ?? rect.size
     }
 
     var isFullScreen: Bool {
@@ -325,7 +333,12 @@ private final class OverlayView: NSView {
         if let rect, rect.width >= 4, rect.height >= 4 {
             selection = Selection(screen: screen, rect: rect.integral)
         } else if let hoveredWindow, let hoveredRect {
-            selection = Selection(screen: screen, rect: hoveredRect.integral, windowID: hoveredWindow.id)
+            selection = Selection(
+                screen: screen,
+                rect: hoveredRect.integral,
+                windowID: hoveredWindow.id,
+                windowSize: hoveredWindow.frame.size
+            )
         } else {
             // Clic en el escritorio: toda la pantalla.
             selection = .fullScreen(screen)

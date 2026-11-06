@@ -64,7 +64,6 @@ jobs:
 
       # La segunda pantalla usa una API privada de macOS solo aquí, nunca en la app.
       - name: Probar con una pantalla Retina extra
-        continue-on-error: true
         run: |
           clang -fobjc-arc -framework Foundation -framework CoreGraphics -o build/PantallaVirtual Tests/PantallaVirtual/main.m
           ./build/PantallaVirtual > build/pantalla.log 2>&1 &
@@ -102,6 +101,24 @@ jobs:
           open /Applications/Zas.app
           sleep 4
           ./build/ZasConductor "$PWD/escenas"
+
+      - name: Usar la app de verdad en Retina
+        continue-on-error: true
+        run: |
+          pkill -x Calculator || true
+          ./build/PantallaVirtual --principal > build/principal.log 2>&1 &
+          PANTALLA=$!
+          sleep 7
+          cat build/principal.log
+          mkdir -p escenas/retina
+          open /Applications/Zas.app
+          sleep 4
+          STATUS=0
+          ./build/ZasConductor "$PWD/escenas/retina" || STATUS=$?
+          pkill -x Zas || true
+          kill $PANTALLA
+          sleep 3
+          exit $STATUS
 
       - name: Empaquetar
         run: |

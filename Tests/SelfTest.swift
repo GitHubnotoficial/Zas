@@ -346,20 +346,24 @@ enum SelfTest {
             let corner = rep?.colorAt(x: 3, y: 3)?.usingColorSpace(.sRGB)
             check((center?.greenComponent ?? 0) > 0.7 && (corner?.greenComponent ?? 0) > 0.7, "\(name): la región es el sitio correcto")
 
-            let image = Capture.copyImage(at: file)
+            let image = Capture.copyImage(at: file, pointSize: selection.imagePointSize)
             check(image?.size == CGSize(width: 160, height: 90), "\(name): la imagen pega a su tamaño real (\(image?.size ?? .zero))")
+            let reread = (try? Data(contentsOf: file)).flatMap { NSBitmapImageRep(data: $0) }
+            check(reread?.size == CGSize(width: 160, height: 90) && reread?.pixelsWide == Int(160 * scale), "\(name): el archivo guarda la densidad correcta")
 
             // Ventana por identificador.
             WindowFinder.includesOwnWindows = true
             let target = NSWindow(contentRect: CGRect(x: screen.frame.minX + 300, y: screen.frame.minY + 200, width: 400, height: 260), styleMask: [.titled], backing: .buffered, defer: false)
             target.isReleasedWhenClosed = false
             target.orderFrontRegardless()
+            target.display()
             await wait(0.5)
+            print("\(name): ventana a escala \(target.backingScaleFactor)")
             if let found = WindowFinder.onScreenWindows().first(where: { $0.id == CGWindowID(target.windowNumber) }) {
                 let url = Capture.temporaryFileURL()
                 _ = await capture(Selection(screen: screen, rect: .zero, windowID: found.id).captureArguments, to: url)
                 let windowRep = (try? Data(contentsOf: url)).flatMap { NSBitmapImageRep(data: $0) }
-                check(windowRep?.pixelsWide == Int(found.frame.width * scale), "\(name): la ventana tiene todos los pixeles (\(windowRep?.pixelsWide ?? 0))")
+                check(windowRep?.pixelsWide == Int(found.frame.width * target.backingScaleFactor), "\(name): la ventana tiene todos los pixeles (\(windowRep?.pixelsWide ?? 0))")
             } else {
                 check(false, "\(name): encuentra la ventana")
             }

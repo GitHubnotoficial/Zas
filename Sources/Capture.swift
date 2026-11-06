@@ -115,10 +115,19 @@ enum Capture {
     }
 
     /// Copia la imagen como PNG, y como TIFF para las apps que lo piden.
-    static func copyImage(at url: URL) -> NSImage? {
-        guard let data = try? Data(contentsOf: url), let image = NSImage(data: data) else {
-            return nil
+    /// Con `pointSize`, corrige la densidad del archivo si no coincide:
+    /// de lo contrario una captura Retina se vería al doble de su tamaño.
+    static func copyImage(at url: URL, pointSize: CGSize? = nil) -> NSImage? {
+        guard var data = try? Data(contentsOf: url) else { return nil }
+        if let pointSize, let rep = NSBitmapImageRep(data: data),
+           abs(rep.size.width - pointSize.width) > 0.5 || abs(rep.size.height - pointSize.height) > 0.5 {
+            rep.size = pointSize
+            if let fixed = rep.representation(using: .png, properties: [:]) {
+                data = fixed
+                try? data.write(to: url)
+            }
         }
+        guard let image = NSImage(data: data) else { return nil }
         let item = NSPasteboardItem()
         item.setData(data, forType: .png)
         let provider = TIFFProvider(png: data)

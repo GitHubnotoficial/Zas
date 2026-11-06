@@ -337,14 +337,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func snap(_ selection: Selection) {
         captureInFlight = true
         let arguments = selection.captureArguments
+        let pointSize = selection.imagePointSize
         // Pausa corta para que las ventanas de Zas ya no salgan en la imagen.
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 120_000_000)
-            self.takeScreenshot(arguments: arguments)
+            self.takeScreenshot(arguments: arguments, pointSize: pointSize)
         }
     }
 
-    private func takeScreenshot(arguments: [String]) {
+    private func takeScreenshot(arguments: [String], pointSize: CGSize) {
         let url = Capture.newFileURL(extension: "png")
         Capture.run(arguments: arguments, to: url) { [weak self] succeeded in
             guard let self else { return }
@@ -354,7 +355,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.showError("No se pudo capturar", "macOS no entregó la imagen. Inténtalo de nuevo.")
                 return
             }
-            guard let image = Capture.copyImage(at: url) else {
+            guard let image = Capture.copyImage(at: url, pointSize: pointSize) else {
                 self.showError("No se pudo copiar", "macOS entregó un archivo que no se puede leer. Inténtalo de nuevo.")
                 return
             }

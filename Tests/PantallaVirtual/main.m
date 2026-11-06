@@ -1,6 +1,6 @@
 // Crea una segunda pantalla Retina en el Mac de pruebas, que no tiene monitor físico.
 // Usa una API privada de macOS, por eso vive aquí y nunca entra en la app que se instala.
-// Sigue viva hasta que se cierre el proceso.
+// Sigue viva hasta que se cierre el proceso. Con "--principal" pasa a ser la pantalla principal.
 #import <CoreGraphics/CoreGraphics.h>
 #import <Foundation/Foundation.h>
 
@@ -32,6 +32,16 @@
 
 static CGVirtualDisplay *display;
 
+static void makePrimary(CGDirectDisplayID displayID) {
+    CGDisplayConfigRef config;
+    CGBeginDisplayConfiguration(&config);
+    CGConfigureDisplayOrigin(config, displayID, 0, 0);
+    CGError error = CGCompleteDisplayConfiguration(config, kCGConfigureForSession);
+    printf("pantalla principal: error %d, ahora %u
+", error, CGMainDisplayID());
+    fflush(stdout);
+}
+
 static void chooseRetinaMode(CGDirectDisplayID displayID) {
     NSDictionary *options = @{(__bridge NSString *)kCGDisplayShowDuplicateLowResolutionModes: @YES};
     CFArrayRef modes = CGDisplayCopyAllDisplayModes(displayID, (__bridge CFDictionaryRef)options);
@@ -55,7 +65,7 @@ static void chooseRetinaMode(CGDirectDisplayID displayID) {
     fflush(stdout);
 }
 
-int main(void) {
+int main(int argc, char *argv[]) {
     @autoreleasepool {
         Class descriptorClass = NSClassFromString(@"CGVirtualDisplayDescriptor");
         Class displayClass = NSClassFromString(@"CGVirtualDisplay");
@@ -95,6 +105,9 @@ int main(void) {
 
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
             chooseRetinaMode(displayID);
+            if (argc > 1 && strcmp(argv[1], "--principal") == 0) {
+                makePrimary(displayID);
+            }
         });
         dispatch_main();
     }

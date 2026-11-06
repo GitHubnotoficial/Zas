@@ -188,9 +188,11 @@ private struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 480)
-        .fixedSize(horizontal: false, vertical: true)
+        // En pantallas pequeñas el formulario se desplaza en vez de salirse por abajo.
+        .frame(width: 480, height: min(Self.idealHeight, NSScreen.underMouse.visibleFrame.height - 24))
     }
+
+    private static let idealHeight: CGFloat = 836
 
     private static let updateCommand =
         "curl -fsSL https://raw.githubusercontent.com/GitHubnotoficial/Zas/main/instalar-rapido.sh | bash"
