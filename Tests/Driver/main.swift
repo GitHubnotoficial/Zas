@@ -92,14 +92,17 @@ func files(_ ext: String) -> Set<String> {
 func newFile(_ ext: String, timeout: Double = 4, _ action: () -> Void) -> URL? {
     let before = files(ext)
     action()
-    let limit = Date().addingTimeInterval(timeout)
+    let started = Date()
+    let limit = started.addingTimeInterval(timeout)
     while Date() < limit {
         if let name = files(ext).subtracting(before).first {
+            print(String(format: "tiempo: %@ apareció en %.2f s", name, Date().timeIntervalSince(started)))
             wait(0.3)
             return folder.appendingPathComponent(name)
         }
         wait(0.1)
     }
+    print(String(format: "tiempo: nada nuevo tras %.1f s", timeout))
     return nil
 }
 
@@ -315,7 +318,7 @@ if let calculator {
 // 6. Pantalla completa.
 moveMouse(to: CGPoint(x: 300, y: 300))
 wait(0.3)
-let full = newFile("png") {
+let full = newFile("png", timeout: 12) {
     hotKey(kVK_ANSI_1)
 }
 if let size = pixelSize(full) {
