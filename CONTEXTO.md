@@ -45,12 +45,21 @@ Trampas conocidas:
 - Al aplicar parches con Node, un fallo a medias deja archivos cambiados: haz `git checkout -- .` y vuelve a aplicar.
 - Antes de enviar un HTML, cárgalo de verdad. `node --check` no basta si no lo ejecutas.
 
-## Diseño: dirección A "Cristal" (elegida por el dueño)
+## Diseño 1.1 "Estudio" (pedido del dueño: tomar el diseño de CleanShot al detalle)
+
+Manda sobre lo anterior donde choquen. Se copia estructura y comportamiento, nunca marca, nombre, iconos propios, textos, imágenes ni degradados exactos.
+
+- Editor: una barra de 44 pt en la fila de los semáforos, sin fila de opciones; sus ajustes viven en popovers de color, grosor y tipo de línea. Barra inferior con zoom, deshacer, rehacer, texto, "Arrástrame", Compartir, Fijar, Copiar y Copiar ruta. Panel Fondo a la izquierda, no destructivo, guardado como receta `Backdrop` en el documento y en `.zas`.
+- Tarjetas: abajo a la izquierda por defecto (ajuste `thumbnailsOnLeft`), sin borde, la imagen llena. Al pasar el cursor: la propia captura difuminada, píldoras Copiar y Guardar, y cuatro círculos en las esquinas. Si es muy alta o muy ancha recorta antes que dejar bandas.
+- Historial: franja de vidrio oscuro a todo el ancho, filtros en píldoras, carrusel con anillo azul y píldora Abrir. Clic en una lateral la centra; clic en la central abre.
+- Se añadió QR al leer texto (el texto seleccionable del editor no lee QR), y ocultar iconos del escritorio, que nunca se guarda: Zas siempre abre con iconos visibles. Desplazamiento con Cancelar, Listo y vista previa.
+
+## Diseño base: dirección A "Cristal" (elegida por el dueño)
 
 - Vidrio del sistema (`GlassView`) solo en lo que flota sobre el contenido; nunca vidrio sobre vidrio.
 - Acento: el del sistema. El amarillo es del rayo del logo. Rojo solo para grabar.
 - Esquinas continuas (`cornerCurve = .continuous`). Radios: tarjeta 14, control 10. Margen 18, separación 10 (`Design` en `Sources/Glass.swift`).
-- La captura manda: la interfaz aparece solo cuando hace falta. Cuatro acciones visibles como máximo; el resto en clic derecho.
+- La captura manda: la interfaz aparece solo cuando hace falta. En reposo nada tapa la captura; las acciones aparecen al pasar el cursor y el resto en clic derecho.
 - Física real: resorte con response 0.42 y damping 0.86 (`Spring`). La tarjeta nace donde se tomó la captura. Se descarta deslizando con dos dedos.
 - Sonido: el obturador del sistema.
 - La selección se dibuja con capas, sin redibujar todo.
@@ -86,7 +95,7 @@ Excepción decidida por el dueño: copiar rápido, guardar y ver la ruta se qued
 
 ## Estado
 
-Versión 1.0.0: última corrida completa en verde (132 internas, 28 de pantallas, 34 de uso real por tres ciclos). Sin avisos de compilación pendientes de revisar: las pruebas compilan con el mismo mínimo de macOS 13 que la app.
+Versión 1.1.0, diseño Estudio: última corrida completa en verde (241 internas, 28 de pantallas, 47 de uso real por tres ciclos), sin avisos de compilación. Las pruebas compilan con el mismo mínimo de macOS 13 que la app.
 
 Versión en `compilar.sh`. Hecho frente a CleanShot: área, ventana, pantalla, temporizador, desplazamiento, congelar con lupa, texto con Live Text, tarjetas, fijar, historial, editor completo (flecha, línea, cuadro, relleno, círculo, lápiz, resaltador, texto, números, censura y desenfoque, foco, borrador, recorte, rotar, voltear, tamaño, fondos, combinar imágenes, cuentagotas), video con micrófono, audio del Mac, FPS, cursor, resumen para Claude, GIF y recorte.
 
@@ -94,7 +103,9 @@ También hecho: clics, teclas y cámara dentro del video; proyectos editables `.
 
 No hecho, a propósito: nube (necesita servidor y cuentas), Studio Mode (editor de video completo), No molestar automático.
 
-Pendiente permanente: probar en un Mac físico, pegar de verdad en Claude Code, micrófono, audio del Mac con sonido real, teclas con permiso de Accesibilidad, cámara, gesto de trackpad y captura con desplazamiento sobre una app real.
+Trampas de la 1.1: una vista encima de la tarjeta debe dejar pasar los clics; el aviso de macOS se queda con el teclado hasta que se acepta; `syncHover` apaga el estado de cursor encima en las pruebas, porque el cursor real está fuera.
+
+Pendiente permanente: probar en un Mac físico, arrastrar "Arrástrame" a otra app, Compartir, ocultar iconos con un escritorio real, pegar de verdad en Claude Code, micrófono, audio del Mac con sonido real, teclas con permiso de Accesibilidad, cámara, gesto de trackpad y captura con desplazamiento sobre una app real.
 
 ## Herramientas fuera del repositorio
 

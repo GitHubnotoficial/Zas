@@ -56,10 +56,10 @@ Con **desplazamiento**, eliges un área y vas bajando por el contenido. Enter te
 ## Después de capturar
 
 - La imagen queda copiada: pégala con ⌘V.
-- Aparece una miniatura en la esquina. Las capturas seguidas se apilan, hasta cuatro.
+- Aparece una miniatura abajo a la izquierda; en **Ajustes** puedes pasarla a la derecha. Las capturas seguidas se apilan, hasta cuatro.
 - Arrastra una miniatura para soltar el archivo en otra app.
 - Desliza con dos dedos hacia el borde para descartarla.
-- Si ya se cerró, búscala en **Recientes** o en **Ver historial…**, en el menú de Zas.
+- Si ya se cerró, búscala en **Recientes** o en el **Historial**, en el menú de Zas: un carrusel con filtros que se usa con las flechas, Enter para abrir y Esc para cerrar.
 - Con clic derecho en un video puedes recortarlo o crear un GIF.
 - Pasa el cursor por encima para copiarla otra vez, copiar su ruta, anotar o fijar en pantalla. Con clic derecho, verla en Finder. "Copiado" marca la que está en el portapapeles.
 - El archivo queda guardado en `Imágenes/Zas`, o en la carpeta que elijas en Ajustes. Si apagas **Guardar una copia de cada captura**, las imágenes se borran al cerrar Zas; los videos siempre se guardan.
@@ -67,6 +67,8 @@ Con **desplazamiento**, eliges un área y vas bajando por el contenido. Enter te
 ## Editor
 
 Haz clic en una miniatura para abrirlo. Enter copia el resultado y cierra.
+
+El botón **Fondo** abre un panel con degradados, imágenes, difuminado y colores, más margen, sombra y esquinas. El fondo no daña la captura: tus marcas siguen editables y puedes cambiarlo o quitarlo. **Arrástrame**, abajo, saca la imagen ya editada hacia cualquier app.
 
 | Tecla | Herramienta |
 | --- | --- |
@@ -83,7 +85,11 @@ Haz clic en una miniatura para abrirlo. Enter copia el resultado y cierra.
 | X | Pixelar |
 | C | Recortar |
 
-Lo que dibujas queda seleccionado: arrástralo para moverlo o usa sus esquinas para cambiarle el tamaño. Doble clic en un texto lo vuelve a editar. Censurar funciona con recuadro o con pincel, y pincel, borrador y resaltador muestran su tamaño a la vista. El punto de color abre la mini paleta: color, cualquier otro color y tamaño. ⌘+ y ⌘- hacen zoom, y también se puede pellizcar el trackpad. ⌘C copia sin cerrar, ⌘S guarda una copia y el botón de guardar deja reemplazar el original o guardar como. El botón de texto copia todo el texto y deja seleccionarlo sobre la imagen. ⌘Z deshace y ⇧⌘Z rehace. Mayúsculas alinea las flechas y hace cuadros y círculos perfectos. Supr borra la marca seleccionada. Esc cierra el editor y, si dibujaste algo, pregunta antes de perderlo.
+Lo que dibujas queda seleccionado: arrástralo para moverlo o usa sus esquinas para cambiarle el tamaño. Doble clic en un texto lo vuelve a editar. Censurar funciona con recuadro o con pincel, y pincel, borrador y resaltador muestran su tamaño a la vista. El punto de color abre la mini paleta: color, cualquier otro color y tamaño. ⌘+ y ⌘- hacen zoom, y también se puede pellizcar el trackpad. ⌘C copia sin cerrar, ⌘S guarda una copia y el botón de guardar deja reemplazar el original o guardar como. El botón de texto copia todo el texto y deja seleccionarlo sobre la imagen. ⇧⌘7 también lee códigos QR. ⌘Z deshace y ⇧⌘Z rehace. Mayúsculas alinea las flechas y hace cuadros y círculos perfectos. Supr borra la marca seleccionada. Esc cierra el editor y, si dibujaste algo, pregunta antes de perderlo.
+
+## Escritorio limpio
+
+En el menú de Zas puedes ocultar los iconos del escritorio mientras capturas. Vuelven al apagarlo o al cerrar Zas.
 
 ## Video
 
