@@ -142,6 +142,7 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
     private var zoomLabel: NSTextField?
     private var subBar: GlassView?
     private var liveText: LiveTextPane?
+    private var escapeMonitor: Any?
 
     private var penColor: NSColor = .systemRed
     private var markerColor = AnnotationEditor.markers[0].1
@@ -625,15 +626,28 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
         window.contentView?.addSubview(pane, positioned: .above, relativeTo: scrollView)
         liveText = pane
         textButton?.isActive = true
+        // Al seleccionar, el foco queda en la capa de Apple y Esc nunca llegaría al lienzo.
+        escapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard event.keyCode == 53 else { return event }
+            MainActor.assumeIsolated {
+                self?.closeTextMode()
+            }
+            return nil
+        }
         Task { @MainActor in
             _ = await pane.analyze()
         }
     }
 
     private func closeTextMode() {
+        if let escapeMonitor {
+            NSEvent.removeMonitor(escapeMonitor)
+            self.escapeMonitor = nil
+        }
         liveText?.removeFromSuperview()
         liveText = nil
         textButton?.isActive = false
+        window.makeFirstResponder(canvas)
     }
 
     /// Abre el editor ya listo para seleccionar texto.
