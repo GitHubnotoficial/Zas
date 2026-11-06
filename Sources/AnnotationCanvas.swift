@@ -127,17 +127,40 @@ final class AnnotationCanvas: NSView {
 
     private func applyToSelection(_ change: (inout Annotation) -> Void) {
         guard let selectedIndex, document.annotations.indices.contains(selectedIndex) else { return }
+        var updated = document
+        change(&updated.annotations[selectedIndex])
+        // Volver a pulsar el mismo color no debe ocupar un paso de deshacer.
+        guard updated != document else { return }
         pushUndo(document)
-        change(&document.annotations[selectedIndex])
+        document = updated
         needsDisplay = true
+    }
+
+    /// Hay algo que se perdería al cerrar sin copiar.
+    var hasUnsavedMarks: Bool {
+        if canUndo {
+            return true
+        }
+        let pending = textField?.stringValue.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return !pending.isEmpty
+    }
+
+    func cancelTextEntry() {
+        discardText()
+    }
+
+    private func discardText() {
+        guard let field = textField else { return }
+        textField = nil
+        field.abortEditing()
+        field.removeFromSuperview()
+        window?.makeFirstResponder(self)
     }
 
     @objc func undo(_ sender: Any?) {
         // Con texto a medio escribir, deshacer solo descarta ese texto.
-        if let field = textField {
-            textField = nil
-            field.removeFromSuperview()
-            window?.makeFirstResponder(self)
+        if textField != nil {
+            discardText()
             return
         }
         guard let previous = undoStack.popLast() else { return }
@@ -345,14 +368,23 @@ final class AnnotationCanvas: NSView {
         ))
         field.font = .systemFont(ofSize: fontSize, weight: .bold)
         field.textColor = color
+        // El texto blanco o amarillo no se leería sobre el fondo blanco del campo.
+        field.drawsBackground = true
+        field.backgroundColor = Self.isLight(color) ? NSColor(white: 0.15, alpha: 1) : .white
         field.placeholderString = "Escribe y pulsa Enter"
         field.isBordered = true
         field.focusRingType = .none
+        field.delegate = self
         field.target = self
         field.action = #selector(textEntered)
         addSubview(field)
         window?.makeFirstResponder(field)
         textField = field
+    }
+
+    private static func isLight(_ color: NSColor) -> Bool {
+        guard let rgb = color.usingColorSpace(.sRGB) else { return false }
+        return rgb.redComponent * 0.3 + rgb.greenComponent * 0.59 + rgb.blueComponent * 0.11 > 0.6
     }
 
     @objc private func textEntered() {
@@ -462,5 +494,14 @@ final class AnnotationCanvas: NSView {
         // Se asigna al final para no alterar la escala del dibujo de arriba.
         bitmap.size = content.size
         return bitmap.representation(using: .png, properties: [:])
+    }
+}
+
+extension AnnotationCanvas: NSTextFieldDelegate {
+    /// Esc mientras se escribe descarta ese texto, sin cerrar el editor.
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        guard commandSelector == #selector(NSResponder.cancelOperation(_:)) else { return false }
+        cancelTextEntry()
+        return true
     }
 }

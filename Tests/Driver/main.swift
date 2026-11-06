@@ -187,6 +187,7 @@ wait(0.6)
 let types = NSPasteboard.general.types ?? []
 check(types.contains(.png), "la captura queda en el portapapeles")
 check(NSPasteboard.general.data(forType: .png)?.count ?? 0 > 1000, "el portapapeles tiene la imagen")
+check(NSPasteboard.general.data(forType: .tiff)?.count ?? 0 > 1000, "el TIFF se genera cuando otra app lo pide")
 shot("e2e-02-miniatura")
 
 // 2. Miniatura: pasar el cursor y abrir el editor.
@@ -221,6 +222,14 @@ if let editorFrame {
     press(kVK_ANSI_Z, [.maskCommand, .maskShift])
     wait(0.3)
 
+    // Esc con marcas pregunta. Un segundo Esc sigue editando.
+    press(kVK_Escape)
+    wait(0.7)
+    shot("e2e-06b-confirmar-cierre")
+    press(kVK_Escape)
+    wait(0.6)
+    check(zasWindowCount(minimumWidth: 700) >= 1, "Esc con marcas no pierde el dibujo")
+
     let beforeCopy = NSPasteboard.general.changeCount
     let annotated = newFile("png") {
         press(kVK_Return)
@@ -254,6 +263,16 @@ let canceled = newFile("png", timeout: 1) {
 check(canceled == nil, "Esc cancela sin capturar")
 wait(0.4)
 check(zasWindowCount(minimumWidth: screen.frame.width - 1) == 0, "tras cancelar no queda la pantalla oscurecida")
+
+// Repetir el atajo también cancela.
+let toggled = newFile("png", timeout: 1) {
+    hotKey(kVK_ANSI_2)
+    wait(0.5)
+    hotKey(kVK_ANSI_2)
+}
+check(toggled == nil, "repetir el atajo cancela sin capturar")
+wait(0.4)
+check(zasWindowCount(minimumWidth: screen.frame.width - 1) == 0, "tras repetir el atajo no queda la pantalla oscurecida")
 
 // 5. Ventana: clic sobre la ventana ajena.
 if let calculator {
@@ -299,6 +318,10 @@ let video = newFile("mp4", timeout: 10) {
     drag(from: CGPoint(x: 120, y: 120), to: CGPoint(x: 620, y: 420))
     wait(1.5)
     shot("e2e-10-grabando")
+    hotKey(kVK_ANSI_2)
+    wait(0.5)
+    shot("e2e-10b-aviso-grabando")
+    check(zasWindowCount(minimumWidth: screen.frame.width - 1) == 0, "capturar mientras graba avisa y no abre la selección")
     for step in 0..<12 {
         moveMouse(to: CGPoint(x: 200 + step * 25, y: 250))
         wait(0.15)

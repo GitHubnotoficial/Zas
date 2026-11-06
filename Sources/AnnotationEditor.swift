@@ -362,22 +362,60 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
 
     @objc func copyAndClose() {
         canvas.commitText()
-        guard let data = canvas.exportPNG() else { return }
+        guard let data = canvas.exportPNG() else {
+            Toast.shared.show("No se pudo crear la imagen.")
+            return
+        }
 
-        let base = file.deletingPathExtension().lastPathComponent
-        var output = Capture.folder.appendingPathComponent("\(base) anotada.png")
+        let folder = Capture.imageFolder
+        let base = Self.baseName(of: file)
+        var output = folder.appendingPathComponent("\(base) anotada.png")
         var suffix = 2
         while FileManager.default.fileExists(atPath: output.path) {
-            output = Capture.folder.appendingPathComponent("\(base) anotada \(suffix).png")
+            output = folder.appendingPathComponent("\(base) anotada \(suffix).png")
             suffix += 1
         }
 
         guard (try? data.write(to: output)) != nil,
               let copied = Capture.copyImage(at: output)
-        else { return }
+        else {
+            Toast.shared.show("No se pudo guardar. Revisa la carpeta en Ajustes.")
+            return
+        }
 
         window.close()
         onFinish?(copied, output)
+    }
+
+    /// Nombre sin el " anotada" de una edición anterior, para no acumularlo.
+    static func baseName(of file: URL) -> String {
+        var base = file.deletingPathExtension().lastPathComponent
+        if let suffix = base.range(of: #" anotada( \d+)?$"#, options: .regularExpression) {
+            base.removeSubrange(suffix)
+        }
+        return base
+    }
+
+    /// Esc o la × no deben borrar sin preguntar lo que se acaba de dibujar.
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        guard canvas.hasUnsavedMarks else { return true }
+
+        let alert = NSAlert()
+        alert.messageText = "¿Cerrar sin copiar?"
+        alert.informativeText = "Lo que dibujaste en esta captura se perderá."
+        alert.addButton(withTitle: "Copiar y cerrar")
+        alert.addButton(withTitle: "Descartar")
+        alert.addButton(withTitle: "Seguir editando").keyEquivalent = "\u{1b}"
+        alert.beginSheetModal(for: window) { [weak self] response in
+            Task { @MainActor in
+                switch response {
+                case .alertFirstButtonReturn: self?.copyAndClose()
+                case .alertSecondButtonReturn: self?.window.close()
+                default: break
+                }
+            }
+        }
+        return false
     }
 
     func windowWillClose(_ notification: Notification) {

@@ -2,6 +2,7 @@ import AVFoundation
 import AppKit
 import Carbon
 import Combine
+import ServiceManagement
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -25,11 +26,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var recordingTimer: Timer?
     private var recordingBorder: NSPanel?
     private var imageGenerator: AVAssetImageGenerator?
+    private var recordingActivity: NSObjectProtocol?
+    private var permissionTimer: Timer?
+    private var terminationSignal: DispatchSourceSignal?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        Capture.clearScratch()
         buildMainMenu()
         buildStatusMenu()
         registerHotKeys()
+        listenForTermination()
+        enableLaunchAtLoginOnce()
 
         thumbnail.onAnnotate = { [weak self] image, file in
             self?.openEditor(image: image, file: file)
@@ -85,6 +92,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSApp.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        Capture.clearScratch()
+    }
+
+    /// El instalador cierra Zas con esta señal: así un video en curso termina bien
+    /// y macOS no le pide a Terminal permiso para controlar otra app.
+    private func listenForTermination() {
+        signal(SIGTERM, SIG_IGN)
+        let source = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+        source.setEventHandler {
+            MainActor.assumeIsolated {
+                NSApp.terminate(nil)
+            }
+        }
+        source.resume()
+        terminationSignal = source
+    }
+
+    /// Una app de barra de menú que no abre al encender deja los atajos muertos sin avisar.
+    private func enableLaunchAtLoginOnce() {
+        guard !Settings.shared.loginItemConfigured,
+              Bundle.main.bundlePath.hasSuffix("/Applications/Zas.app")
+        else { return }
+        Settings.shared.loginItemConfigured = true
+        do {
+            try SMAppService.mainApp.register()
+        } catch {
+            NSLog("Zas: no se pudo activar el inicio de sesión: %@", error.localizedDescription)
+        }
     }
 
     // MARK: - Menús
@@ -187,6 +225,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func perform(_ action: HotKeyAction) {
+        // Repetir el atajo con la selección abierta la cancela.
+        if overlay.isActive {
+            overlay.cancel()
+            return
+        }
         switch action {
         case .region: captureRegion()
         case .fullScreen: captureFullScreen()
@@ -283,7 +326,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func canStartCapture() -> Bool {
-        !overlay.isActive && recorder == nil && !captureInFlight
+        if recorder != nil {
+            let stop = Settings.shared.shortcut(for: .record).displayString
+            Toast.shared.show("Estás grabando. Detén con \(stop) para capturar.")
+            return false
+        }
+        return !overlay.isActive && !captureInFlight
     }
 
     private func snap(_ selection: Selection) {
@@ -306,7 +354,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.showError("No se pudo capturar", "macOS no entregó la imagen. Inténtalo de nuevo.")
                 return
             }
-            guard let image = Capture.copyImage(at: url) else { return }
+            guard let image = Capture.copyImage(at: url) else {
+                self.showError("No se pudo copiar", "macOS entregó un archivo que no se puede leer. Inténtalo de nuevo.")
+                return
+            }
             Capture.playSound()
             self.thumbnail.show(image: image, file: url, kind: .screenshot)
         }
@@ -322,6 +373,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 guard succeeded else {
                     self?.captureInFlight = false
                     self?.thumbnail.resume()
+                    Toast.shared.show("macOS no entregó la imagen. Inténtalo de nuevo.")
                     return
                 }
                 TextReader.read(from: url) { text in
@@ -334,14 +386,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func finishText(_ text: String, imageURL: URL) {
         captureInFlight = false
         thumbnail.resume()
+        // La imagen muestra lo que había en pantalla: no debe quedarse en disco.
+        let image = NSImage(contentsOf: imageURL)
+        try? FileManager.default.removeItem(at: imageURL)
+
         guard !text.isEmpty else {
-            showError("No encontré texto", "Prueba seleccionando un área con letras más grandes o más claras.")
+            Toast.shared.show("No encontré texto. Prueba con un área de letras más claras.")
             return
         }
         Capture.copyText(text)
         Capture.playSound()
-        if let image = NSImage(contentsOf: imageURL) {
-            thumbnail.show(image: image, file: imageURL, kind: .text)
+        if let image {
+            thumbnail.show(image: image, file: imageURL, kind: .text, text: text)
         }
     }
 
@@ -483,12 +539,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
+        // Una grabación larga no debe cortarse porque el Mac se duerma.
+        recordingActivity = ProcessInfo.processInfo.beginActivity(
+            options: [.userInitiated, .idleDisplaySleepDisabled],
+            reason: "Grabando la pantalla"
+        )
+
         if !selection.isFullScreen {
             showRecordingBorder(around: selection.appKitRect)
         }
+
+        // Zas queda excluida del video, así que este aviso no sale en la grabación.
+        let stop = Settings.shared.shortcut(for: .record).displayString
+        Toast.shared.show("Grabando. Detén con \(stop) o con el contador de la barra de menú.", seconds: 3.5)
     }
 
     private func hideRecordingUI() {
+        if let recordingActivity {
+            ProcessInfo.processInfo.endActivity(recordingActivity)
+            self.recordingActivity = nil
+        }
         recordingTimer?.invalidate()
         recordingTimer = nil
         recordingBorder?.orderOut(nil)
@@ -568,6 +638,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.relaunch()
             }
         )
+
+        // En cuanto el permiso se activa en Ajustes, Zas se reinicia sin tener que pedirlo.
+        permissionTimer?.invalidate()
+        permissionTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, CGPreflightScreenCaptureAccess() else { return }
+                self.permissionTimer?.invalidate()
+                self.permissionTimer = nil
+                self.relaunch()
+            }
+        }
     }
 
     private func relaunch() {

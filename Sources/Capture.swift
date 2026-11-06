@@ -1,13 +1,63 @@
 import AppKit
 
+/// Genera el TIFF solo si la app que pega lo pide: convertirlo siempre retrasaría cada captura
+/// y dejaría decenas de MB en el portapapeles. Casi todas las apps usan el PNG.
+private final class TIFFProvider: NSObject, NSPasteboardItemDataProvider {
+    private let png: Data
+
+    init(png: Data) {
+        self.png = png
+    }
+
+    func pasteboard(
+        _ pasteboard: NSPasteboard?,
+        item: NSPasteboardItem,
+        provideDataForType type: NSPasteboard.PasteboardType
+    ) {
+        if let tiff = NSImage(data: png)?.tiffRepresentation {
+            item.setData(tiff, forType: type)
+        }
+    }
+}
+
 /// Captura con la herramienta del sistema (`screencapture`) y maneja archivos y portapapeles.
 @MainActor
 enum Capture {
-    /// Carpeta del historial. Por defecto, Imágenes/Zas.
+    private static var tiffProvider: TIFFProvider?
+
+    /// Carpeta del historial. Si la elegida ya no sirve (un disco que se desconectó),
+    /// se usa la de siempre: perder la captura sería peor que guardarla en otro sitio.
     static var folder: URL {
-        let url = Settings.shared.saveFolder
+        let fileManager = FileManager.default
+        let chosen = Settings.shared.saveFolder
+        try? fileManager.createDirectory(at: chosen, withIntermediateDirectories: true)
+        if fileManager.isWritableFile(atPath: chosen.path) {
+            return chosen
+        }
+        let fallback = Settings.defaultFolder
+        try? fileManager.createDirectory(at: fallback, withIntermediateDirectories: true)
+        return fallback
+    }
+
+    /// Archivos de paso: se borran al abrir y al cerrar Zas.
+    static var scratchFolder: URL {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("Zas-capturas", isDirectory: true)
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
+    }
+
+    /// Dónde van las imágenes. Los videos siempre van a `folder`: tardan en hacerse
+    /// y se copian como archivo, así que deben seguir ahí al pegarlos.
+    static var imageFolder: URL {
+        Settings.shared.saveCaptures ? folder : scratchFolder
+    }
+
+    static func clearScratch() {
+        try? FileManager.default.removeItem(at: scratchFolder)
+    }
+
+    static func isScratch(_ url: URL) -> Bool {
+        url.standardizedFileURL.path.hasPrefix(scratchFolder.standardizedFileURL.path)
     }
 
     static func newFileURL(extension ext: String) -> URL {
@@ -15,19 +65,20 @@ enum Capture {
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyy-MM-dd HH.mm.ss"
         let base = "Zas \(formatter.string(from: Date()))"
+        let destination = ext == "mp4" ? folder : imageFolder
 
-        var url = folder.appendingPathComponent("\(base).\(ext)")
+        var url = destination.appendingPathComponent("\(base).\(ext)")
         var suffix = 2
         while FileManager.default.fileExists(atPath: url.path) {
-            url = folder.appendingPathComponent("\(base) \(suffix).\(ext)")
+            url = destination.appendingPathComponent("\(base) \(suffix).\(ext)")
             suffix += 1
         }
         return url
     }
 
-    /// Archivo temporal para capturas que no van al historial.
+    /// Archivo para capturas que no van al historial.
     static func temporaryFileURL() -> URL {
-        FileManager.default.temporaryDirectory
+        scratchFolder
             .appendingPathComponent(UUID().uuidString)
             .appendingPathExtension("png")
     }
@@ -63,16 +114,17 @@ enum Capture {
         }
     }
 
-    /// Copia la imagen como PNG y TIFF para que se pueda pegar en cualquier app.
+    /// Copia la imagen como PNG, y como TIFF para las apps que lo piden.
     static func copyImage(at url: URL) -> NSImage? {
         guard let data = try? Data(contentsOf: url), let image = NSImage(data: data) else {
             return nil
         }
         let item = NSPasteboardItem()
         item.setData(data, forType: .png)
-        if let tiff = image.tiffRepresentation {
-            item.setData(tiff, forType: .tiff)
-        }
+        let provider = TIFFProvider(png: data)
+        item.setDataProvider(provider, forTypes: [.tiff])
+        tiffProvider = provider
+
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.writeObjects([item])

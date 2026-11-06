@@ -58,8 +58,14 @@ enum SelfTest {
         Settings.shared.saveFolder = folder
         Settings.shared.playSound = false
 
+        if CommandLine.arguments.contains("--pantallas") {
+            await displayTests()
+            return
+        }
+
         logic()
         await canvasTests()
+        await polishTests()
         await systemTests()
         await recorderTest()
         await scenes()
@@ -224,6 +230,205 @@ enum SelfTest {
         pixelCanvas.add(Annotation(tool: .pixelate, color: .red, lineWidth: 5, points: [CGPoint(x: 220, y: 200), CGPoint(x: 400, y: 260)]))
         let pixelated = pixelCanvas.exportPNG()
         check(pixelated != nil && pixelated != plain, "pixelar cambia la imagen")
+    }
+
+    // MARK: - Defectos encontrados al usarla
+
+    private static func polishTests() async {
+        let edited = URL(fileURLWithPath: "/x/Zas 2026 anotada 2.png")
+        check(AnnotationEditor.baseName(of: edited) == "Zas 2026", "editar dos veces no acumula \"anotada\" en el nombre")
+        check(AnnotationEditor.baseName(of: URL(fileURLWithPath: "/x/Zas 2026.png")) == "Zas 2026", "el nombre original no cambia")
+
+        // Copiar sin guardar.
+        Settings.shared.saveCaptures = false
+        check(Capture.isScratch(Capture.newFileURL(extension: "png")), "sin guardar, la imagen va a un archivo temporal")
+        check(!Capture.isScratch(Capture.newFileURL(extension: "mp4")), "sin guardar, el video sí se conserva")
+        Settings.shared.saveCaptures = true
+        check(!Capture.isScratch(Capture.newFileURL(extension: "png")), "guardando, la imagen va a la carpeta")
+
+        // Carpeta que dejó de existir, como un disco desconectado.
+        let chosen = Settings.shared.saveFolder
+        Settings.shared.saveFolder = URL(fileURLWithPath: "/dev/null/zas", isDirectory: true)
+        check(Capture.folder == Settings.defaultFolder, "si la carpeta no sirve, se usa la de siempre")
+        Settings.shared.saveFolder = chosen
+
+        // Cerrar sin perder marcas.
+        let canvas = AnnotationCanvas(frame: CGRect(x: 0, y: 0, width: 300, height: 200), image: demoImage(width: 300, height: 200))
+        check(!canvas.hasUnsavedMarks, "un editor sin marcas cierra sin preguntar")
+        canvas.add(Annotation(tool: .arrow, color: .red, lineWidth: 5, points: [.zero, CGPoint(x: 50, y: 50)]))
+        check(canvas.hasUnsavedMarks, "con marcas, cerrar pregunta")
+        canvas.undo(nil)
+        check(!canvas.hasUnsavedMarks, "al deshacerlo todo ya no pregunta")
+
+        // Grabador de atajos: cambiar de ventana no debe dejar los atajos apagados.
+        var recordingChanges: [Bool] = []
+        let previous = ShortcutRecorderButton.onRecordingChanged
+        ShortcutRecorderButton.onRecordingChanged = { recordingChanges.append($0) }
+        let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 200, height: 80), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        let button = ShortcutRecorderButton(shortcut: HotKeyAction.region.defaultShortcut)
+        window.contentView?.addSubview(button)
+        button.performClick(nil)
+        NotificationCenter.default.post(name: NSWindow.didResignKeyNotification, object: window)
+        await wait(0.1)
+        check(recordingChanges == [true, false], "cambiar de ventana devuelve los atajos globales")
+        ShortcutRecorderButton.onRecordingChanged = previous
+
+        // Miniaturas. El cursor se deja lejos de la esquina.
+        CGWarpMouseCursorPosition(CGPoint(x: 300, y: 300))
+        await wait(0.2)
+        Settings.shared.thumbnailSeconds = 60
+        let file = pngFile(demoImage())
+        let thumbs = ThumbnailController()
+        thumbs.show(image: demoImage(), file: file, kind: .screenshot)
+        thumbs.show(image: demoImage(), file: file, kind: .screenshot)
+        await wait(0.4)
+        check(thumbs.testActionCount(index: 0) == 4, "la miniatura ofrece copiar, anotar, fijar y Finder")
+        check(thumbs.testBadge(index: 0) == "Copiado", "la última miniatura dice Copiado")
+        check(thumbs.testBadge(index: 1) == nil, "las anteriores no dicen Copiado, porque ya no lo están")
+
+        thumbs.testCopy(index: 1)
+        check(thumbs.testIsInClipboard(index: 1) && !thumbs.testIsInClipboard(index: 0), "copiar otra vez cambia cuál está copiada")
+        check(NSPasteboard.general.data(forType: .png) != nil, "copiar otra vez deja la imagen en el portapapeles")
+
+        thumbs.simulateLostExit(index: 0)
+        check(!thumbs.testHasTimer(index: 0), "la miniatura perdió el aviso de salida")
+        thumbs.testSyncHover()
+        check(!thumbs.testIsHovering(index: 0) && thumbs.testHasTimer(index: 0), "la miniatura se recupera y volverá a cerrarse sola")
+
+        thumbs.simulateHover(index: 1)
+        thumbs.suspend()
+        thumbs.resume()
+        check(!thumbs.testIsHovering(index: 1) && thumbs.testHasTimer(index: 1), "tras capturar otra vez no queda atascada")
+        thumbs.dismissAll()
+
+        Settings.shared.thumbnailSeconds = 0.4
+        thumbs.show(image: demoImage(), file: file, kind: .text, text: "hola de nuevo")
+        await wait(0.1)
+        NSPasteboard.general.clearContents()
+        thumbs.testCopy(index: 0)
+        check(NSPasteboard.general.string(forType: .string) == "hola de nuevo", "se puede volver a copiar un texto")
+        await wait(1)
+        check(thumbs.visibleCount == 0, "la miniatura se cierra sola")
+        Settings.shared.thumbnailSeconds = 6
+    }
+
+    // MARK: - Todas las pantallas
+
+    /// Repite lo esencial en cada pantalla conectada. En GitHub, la segunda es una Retina virtual.
+    private static func displayTests() async {
+        let screens = NSScreen.screens
+        for (index, screen) in screens.enumerated() {
+            print("pantalla \(index): \(screen.frame) escala \(screen.backingScaleFactor)")
+        }
+        check(screens.count >= 2, "hay más de una pantalla (\(screens.count))")
+        check(screens.contains { $0.backingScaleFactor == 2 }, "hay una pantalla Retina")
+
+        for (index, screen) in screens.enumerated() {
+            let name = "pantalla \(index) a \(Int(screen.backingScaleFactor))x"
+            let scale = screen.backingScaleFactor
+            let origin = screen.globalTopLeftOrigin
+            CGWarpMouseCursorPosition(CGPoint(x: origin.x + 40, y: origin.y + 300))
+            await wait(0.3)
+            check(NSScreen.underMouse == screen, "\(name): el cursor está en ella")
+
+            // Captura por región de algo que está en un sitio conocido.
+            let selection = Selection(screen: screen, rect: CGRect(x: 200, y: 150, width: 160, height: 90))
+            let panel = colorPanel(selection.appKitRect, NSColor(srgbRed: 0, green: 1, blue: 0, alpha: 1))
+            await wait(0.5)
+            let file = Capture.newFileURL(extension: "png")
+            let captured = await capture(selection.captureArguments, to: file)
+            panel.orderOut(nil)
+            check(captured, "\(name): la región genera archivo")
+            let rep = (try? Data(contentsOf: file)).flatMap { NSBitmapImageRep(data: $0) }
+            check(rep?.pixelsWide == Int(160 * scale) && rep?.pixelsHigh == Int(90 * scale), "\(name): la región tiene todos los pixeles (\(rep?.pixelsWide ?? 0)×\(rep?.pixelsHigh ?? 0))")
+            let center = rep?.colorAt(x: (rep?.pixelsWide ?? 0) / 2, y: (rep?.pixelsHigh ?? 0) / 2)?.usingColorSpace(.sRGB)
+            let corner = rep?.colorAt(x: 3, y: 3)?.usingColorSpace(.sRGB)
+            check((center?.greenComponent ?? 0) > 0.7 && (corner?.greenComponent ?? 0) > 0.7, "\(name): la región es el sitio correcto")
+
+            let image = Capture.copyImage(at: file)
+            check(image?.size == CGSize(width: 160, height: 90), "\(name): la imagen pega a su tamaño real (\(image?.size ?? .zero))")
+
+            // Ventana por identificador.
+            WindowFinder.includesOwnWindows = true
+            let target = NSWindow(contentRect: CGRect(x: screen.frame.minX + 300, y: screen.frame.minY + 200, width: 400, height: 260), styleMask: [.titled], backing: .buffered, defer: false)
+            target.isReleasedWhenClosed = false
+            target.orderFrontRegardless()
+            await wait(0.5)
+            if let found = WindowFinder.onScreenWindows().first(where: { $0.id == CGWindowID(target.windowNumber) }) {
+                let url = Capture.temporaryFileURL()
+                _ = await capture(Selection(screen: screen, rect: .zero, windowID: found.id).captureArguments, to: url)
+                let windowRep = (try? Data(contentsOf: url)).flatMap { NSBitmapImageRep(data: $0) }
+                check(windowRep?.pixelsWide == Int(found.frame.width * scale), "\(name): la ventana tiene todos los pixeles (\(windowRep?.pixelsWide ?? 0))")
+            } else {
+                check(false, "\(name): encuentra la ventana")
+            }
+            target.orderOut(nil)
+
+            // La selección dibujada en esta pantalla.
+            let overlay = SelectionOverlay()
+            overlay.begin(mode: .screenshot) { _ in }
+            overlay.simulateDrag(from: CGPoint(x: 120, y: 100), to: CGPoint(x: 620, y: 400))
+            await wait(0.5)
+            _ = await capture(["-x", "-D\(index + 1)"], to: output.appendingPathComponent("pantalla-\(index)-seleccion.png"))
+            overlay.cancel()
+
+            // Miniatura y editor en la pantalla del cursor.
+            guard let image else { continue }
+            Settings.shared.thumbnailSeconds = 60
+            let thumbs = ThumbnailController()
+            thumbs.show(image: image, file: file, kind: .screenshot)
+            await wait(0.5)
+            check(screen.visibleFrame.contains(thumbs.testFrames.first ?? .zero), "\(name): la miniatura aparece en esta pantalla")
+            _ = await capture(["-x", "-D\(index + 1)"], to: output.appendingPathComponent("pantalla-\(index)-miniatura.png"))
+            thumbs.dismissAll()
+            Settings.shared.thumbnailSeconds = 6
+
+            let editor = AnnotationEditor(image: image, file: file)
+            editor.canvas.add(Annotation(tool: .rectangle, color: .systemRed, lineWidth: 5, points: [CGPoint(x: 20, y: 20), CGPoint(x: 120, y: 70)]))
+            editor.show()
+            await wait(0.6)
+            check(editor.testWindow.screen == screen, "\(name): el editor abre en esta pantalla")
+            _ = await capture(["-x", "-D\(index + 1)"], to: output.appendingPathComponent("pantalla-\(index)-editor.png"))
+            let exported = editor.canvas.exportPNG().flatMap { NSBitmapImageRep(data: $0) }
+            check(exported?.pixelsWide == Int(160 * scale), "\(name): la anotada conserva los pixeles (\(exported?.pixelsWide ?? 0))")
+            editor.testWindow.close()
+
+            await recording(on: screen, name: name)
+        }
+    }
+
+    private static func recording(on screen: NSScreen, name: String) async {
+        guard let displayID = screen.displayID else {
+            check(false, "\(name): identificador de pantalla")
+            return
+        }
+        let rect = CGRect(x: 60, y: 60, width: 501, height: 301)
+        let url = Capture.newFileURL(extension: "mp4")
+        let recorder = ScreenRecorder()
+        do {
+            try await recorder.start(displayID: displayID, rect: rect, scale: screen.backingScaleFactor, microphone: false, to: url)
+        } catch {
+            check(false, "\(name): inicia la grabación (\(error.localizedDescription))")
+            return
+        }
+        let area = Selection(screen: screen, rect: rect).appKitRect
+        let panel = colorPanel(CGRect(x: area.minX + 20, y: area.minY + 100, width: 80, height: 80), .systemBlue)
+        for step in 0..<20 {
+            panel.setFrameOrigin(NSPoint(x: area.minX + 20 + CGFloat(step) * 10, y: area.minY + 100))
+            await wait(0.1)
+        }
+        panel.orderOut(nil)
+
+        let result = await recorder.stop()
+        check(result == url, "\(name): la grabación genera archivo")
+        let tracks = (try? await AVURLAsset(url: url).loadTracks(withMediaType: .video)) ?? []
+        if let track = tracks.first, let size = try? await track.load(.naturalSize) {
+            let expected = Int(501 * screen.backingScaleFactor) & ~1
+            check(Int(size.width) == expected, "\(name): el video mide lo seleccionado (\(size))")
+        } else {
+            check(false, "\(name): el video tiene imagen")
+        }
     }
 
     // MARK: - Sistema

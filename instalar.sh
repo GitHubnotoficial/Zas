@@ -24,8 +24,13 @@ bash compilar.sh
 
 echo "Instalando en /Applications..."
 # Cierre ordenado: si estaba grabando, el video termina bien.
-osascript -e "quit app \"$APP_NAME\"" >/dev/null 2>&1 || true
-sleep 1
+if pkill -TERM -x "$APP_NAME" 2>/dev/null; then
+    for _ in $(seq 1 60); do
+        pgrep -x "$APP_NAME" >/dev/null || break
+        sleep 0.25
+    done
+    pkill -KILL -x "$APP_NAME" 2>/dev/null || true
+fi
 cp -R "build/$APP_NAME.app" "/Applications/.$APP_NAME-nuevo.app"
 rm -rf "/Applications/$APP_NAME.app"
 mv "/Applications/.$APP_NAME-nuevo.app" "/Applications/$APP_NAME.app"

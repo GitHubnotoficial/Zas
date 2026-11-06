@@ -106,6 +106,8 @@ final class Settings: ObservableObject {
         static let shortcuts = "shortcuts"
         static let saveFolder = "saveFolder"
         static let welcomed = "welcomed"
+        static let saveCaptures = "saveCaptures"
+        static let loginItemConfigured = "loginItemConfigured"
     }
 
     private let defaults: UserDefaults
@@ -120,6 +122,11 @@ final class Settings: ObservableObject {
 
     @Published var recordMicrophone: Bool {
         didSet { defaults.set(recordMicrophone, forKey: Key.recordMicrophone) }
+    }
+
+    /// Si es falso, las imágenes solo pasan por el portapapeles y un archivo temporal.
+    @Published var saveCaptures: Bool {
+        didSet { defaults.set(saveCaptures, forKey: Key.saveCaptures) }
     }
 
     @Published var saveFolder: URL {
@@ -142,19 +149,30 @@ final class Settings: ObservableObject {
         set { defaults.set(newValue, forKey: Key.welcomed) }
     }
 
+    /// El inicio de sesión se activa una sola vez: si luego se apaga, Zas no insiste.
+    var loginItemConfigured: Bool {
+        get { defaults.bool(forKey: Key.loginItemConfigured) }
+        set { defaults.set(newValue, forKey: Key.loginItemConfigured) }
+    }
+
+    static var defaultFolder: URL {
+        FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Zas", isDirectory: true)
+    }
+
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        defaults.register(defaults: [Key.playSound: true, Key.thumbnailSeconds: 6.0])
+        defaults.register(defaults: [Key.playSound: true, Key.thumbnailSeconds: 6.0, Key.saveCaptures: true])
 
         playSound = defaults.bool(forKey: Key.playSound)
         thumbnailSeconds = defaults.double(forKey: Key.thumbnailSeconds)
         recordMicrophone = defaults.bool(forKey: Key.recordMicrophone)
+        saveCaptures = defaults.bool(forKey: Key.saveCaptures)
 
         if let path = defaults.string(forKey: Key.saveFolder) {
             saveFolder = URL(fileURLWithPath: path, isDirectory: true)
         } else {
-            let pictures = FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask)[0]
-            saveFolder = pictures.appendingPathComponent("Zas", isDirectory: true)
+            saveFolder = Settings.defaultFolder
         }
 
         if let data = defaults.data(forKey: Key.shortcuts),

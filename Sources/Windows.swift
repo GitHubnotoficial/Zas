@@ -14,6 +14,7 @@ final class ShortcutRecorderButton: NSButton {
     }
 
     private var monitor: Any?
+    private var resignObserver: NSObjectProtocol?
 
     init(shortcut: Shortcut) {
         self.shortcut = shortcut
@@ -45,6 +46,17 @@ final class ShortcutRecorderButton: NSButton {
             self.handle(event)
             return nil
         }
+        // Si se cambia de ventana a medias, los atajos globales deben volver:
+        // de lo contrario quedarían apagados sin que nadie lo note.
+        resignObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didResignKeyNotification,
+            object: window,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.stopRecording()
+            }
+        }
         refreshTitle()
     }
 
@@ -75,6 +87,10 @@ final class ShortcutRecorderButton: NSButton {
         guard let monitor else { return }
         NSEvent.removeMonitor(monitor)
         self.monitor = nil
+        if let resignObserver {
+            NotificationCenter.default.removeObserver(resignObserver)
+            self.resignObserver = nil
+        }
         refreshTitle()
         ShortcutRecorderButton.onRecordingChanged?(false)
     }
@@ -112,6 +128,7 @@ private struct SettingsView: View {
                     set: { setLaunchAtLogin($0) }
                 ))
                 Toggle("Sonido al capturar", isOn: $settings.playSound)
+                Toggle("Guardar una copia de cada captura", isOn: $settings.saveCaptures)
                 LabeledContent("Guardar en") {
                     HStack(spacing: 8) {
                         Text(displayPath)
@@ -160,10 +177,26 @@ private struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
             }
+
+            Section("Zas") {
+                LabeledContent("Versión", value: version)
+                LabeledContent("Actualizar") {
+                    Button("Copiar comando para Terminal") {
+                        Capture.copyText(Self.updateCommand)
+                    }
+                }
+            }
         }
         .formStyle(.grouped)
         .frame(width: 480)
         .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private static let updateCommand =
+        "curl -fsSL https://raw.githubusercontent.com/GitHubnotoficial/Zas/main/instalar-rapido.sh | bash"
+
+    private var version: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
     }
 
     private var displayPath: String {

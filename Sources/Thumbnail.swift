@@ -32,7 +32,7 @@ final class ThumbnailController {
     private var isSuspended = false
     private var screen: NSScreen?
 
-    func show(image: NSImage, file: URL, kind: ThumbnailKind) {
+    func show(image: NSImage, file: URL, kind: ThumbnailKind, text: String? = nil) {
         screen = NSScreen.underMouse
 
         let imageSize = image.size
@@ -59,7 +59,8 @@ final class ThumbnailController {
             frame: CGRect(origin: .zero, size: size),
             image: image,
             file: file,
-            kind: kind
+            kind: kind,
+            text: text
         )
         panel.contentView = view
 
@@ -86,6 +87,17 @@ final class ThumbnailController {
                 self.startTimer(item)
             }
         }
+        view.onCopy = { [weak self, weak item] in
+            guard let self, let item else { return }
+            self.markCopied(item)
+        }
+        view.onDragEnded = { [weak self] in
+            self?.syncHover()
+        }
+
+        // Solo la captura más reciente está en el portapapeles.
+        items.forEach { $0.view.isInClipboard = false }
+        view.isInClipboard = true
 
         items.insert(item, at: 0)
         while items.count > maximumItems, let oldest = items.last {
@@ -112,6 +124,8 @@ final class ThumbnailController {
         isSuspended = true
         for item in items {
             stopTimer(item)
+            // Una ventana escondida no recibe la salida del cursor: quedaría "con el cursor encima".
+            item.view.setHovering(false)
             item.panel.orderOut(nil)
         }
     }
@@ -121,11 +135,20 @@ final class ThumbnailController {
         isSuspended = false
         for item in items {
             item.panel.orderFrontRegardless()
-            if !item.view.isHovering {
-                startTimer(item)
-            }
+            startTimer(item)
         }
         layoutItems()
+    }
+
+    private func markCopied(_ item: Item) {
+        let view = item.view
+        guard view.copyToClipboard() else {
+            NSSound.beep()
+            return
+        }
+        items.forEach { $0.view.isInClipboard = $0 === item }
+        Capture.playSound()
+        view.flashCopied()
     }
 
     func dismissAll() {
@@ -172,6 +195,29 @@ final class ThumbnailController {
                 item.panel.animator().alphaValue = 1
             }
         }
+        // Al moverse bajo un cursor quieto, macOS no avisa de entradas ni salidas.
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 260_000_000)
+            self?.syncHover()
+        }
+    }
+
+    /// Ajusta el estado a la posición real del cursor. Sin esto, una miniatura
+    /// que perdió el aviso de salida no se cerraría nunca.
+    private func syncHover() {
+        guard !isSuspended else { return }
+        let mouse = NSEvent.mouseLocation
+        for item in items where !item.view.isDragging {
+            let inside = item.panel.frame.contains(mouse)
+            if inside != item.view.isHovering {
+                item.view.setHovering(inside)
+            }
+            if inside {
+                stopTimer(item)
+            } else if item.timer == nil {
+                startTimer(item)
+            }
+        }
     }
 
     private func animate(_ changes: () -> Void) {
@@ -188,7 +234,12 @@ final class ThumbnailController {
         item.timer = Timer.scheduledTimer(withTimeInterval: seconds, repeats: false) { [weak self, weak item] _ in
             Task { @MainActor in
                 guard let self, let item else { return }
-                self.dismiss(item)
+                item.timer = nil
+                if item.panel.frame.contains(NSEvent.mouseLocation) {
+                    self.syncHover()
+                } else {
+                    self.dismiss(item)
+                }
             }
         }
     }
@@ -203,6 +254,22 @@ final class ThumbnailController {
         guard items.indices.contains(index) else { return }
         items[index].view.setHovering(true)
     }
+
+    /// Lo que pasa cuando se pierde el aviso de salida: cursor lejos, estado "encima", sin reloj.
+    func simulateLostExit(index: Int) {
+        guard items.indices.contains(index) else { return }
+        items[index].view.setHovering(true)
+        stopTimer(items[index])
+    }
+
+    func testSyncHover() { syncHover() }
+    func testIsHovering(index: Int) -> Bool { items[index].view.isHovering }
+    func testHasTimer(index: Int) -> Bool { items[index].timer != nil }
+    func testIsInClipboard(index: Int) -> Bool { items[index].view.isInClipboard }
+    func testBadge(index: Int) -> String? { items[index].view.badgeText }
+    func testActionCount(index: Int) -> Int { items[index].view.actionCount }
+    func testCopy(index: Int) { markCopied(items[index]) }
+    var testFrames: [CGRect] { items.map { $0.panel.frame } }
 
     var visibleCount: Int { items.count }
     #endif
@@ -236,23 +303,35 @@ private final class ThumbnailView: NSView, NSDraggingSource {
     var onHoldChanged: ((Bool) -> Void)?
     var onAnnotate: (() -> Void)?
     var onPin: (() -> Void)?
+    var onCopy: (() -> Void)?
+    var onDragEnded: (() -> Void)?
+
+    var isInClipboard = false {
+        didSet { needsDisplay = true }
+    }
 
     private let image: NSImage
     private let file: URL
     private let kind: ThumbnailKind
+    private let text: String?
 
     private var hovering = false
     var isHovering: Bool { hovering }
+    private(set) var isDragging = false
+    private var justCopied = false
     private var mouseDownPoint: NSPoint?
     private var dragged = false
     private var trackingArea: NSTrackingArea?
     private var actionButtons: [NSButton] = []
     private var closeButton: NSButton?
 
-    init(frame: CGRect, image: NSImage, file: URL, kind: ThumbnailKind) {
+    var actionCount: Int { actionButtons.count }
+
+    init(frame: CGRect, image: NSImage, file: URL, kind: ThumbnailKind, text: String?) {
         self.image = image
         self.file = file
         self.kind = kind
+        self.text = text
         super.init(frame: frame)
         buildButtons()
     }
@@ -264,17 +343,21 @@ private final class ThumbnailView: NSView, NSDraggingSource {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     private func buildButtons() {
-        var buttons: [NSButton] = []
+        var buttons: [NSButton] = [
+            OverlayIconButton(symbol: "doc.on.doc", tooltip: "Copiar otra vez", target: self, action: #selector(copyAgain)),
+        ]
         switch kind {
         case .screenshot:
             buttons.append(OverlayIconButton(symbol: "pencil.tip", tooltip: "Anotar", target: self, action: #selector(annotate)))
             buttons.append(OverlayIconButton(symbol: "pin.fill", tooltip: "Fijar en pantalla", target: self, action: #selector(pin)))
-            buttons.append(OverlayIconButton(symbol: "folder", tooltip: "Mostrar en Finder", target: self, action: #selector(reveal)))
         case .video:
             buttons.append(OverlayIconButton(symbol: "play.fill", tooltip: "Reproducir", target: self, action: #selector(open)))
-            buttons.append(OverlayIconButton(symbol: "folder", tooltip: "Mostrar en Finder", target: self, action: #selector(reveal)))
         case .text:
             break
+        }
+        // Un archivo temporal no tiene sentido en Finder: desaparece al cerrar Zas.
+        if kind != .text, !Capture.isScratch(file) {
+            buttons.append(OverlayIconButton(symbol: "folder", tooltip: "Mostrar en Finder", target: self, action: #selector(reveal)))
         }
 
         let gap: CGFloat = 8
@@ -301,6 +384,34 @@ private final class ThumbnailView: NSView, NSDraggingSource {
     @objc private func annotate() { onAnnotate?() }
     @objc private func pin() { onPin?() }
     @objc private func closeThumbnail() { onClose?() }
+    @objc private func copyAgain() { onCopy?() }
+
+    /// Vuelve a poner esta captura en el portapapeles. Sirve para pegar una de las anteriores.
+    @MainActor
+    func copyToClipboard() -> Bool {
+        switch kind {
+        case .screenshot:
+            return Capture.copyImage(at: file) != nil
+        case .video:
+            Capture.copyFile(at: file)
+            return FileManager.default.fileExists(atPath: file.path)
+        case .text:
+            guard let text else { return false }
+            Capture.copyText(text)
+            return true
+        }
+    }
+
+    @MainActor
+    func flashCopied() {
+        justCopied = true
+        needsDisplay = true
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 1_300_000_000)
+            self?.justCopied = false
+            self?.needsDisplay = true
+        }
+    }
 
     @objc private func open() {
         NSWorkspace.shared.open(file)
@@ -333,6 +444,8 @@ private final class ThumbnailView: NSView, NSDraggingSource {
     }
 
     override func mouseExited(with event: NSEvent) {
+        // Al arrastrar, el cursor sale de la miniatura, pero esta debe seguir ahí.
+        guard !isDragging else { return }
         setHovering(false)
         onHoldChanged?(false)
     }
@@ -355,7 +468,11 @@ private final class ThumbnailView: NSView, NSDraggingSource {
         guard hypot(point.x - start.x, point.y - start.y) > 4 else { return }
 
         dragged = true
-        let item = NSDraggingItem(pasteboardWriter: file as NSURL)
+        isDragging = true
+        onHoldChanged?(true)
+        // Del texto se arrastra el texto: su imagen de paso ya se borró.
+        let writer: NSPasteboardWriting = kind == .text ? ((text ?? "") as NSString) : (file as NSURL)
+        let item = NSDraggingItem(pasteboardWriter: writer)
         item.setDraggingFrame(bounds, contents: image)
         beginDraggingSession(with: [item], event: event, source: self)
     }
@@ -383,8 +500,11 @@ private final class ThumbnailView: NSView, NSDraggingSource {
         endedAt screenPoint: NSPoint,
         operation: NSDragOperation
     ) {
+        isDragging = false
         if operation != [] {
             onClose?()
+        } else {
+            onDragEnded?()
         }
     }
 
@@ -392,6 +512,7 @@ private final class ThumbnailView: NSView, NSDraggingSource {
         let shape = NSBezierPath(roundedRect: bounds, xRadius: 12, yRadius: 12)
         NSGraphicsContext.saveGraphicsState()
         shape.addClip()
+        NSGraphicsContext.current?.imageInterpolation = .high
 
         NSColor(white: 0.09, alpha: 1).setFill()
         bounds.fill()
@@ -418,14 +539,24 @@ private final class ThumbnailView: NSView, NSDraggingSource {
         border.lineWidth = 1
         border.stroke()
 
-        drawBadge(badgeText)
+        if let badgeText {
+            drawBadge(badgeText)
+        }
     }
 
-    private var badgeText: String {
+    /// "Copiado" solo en lo que de verdad está en el portapapeles.
+    var badgeText: String? {
+        if justCopied {
+            return "Copiado"
+        }
         switch kind {
-        case .screenshot: return hovering ? "Clic para anotar" : "Copiado"
-        case .video: return "Video copiado"
-        case .text: return "Texto copiado"
+        case .screenshot:
+            if hovering { return "Clic para anotar" }
+            return isInClipboard ? "Copiado" : nil
+        case .video:
+            return isInClipboard ? "Video copiado" : "Video"
+        case .text:
+            return isInClipboard ? "Texto copiado" : "Texto"
         }
     }
 

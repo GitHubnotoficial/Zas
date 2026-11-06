@@ -41,6 +41,9 @@ enum WindowFinder {
     /// Las pruebas lo activan para poder resaltar ventanas de este mismo proceso.
     static var includesOwnWindows = false
 
+    /// Procesos del sistema con ventanas invisibles que no se deben resaltar.
+    private static let systemOwners: Set<String> = ["Dock", "Window Server", "Wallpaper", "Control Center", "Notification Center"]
+
     /// Ventanas normales en pantalla, de la más cercana a la más lejana.
     static func onScreenWindows() -> [WindowTarget] {
         let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
@@ -57,6 +60,9 @@ enum WindowFinder {
                   bounds.width >= 60, bounds.height >= 40
             else { return nil }
 
+            if let owner = info[kCGWindowOwnerName as String] as? String, systemOwners.contains(owner) {
+                return nil
+            }
             if let alpha = info[kCGWindowAlpha as String] as? Double, alpha < 0.05 {
                 return nil
             }
