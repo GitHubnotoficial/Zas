@@ -69,6 +69,8 @@ private final class LiveTextPane: NSView {
         overlay.autoresizingMask = [.width, .height]
         overlay.preferredInteractionTypes = .textSelection
         overlay.selectableItemsHighlighted = true
+        // El botón de Live Text del sistema sobra: Zas ya tiene el suyo en la barra.
+        overlay.isSupplementaryInterfaceHidden = true
         overlay.trackingImageView = imageView
         addSubview(overlay)
     }

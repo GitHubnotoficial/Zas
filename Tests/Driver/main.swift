@@ -85,7 +85,8 @@ func shot(_ name: String) {
 
 func files(_ ext: String) -> Set<String> {
     let names = (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
-    return Set(names.filter { $0.hasSuffix(".\(ext)") })
+    // screencapture escribe primero en un archivo oculto y luego lo renombra.
+    return Set(names.filter { $0.hasSuffix(".\(ext)") && !$0.hasPrefix(".") })
 }
 
 /// Hace `action` y devuelve el archivo nuevo que aparezca en la carpeta.
@@ -385,6 +386,31 @@ wait(3)
 let recognized = NSPasteboard.general.string(forType: .string) ?? ""
 print("texto reconocido: \(recognized.replacingOccurrences(of: "\n", with: " | "))")
 check(!recognized.isEmpty, "⇧⌘7 copia texto de la pantalla")
+
+// Selección de texto sobre la imagen: la tarjeta de texto abre el editor con Live Text.
+if !recognized.isEmpty {
+    moveMouse(to: thumbnailPoint)
+    wait(0.4)
+    click(at: CGPoint(x: thumbnailPoint.x - 70, y: thumbnailPoint.y - 30))
+    wait(3)
+    shot("e2e-09c-texto-editor")
+    if let editor = windowFrame(owner: "Zas") {
+        let middle = editor.midY + 26
+        drag(from: CGPoint(x: editor.minX + 60, y: middle), to: CGPoint(x: editor.maxX - 60, y: middle))
+        wait(0.5)
+        shot("e2e-09d-texto-seleccionado")
+        NSPasteboard.general.clearContents()
+        press(kVK_ANSI_C, .maskCommand)
+        wait(0.6)
+        let selected = NSPasteboard.general.string(forType: .string) ?? ""
+        print("texto seleccionado con el ratón: [\(selected.replacingOccurrences(of: "\n", with: " | "))]")
+    }
+    press(kVK_Escape)
+    wait(0.4)
+    press(kVK_Escape)
+    wait(0.8)
+    check(zasWindowCount(minimumWidth: 700) == 0, "el editor de texto se cierra con Esc")
+}
 
 // 8. Video con los atajos reales.
 let video = newFile("mp4", timeout: 10) {

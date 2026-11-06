@@ -109,7 +109,8 @@ struct Annotation {
                 width: counterRadius * 2,
                 height: counterRadius * 2
             )
-        case .pencil, .highlight, .eraser, .pixelate where isFreehand:
+        case .pencil, .highlight, .eraser,
+             .pixelate where isFreehand:
             let xs = points.map(\.x)
             let ys = points.map(\.y)
             guard let minX = xs.min(), let maxX = xs.max(), let minY = ys.min(), let maxY = ys.max() else {
@@ -135,7 +136,8 @@ struct Annotation {
             return inner.isEmpty || !inner.contains(point)
         case .eraser:
             return false
-        case .pencil, .highlight, .pixelate where isFreehand:
+        case .pencil, .highlight,
+             .pixelate where isFreehand:
             guard points.count > 1 else { return false }
             for index in 1..<points.count
             where Annotation.distance(from: point, toSegment: points[index - 1], points[index]) <= slack + lineWidth {

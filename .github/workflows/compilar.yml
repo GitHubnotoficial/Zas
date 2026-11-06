@@ -126,6 +126,8 @@ jobs:
         run: |
           pkill -x Calculator || true
           mkdir -p escenas/demo
+          # Con las pausas del demo, las tarjetas no deben cerrarse antes de tiempo.
+          defaults write local.zas.app thumbnailSeconds -float 30
           open /Applications/Zas.app
           sleep 4
           screencapture -V 170 -C -x build/demo.mov &
