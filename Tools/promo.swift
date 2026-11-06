@@ -539,25 +539,38 @@ func sceneCopied(_ t: CGFloat) {
 func sceneAnnotate(_ t: CGFloat) {
     headline("03", "Márcalo.", "Flechas, cuadros y texto.", start: 10, end: 12, t)
     stage(yaw: -0.17, pitch: 0.05, zoom: 1.02 + span(t, 10, 12) * 0.06, enter: span(t, 10, 10.55)) {
-        // Barra del editor, para que se vea la herramienta en uso.
-        let bar = CGRect(x: 214, y: 424, width: 662, height: 46)
-        shadow(14, 4, 0.3) {
-            rounded(bar, 14, NSColor(white: 0.97, alpha: 0.93))
+        // Barras del editor: arriba las herramientas, abajo arrastrar y compartir.
+        NSColor(white: 0.96, alpha: 0.97).setFill()
+        CGRect(x: 0, y: 0, width: designSize.width, height: 44).fill()
+        CGRect(x: 0, y: designSize.height - 44, width: designSize.width, height: 44).fill()
+        for (index, color) in [NSColor.systemRed, .systemYellow, .systemGreen].enumerated() {
+            color.setFill()
+            NSBezierPath(ovalIn: CGRect(x: 16 + CGFloat(index) * 20, y: 16, width: 12, height: 12)).fill()
         }
-        let names = ["cursorarrow", "arrow.up.right", "rectangle", "circle", "scribble", "highlighter", "textformat", "1.circle", "square.grid.3x3.square", "scope", "eraser", "crop"]
-        for (index, name) in names.enumerated() {
-            let box = CGRect(x: 222 + CGFloat(index) * 36, y: 431, width: 32, height: 32)
-            let active = (index == 1 && t < 11) || (index == 2 && t >= 11 && t < 11.5) || (index == 6 && t >= 11.5)
-            if active { rounded(box, 8, .systemBlue) }
-            symbol(name, box.insetBy(dx: 8, dy: 8), active ? .white : NSColor(white: 0.22, alpha: 1))
+        let names = ["crop", "photo", "rectangle.inset.filled", "", "cursorarrow", "rectangle", "circle", "arrow.up.right", "textformat", "square.grid.3x3.square", "scope", "1.circle", "scribble", "highlighter", "eraser"]
+        for (index, name) in names.enumerated() where !name.isEmpty {
+            let box = CGRect(x: 88 + CGFloat(index) * 32, y: 8, width: 28, height: 28)
+            let active = (index == 7 && t < 11) || (index == 5 && t >= 11 && t < 11.5) || (index == 8 && t >= 11.5)
+            if active { rounded(box, 7, .systemBlue) }
+            symbol(name, box.insetBy(dx: 7, dy: 7), active ? .white : NSColor(white: 0.22, alpha: 1))
         }
-        NSColor.systemRed.setFill()
-        NSBezierPath(ovalIn: CGRect(x: 661, y: 438, width: 18, height: 18)).fill()
-        symbol("doc.on.doc", CGRect(x: 700, y: 438, width: 18, height: 18), NSColor(white: 0.22, alpha: 1))
-        symbol("square.and.arrow.down", CGRect(x: 736, y: 438, width: 18, height: 18), NSColor(white: 0.22, alpha: 1))
-        let done = CGRect(x: 790, y: 432, width: 74, height: 30)
-        rounded(done, 8, .systemBlue)
-        text("Listo", 14, .semibold, .white, at: CGPoint(x: done.midX, y: done.minY + 7), align: .center)
+        let save = CGRect(x: 684, y: 9, width: 118, height: 26)
+        rounded(save, 7, .white)
+        text("Guardar como…", 13, .medium, NSColor(white: 0.15, alpha: 1), at: CGPoint(x: save.midX, y: save.minY + 5), align: .center)
+        let done = CGRect(x: 816, y: 9, width: 66, height: 26)
+        rounded(done, 7, .systemBlue)
+        text("Listo", 13, .semibold, .white, at: CGPoint(x: done.midX, y: done.minY + 5), align: .center)
+        let drag = CGRect(x: 386, y: designSize.height - 34, width: 128, height: 24)
+        rounded(drag, 12, NSColor(white: 0.86, alpha: 1))
+        text("Arrástrame", 13, .semibold, NSColor(white: 0.15, alpha: 1), at: CGPoint(x: drag.midX, y: drag.minY + 4), align: .center)
+        let zoomPill = CGRect(x: 16, y: designSize.height - 34, width: 66, height: 24)
+        rounded(zoomPill, 12, NSColor(white: 0.86, alpha: 1))
+        text("100 %", 13, .semibold, NSColor(white: 0.15, alpha: 1), at: CGPoint(x: zoomPill.midX, y: zoomPill.minY + 4), align: .center)
+        for (index, name) in ["square.and.arrow.up", "pin", "doc.on.doc", "terminal"].enumerated() {
+            let dot = CGRect(x: 770 + CGFloat(index) * 30, y: designSize.height - 35, width: 26, height: 26)
+            rounded(dot, 13, NSColor(white: 0.86, alpha: 1))
+            symbol(name, dot.insetBy(dx: 7, dy: 7), NSColor(white: 0.22, alpha: 1))
+        }
 
         arrow(from: CGPoint(x: 845, y: 70), to: CGPoint(x: 806, y: 296), expoOut(span(t, 10.5, 10.95)), .systemRed, width: 5.5)
         let box = expoOut(span(t, 11, 11.4))
@@ -570,7 +583,7 @@ func sceneAnnotate(_ t: CGFloat) {
         }
         let note = easeBack(span(t, 11.5, 11.85))
         if note > 0 {
-            let origin = CGPoint(x: 640, y: 56)
+            let origin = CGPoint(x: 640, y: 62)
             scaled(note, around: origin) {
                 text("Esto debería guardar", 19, .bold, .systemRed, at: origin)
             }
@@ -731,23 +744,74 @@ func sceneLiveText(_ t: CGFloat) {
 }
 
 /// 20 a 26: lo demás, a golpe de compás.
+/// 20 a 22: un fondo en vivo, sin dañar la captura.
+let backdrops: [[NSColor]] = [
+    [NSColor(srgbRed: 0.98, green: 0.45, blue: 0.35, alpha: 1), NSColor(srgbRed: 0.78, green: 0.2, blue: 0.62, alpha: 1)],
+    [NSColor(srgbRed: 0.2, green: 0.62, blue: 0.95, alpha: 1), NSColor(srgbRed: 0.24, green: 0.2, blue: 0.75, alpha: 1)],
+    [NSColor(srgbRed: 0.98, green: 0.78, blue: 0.3, alpha: 1), NSColor(srgbRed: 0.95, green: 0.42, blue: 0.3, alpha: 1)],
+    [NSColor(srgbRed: 0.3, green: 0.8, blue: 0.62, alpha: 1), NSColor(srgbRed: 0.12, green: 0.42, blue: 0.62, alpha: 1)],
+]
+var plainAppCache: CGImage?
+func plainApp() -> CGImage {
+    if let plainAppCache { return plainAppCache }
+    let image = layer(stageSize, scale: 2) { appContent(stageSize) }
+    plainAppCache = image
+    return image
+}
+
+func scenePresent(_ t: CGFloat) {
+    headline("08", "Preséntalo.", "Un fondo en vivo, sin tocar tu captura.", start: 20, end: 22, t, size: 104)
+    let grow = easeInOut(span(t, 20.25, 20.85))
+    let picked = min(Int(span(t, 20.2, 21.9) * CGFloat(backdrops.count)), backdrops.count - 1)
+    stage(yaw: -0.18, pitch: 0.05, zoom: 1.02 + span(t, 20, 22) * 0.05, enter: span(t, 20, 20.5)) {
+        let panelWidth = 190 * grow
+        let area = CGRect(x: panelWidth, y: 0, width: designSize.width - panelWidth, height: designSize.height)
+        NSGradient(colors: backdrops[picked])?.draw(in: area, angle: 60)
+        let margin = 46 * grow
+        let shot = area.insetBy(dx: margin, dy: margin)
+        ctx.saveGState()
+        shadow(30, 12, 0.45 * grow) {
+            rounded(shot, 12, .white)
+        }
+        NSBezierPath(roundedRect: shot, xRadius: 12, yRadius: 12).addClip()
+        NSImage(cgImage: plainApp(), size: stageSize).draw(in: shot, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+        ctx.restoreGState()
+        if grow > 0 {
+            let panel = CGRect(x: panelWidth - 190, y: 0, width: 190, height: designSize.height)
+            NSColor(white: 0.96, alpha: 1).setFill()
+            panel.fill()
+            text("Degradados", 15, .semibold, NSColor(white: 0.4, alpha: 1), at: CGPoint(x: panel.minX + 18, y: 24))
+            for (index, colors) in backdrops.enumerated() {
+                let box = CGRect(x: panel.minX + 18 + CGFloat(index % 2) * 80, y: 58 + CGFloat(index / 2) * 80, width: 68, height: 68)
+                NSGraphicsContext.saveGraphicsState()
+                NSBezierPath(roundedRect: box, xRadius: 12, yRadius: 12).addClip()
+                NSGradient(colors: colors)?.draw(in: box, angle: 60)
+                NSGraphicsContext.restoreGraphicsState()
+                if index == picked {
+                    stroked(box.insetBy(dx: -3, dy: -3), 14, .systemBlue, 3)
+                }
+            }
+            text("Margen", 15, .semibold, NSColor(white: 0.4, alpha: 1), at: CGPoint(x: panel.minX + 18, y: 244))
+            rounded(CGRect(x: panel.minX + 18, y: 276, width: 150, height: 5), 2.5, NSColor(white: 0.8, alpha: 1))
+            rounded(CGRect(x: panel.minX + 18, y: 276, width: 92 * grow, height: 5), 2.5, .systemBlue)
+            rounded(CGRect(x: panel.minX + 18 + 92 * grow - 9, y: 269, width: 18, height: 18), 9, .white)
+        }
+    }
+}
+
 func sceneMontage(_ t: CGFloat) {
     let tiles: [(String, String, String)] = [
         ("arrow.up.and.down", "Desplaza", "páginas enteras en una imagen"),
         ("pause.circle", "Congela", "menús y todo lo que se mueve"),
-        ("timer", "3 segundos", "para abrir lo que necesites"),
-        ("highlighter", "Resalta", "como un marcador de verdad"),
         ("scope", "Enfoca", "lo demás se oscurece"),
         ("square.grid.3x3.square", "Censura", "con recuadro o pincel"),
-        ("photo.on.rectangle", "Presenta", "fondos listos para compartir"),
-        ("scissors", "Recorta", "tus videos al instante"),
-        ("speaker.wave.2", "Con sonido", "el del Mac y tu voz"),
+        ("qrcode", "Lee QR", "y lo deja copiado"),
+        ("eye.slash", "Escritorio limpio", "esconde tus iconos en un clic"),
         ("cursorarrow.click.2", "Clics y teclas", "visibles en tus videos"),
-        ("arrow.clockwise", "Repite", "la misma área, con un atajo"),
         ("lock", "Solo en tu Mac", "nada sale de tu equipo"),
     ]
-    let index = min(Int((t - 20) / 0.5), tiles.count - 1)
-    let local = (t - 20) - CGFloat(index) * 0.5
+    let index = min(Int((t - 22) / 0.5), tiles.count - 1)
+    let local = (t - 22) - CGFloat(index) * 0.5
     let tile = tiles[index]
     let pop = expoOut(span(local, 0, 0.22))
     scaled(0.9 + pop * 0.1 + local * 0.05, around: CGPoint(x: W / 2, y: H / 2)) {
@@ -783,7 +847,8 @@ let scenes: [(start: CGFloat, end: CGFloat, draw: (CGFloat) -> Void)] = [
     (14.5, 16, sceneMoments),
     (16, 18, scenePaste),
     (18, 20, sceneLiveText),
-    (20, 26, sceneMontage),
+    (20, 22, scenePresent),
+    (22, 26, sceneMontage),
     (26, 30.1, sceneEnd),
 ]
 
