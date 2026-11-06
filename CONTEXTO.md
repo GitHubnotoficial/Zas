@@ -86,6 +86,8 @@ Excepción decidida por el dueño: copiar rápido, guardar y ver la ruta se qued
 
 ## Estado
 
+Versión 1.0.0: última corrida completa en verde (132 internas, 28 de pantallas, 34 de uso real por tres ciclos). Sin avisos de compilación pendientes de revisar: las pruebas compilan con el mismo mínimo de macOS 13 que la app.
+
 Versión en `compilar.sh`. Hecho frente a CleanShot: área, ventana, pantalla, temporizador, desplazamiento, congelar con lupa, texto con Live Text, tarjetas, fijar, historial, editor completo (flecha, línea, cuadro, relleno, círculo, lápiz, resaltador, texto, números, censura y desenfoque, foco, borrador, recorte, rotar, voltear, tamaño, fondos, combinar imágenes, cuentagotas), video con micrófono, audio del Mac, FPS, cursor, resumen para Claude, GIF y recorte.
 
 También hecho: clics, teclas y cámara dentro del video; proyectos editables `.zas`; recientes en el menú; historial con carátulas de video; menús Ver y Herramientas en el editor.

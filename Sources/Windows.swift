@@ -453,7 +453,7 @@ private struct HistoryTile: View {
         .task {
             // Se decodifica aparte: quinientas capturas no deben trabar la ventana.
             let url = file
-            preview = await Recents.previewInBackground(of: url)
+            preview = await Recents.previewInBackground(of: url).image
         }
         .contextMenu {
             Button("Abrir") { onOpen(file) }

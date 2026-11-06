@@ -52,9 +52,8 @@ enum Recents {
     }
 
     /// Para que quinientas capturas no traben una ventana.
-    nonisolated static func previewInBackground(of url: URL) async -> NSImage? {
-        struct Sent: @unchecked Sendable { let image: NSImage? }
-        return await Task.detached(priority: .utility) { Sent(image: preview(of: url)) }.value.image
+    nonisolated static func previewInBackground(of url: URL) async -> PreviewResult {
+        await Task.detached(priority: .utility) { PreviewResult(image: preview(of: url)) }.value
     }
 
     private nonisolated static func imageFrame(of url: URL) -> CGImage? {
@@ -71,6 +70,11 @@ enum Recents {
         generator.maximumSize = CGSize(width: previewSize, height: previewSize)
         return try? generator.copyCGImage(at: .zero, actualTime: nil)
     }
+}
+
+/// NSImage no es Sendable, pero esta imagen ya no cambia al cruzar de hilo.
+struct PreviewResult: @unchecked Sendable {
+    let image: NSImage?
 }
 
 /// Franja del menú con las cuatro capturas más recientes.
