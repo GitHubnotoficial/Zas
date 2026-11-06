@@ -440,6 +440,11 @@ final class ThumbnailController {
 }
 
 /// Control sobre la tarjeta: claro y liso, para leerse igual sobre cualquier captura.
+/// El contorno se pinta encima de todo, pero los clics lo atraviesan.
+private final class OutlineView: NSView {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
 private final class CardControl: NSButton {
     private static let ink = NSColor(white: 0.1, alpha: 1)
 
@@ -561,7 +566,7 @@ private final class ThumbnailView: NSView, NSDraggingSource {
 
     /// Oscurece y desenfoca la captura para que los controles se lean sobre cualquier imagen.
     private let veil = NSView()
-    private let outline = NSView()
+    private let outline = OutlineView()
     private let badge = GlassView(frame: .zero, radius: 11, blending: .withinWindow)
     private let badgeLabel = NSTextField(labelWithString: "")
     /// Apiladas en el centro. La primera es siempre Copiar.
