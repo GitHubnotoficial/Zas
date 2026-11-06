@@ -37,8 +37,7 @@ static void makePrimary(CGDirectDisplayID displayID) {
     CGBeginDisplayConfiguration(&config);
     CGConfigureDisplayOrigin(config, displayID, 0, 0);
     CGError error = CGCompleteDisplayConfiguration(config, kCGConfigureForSession);
-    printf("pantalla principal: error %d, ahora %u
-", error, CGMainDisplayID());
+    printf("pantalla principal: error %d, ahora %u\n", error, CGMainDisplayID());
     fflush(stdout);
 }
 
