@@ -353,7 +353,8 @@ enum SelfTest {
 
             // Ventana por identificador.
             WindowFinder.includesOwnWindows = true
-            let target = NSWindow(contentRect: CGRect(x: screen.frame.minX + 300, y: screen.frame.minY + 200, width: 400, height: 260), styleMask: [.titled], backing: .buffered, defer: false)
+            // Con `screen`, el rectángulo es relativo a esa pantalla y la ventana nace con su densidad.
+            let target = NSWindow(contentRect: CGRect(x: 300, y: 200, width: 400, height: 260), styleMask: [.titled], backing: .buffered, defer: false, screen: screen)
             target.isReleasedWhenClosed = false
             target.orderFrontRegardless()
             target.display()
@@ -363,7 +364,8 @@ enum SelfTest {
                 let url = Capture.temporaryFileURL()
                 _ = await capture(Selection(screen: screen, rect: .zero, windowID: found.id).captureArguments, to: url)
                 let windowRep = (try? Data(contentsOf: url)).flatMap { NSBitmapImageRep(data: $0) }
-                check(windowRep?.pixelsWide == Int(found.frame.width * target.backingScaleFactor), "\(name): la ventana tiene todos los pixeles (\(windowRep?.pixelsWide ?? 0))")
+                check(target.backingScaleFactor == scale, "\(name): la ventana usa la densidad de la pantalla (\(target.backingScaleFactor))")
+                check(windowRep?.pixelsWide == Int(found.frame.width * scale), "\(name): la ventana tiene todos los pixeles (\(windowRep?.pixelsWide ?? 0))")
             } else {
                 check(false, "\(name): encuentra la ventana")
             }

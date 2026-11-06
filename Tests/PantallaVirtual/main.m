@@ -35,10 +35,15 @@ static CGVirtualDisplay *display;
 static void makePrimary(CGDirectDisplayID displayID) {
     CGDisplayConfigRef config;
     CGBeginDisplayConfiguration(&config);
+    CGDirectDisplayID previous = CGMainDisplayID();
+    // La principal es la que está en el origen: la anterior debe correrse a un lado.
     CGConfigureDisplayOrigin(config, displayID, 0, 0);
+    CGConfigureDisplayOrigin(config, previous, (int32_t)CGDisplayPixelsWide(displayID), 0);
     CGError error = CGCompleteDisplayConfiguration(config, kCGConfigureForSession);
-    printf("pantalla principal: error %d, ahora %u\n", error, CGMainDisplayID());
-    fflush(stdout);
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+        printf("pantalla principal: error %d, ahora %u, virtual %u\n", error, CGMainDisplayID(), displayID);
+        fflush(stdout);
+    });
 }
 
 static void chooseRetinaMode(CGDirectDisplayID displayID) {
