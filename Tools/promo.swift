@@ -332,8 +332,8 @@ let rows: [(String, String, String, NSColor)] = [
 ]
 
 let designSize = CGSize(width: 900, height: 480)
-let stageSize = CGSize(width: 1320, height: 704)
-let stageCenter = CGPoint(x: 1240, y: 560)
+let stageSize = CGSize(width: 1090, height: 581)
+let stageCenter = CGPoint(x: 1365, y: 540)
 
 func appContent(_ size: CGSize, overlay: (() -> Void)? = nil) {
     ctx.saveGState()
@@ -405,7 +405,7 @@ func cursor(at point: CGPoint, scale s: CGFloat = 1.1) {
 }
 
 /// Título a la izquierda: número, palabra y detalle.
-func headline(_ number: String, _ word: String, _ detail: String, start: CGFloat, end: CGFloat, _ t: CGFloat, size: CGFloat = 132) {
+func headline(_ number: String, _ word: String, _ detail: String, start: CGFloat, end: CGFloat, _ t: CGFloat, size: CGFloat = 110) {
     reveal(number, 30, .bold, at: CGPoint(x: 96, y: 300), start: start, end: end, t, top: yellow, bottom: yellow)
     reveal(word, size, .heavy, at: CGPoint(x: 90, y: 342), start: start + 0.05, end: end, t)
     reveal(detail, 34, .medium, at: CGPoint(x: 96, y: 522), start: start + 0.2, end: end, t, top: NSColor(white: 0.72, alpha: 1), bottom: NSColor(white: 0.62, alpha: 1))
@@ -485,8 +485,8 @@ func sceneCopied(_ t: CGFloat) {
         stage(yaw: -0.24, pitch: 0.06, zoom: 1.07 + local * 0.012, enter: 1)
     }
     let fly = expoOut(span(local, 0.04, 0.6))
-    let start = CGRect(x: 800, y: 640, width: 860, height: 86)
-    let target = CGRect(x: 760, y: 330, width: 1040, height: 300)
+    let start = CGRect(x: 900, y: 610, width: 800, height: 80)
+    let target = CGRect(x: 820, y: 390, width: 1000, height: 288)
     let card = mix(start, target, fly)
     let tilt = sin(local * 1.6) * 4
     ctx.saveGState()
@@ -521,17 +521,18 @@ func sceneAnnotate(_ t: CGFloat) {
     headline("03", "Márcalo.", "Flechas, cuadros y texto.", start: 10, end: 12, t)
     stage(yaw: -0.17, pitch: 0.05, zoom: 1.02 + span(t, 10, 12) * 0.06, enter: span(t, 10, 10.55)) {
         // Barra del editor, para que se vea la herramienta en uso.
-        let bar = CGRect(x: 190, y: 0, width: 710, height: 42)
-        NSColor(white: 0.93, alpha: 1).setFill()
-        bar.fill()
+        let bar = CGRect(x: 214, y: 424, width: 662, height: 46)
+        shadow(14, 4, 0.3) {
+            rounded(bar, 12, NSColor(white: 0.96, alpha: 1))
+        }
         let names = ["cursorarrow", "arrow.up.right", "rectangle", "circle", "highlighter", "scribble", "textformat", "1.circle", "crop"]
         for (index, name) in names.enumerated() {
-            let box = CGRect(x: 206 + CGFloat(index) * 36, y: 7, width: 28, height: 28)
+            let box = CGRect(x: 226 + CGFloat(index) * 36, y: 433, width: 28, height: 28)
             let active = (index == 1 && t < 11) || (index == 2 && t >= 11 && t < 11.5) || (index == 6 && t >= 11.5)
             if active { rounded(box, 7, .systemBlue) }
             symbol(name, box.insetBy(dx: 6, dy: 6), active ? .white : NSColor(white: 0.25, alpha: 1))
         }
-        let copy = CGRect(x: 812, y: 7, width: 76, height: 28)
+        let copy = CGRect(x: 790, y: 433, width: 76, height: 28)
         rounded(copy, 7, .systemBlue)
         text("Copiar", 14, .semibold, .white, at: CGPoint(x: copy.midX, y: copy.minY + 5), align: .center)
 
@@ -578,7 +579,7 @@ func sceneRecord(_ t: CGFloat) {
 
 /// 14.5 a 16: el video se vuelve imágenes.
 func sceneMoments(_ t: CGFloat) {
-    headline("05", "Claude lo ve.", "Cada video, en imágenes con su minuto.", start: 14.5, end: 16, t, size: 118)
+    headline("05", "Claude lo ve.", "Cada video, en imágenes con su minuto.", start: 14.5, end: 16, t, size: 104)
     let grid = layer(CGSize(width: 1200, height: 760), scale: 1.3) {
         let moments = ["0:00", "0:02", "0:04", "0:06", "0:08", "0:10"]
         let cell = CGSize(width: 384, height: 240)
@@ -602,7 +603,7 @@ func sceneMoments(_ t: CGFloat) {
     }
     let image = grid
     ctx.saveGState()
-    tiltedPlain(image, center: stageCenter, size: CGSize(width: 1200, height: 760), yaw: -0.18, pitch: 0.05, zoom: 1 + span(t, 14.5, 16) * 0.05)
+    tiltedPlain(image, center: stageCenter, size: CGSize(width: 1040, height: 659), yaw: -0.18, pitch: 0.05, zoom: 1 + span(t, 14.5, 16) * 0.05)
     ctx.restoreGState()
 }
 
@@ -640,6 +641,7 @@ func scenePaste(_ t: CGFloat) {
     headline("06", "Pégalo.", "Directo en Claude Code.", start: 16, end: 18, t)
     keycaps(["Ctrl", "V"], origin: CGPoint(x: 96, y: 610), start: 16.25, t)
     let size = CGSize(width: 1240, height: 560)
+    let shown = CGSize(width: 1080, height: 488)
     let image = layer(size) {
         rounded(CGRect(origin: .zero, size: size), 18, NSColor(srgbRed: 0.075, green: 0.075, blue: 0.095, alpha: 1))
         for (index, color) in [NSColor.systemRed, .systemYellow, .systemGreen].enumerated() {
@@ -675,7 +677,7 @@ func scenePaste(_ t: CGFloat) {
     tilted(
         image,
         center: CGPoint(x: stageCenter.x + (1 - settle) * 460, y: 540),
-        size: size,
+        size: shown,
         yaw: -0.17 - (1 - settle) * 0.5,
         pitch: 0.05,
         zoom: 1 + span(t, 16, 18) * 0.05
@@ -1056,7 +1058,7 @@ let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
     AVVideoWidthKey: width,
     AVVideoHeightKey: height,
     AVVideoCompressionPropertiesKey: [
-        AVVideoAverageBitRateKey: 16_000_000,
+        AVVideoAverageBitRateKey: 9_000_000,
         AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel,
     ] as [String: Any],
 ])
