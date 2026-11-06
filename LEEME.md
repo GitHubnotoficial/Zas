@@ -29,6 +29,7 @@ La primera vez:
 | ⇧⌘2 | Capturar: arrastra para un área o haz clic en una ventana |
 | ⇧⌘1 | Capturar la pantalla donde está el cursor |
 | ⇧⌘8 | Elegir un área y capturarla 3 segundos después, para abrir antes un menú o un aviso |
+| ⇧⌘0 | Capturar con desplazamiento: una imagen larga de lo que vas bajando |
 | ⇧⌘7 | Copiar el texto de un área |
 | ⇧⌘6 | Empezar o detener una grabación de video |
 | ⇧⌘9 | Repetir la última captura, en la misma área |

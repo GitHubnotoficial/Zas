@@ -79,7 +79,7 @@ Excepción decidida por el dueño: copiar rápido, guardar y ver la ruta se qued
 
 ## Decisiones de producto
 
-- Atajos: ⇧⌘2 área, ⇧⌘1 pantalla, ⇧⌘7 texto, ⇧⌘8 en 3 segundos, ⇧⌘6 video, ⇧⌘9 repetir. Repetir el atajo cancela.
+- Atajos: ⇧⌘2 área, ⇧⌘1 pantalla, ⇧⌘7 texto, ⇧⌘8 en 3 segundos, ⇧⌘0 desplazamiento, ⇧⌘6 video, ⇧⌘9 repetir. Repetir el atajo cancela.
 - Sin cuenta y sin nube.
 - La carpeta es `Imágenes/Zas`. Se puede no guardar copia; los videos siempre se guardan.
 - El editor pregunta antes de perder marcas.
@@ -88,9 +88,11 @@ Excepción decidida por el dueño: copiar rápido, guardar y ver la ruta se qued
 
 Versión en `compilar.sh`. Hecho frente a CleanShot: área, ventana, pantalla, temporizador, desplazamiento, congelar con lupa, texto con Live Text, tarjetas, fijar, historial, editor completo (flecha, línea, cuadro, relleno, círculo, lápiz, resaltador, texto, números, censura y desenfoque, foco, borrador, recorte, rotar, voltear, tamaño, fondos, combinar imágenes, cuentagotas), video con micrófono, audio del Mac, FPS, cursor, resumen para Claude, GIF y recorte.
 
-No hecho, a propósito: nube (necesita servidor y cuentas), Studio Mode (editor de video completo), mostrar clics y teclas (el video excluye las ventanas de Zas y las teclas piden permiso de Accesibilidad), cámara, proyectos editables, No molestar automático.
+También hecho: clics, teclas y cámara dentro del video; proyectos editables `.zas`; recientes en el menú; historial con carátulas de video; menús Ver y Herramientas en el editor.
 
-Pendiente permanente: probar en un Mac físico, pegar de verdad en Claude Code, micrófono, audio del Mac con sonido real, gesto de trackpad y captura con desplazamiento sobre una app real.
+No hecho, a propósito: nube (necesita servidor y cuentas), Studio Mode (editor de video completo), No molestar automático.
+
+Pendiente permanente: probar en un Mac físico, pegar de verdad en Claude Code, micrófono, audio del Mac con sonido real, teclas con permiso de Accesibilidad, cámara, gesto de trackpad y captura con desplazamiento sobre una app real.
 
 ## Herramientas fuera del repositorio
 
