@@ -55,19 +55,13 @@ final class Toast {
         panel.alphaValue = 0
         panel.orderFrontRegardless()
         panel.invalidateShadow()
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.15
-            panel.animator().alphaValue = 1
-        }
+        fade(panel, to: 1, duration: 0.15)
         self.panel = panel
 
         hideTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
             guard !Task.isCancelled else { return }
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.2
-                panel.animator().alphaValue = 0
-            }
+            self?.fade(panel, to: 0, duration: 0.2)
             try? await Task.sleep(nanoseconds: 220_000_000)
             guard !Task.isCancelled else { return }
             panel.orderOut(nil)
@@ -75,5 +69,12 @@ final class Toast {
                 self?.panel = nil
             }
         }
+    }
+
+    private func fade(_ panel: NSPanel, to alpha: CGFloat, duration: TimeInterval) {
+        NSAnimationContext.beginGrouping()
+        NSAnimationContext.current.duration = duration
+        panel.animator().alphaValue = alpha
+        NSAnimationContext.endGrouping()
     }
 }
