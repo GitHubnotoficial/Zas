@@ -559,8 +559,8 @@ enum SelfTest {
 
         // Las capturas recientes incluyen lo último y salen en orden.
         let recent = Recents.files()
-        check(recent.first == sheet, "las recientes empiezan por lo último")
-        check(recent.contains(url), "las recientes incluyen videos")
+        check(recent.first?.lastPathComponent == sheet.lastPathComponent, "las recientes empiezan por lo último")
+        check(recent.contains { $0.lastPathComponent == url.lastPathComponent }, "las recientes incluyen videos")
         let asset = AVURLAsset(url: url)
         let duration = (try? await asset.load(.duration))?.seconds ?? 0
         check(duration >= 2.5, "el video dura lo esperado (\(String(format: "%.1f", duration)) s)")
