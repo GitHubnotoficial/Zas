@@ -39,24 +39,22 @@ final class PinController: NSObject {
         panel.isReleasedWhenClosed = false
         panel.isMovableByWindowBackground = true
         panel.contentAspectRatio = size
+        panel.animationBehavior = .none
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
 
         let view = PinView(frame: CGRect(origin: .zero, size: size), image: image)
         view.autoresizingMask = [.width, .height]
 
-        let close = NSButton(
-            image: NSImage(systemSymbolName: "xmark.circle.fill", accessibilityDescription: "Cerrar") ?? NSImage(),
-            target: self,
-            action: #selector(closePin(_:))
-        )
-        close.isBordered = false
-        close.contentTintColor = .white
-        close.frame = CGRect(x: 6, y: size.height - 26, width: 20, height: 20)
+        let close = PinCloseButton(target: self, action: #selector(closePin(_:)))
+        close.frame = CGRect(x: 8, y: size.height - 30, width: 22, height: 22)
         close.autoresizingMask = [.maxXMargin, .minYMargin]
+        close.isHidden = true
         view.addSubview(close)
+        view.closeButton = close
 
         panel.contentView = view
         panel.orderFrontRegardless()
+        panel.invalidateShadow()
         panels.append(panel)
     }
 
@@ -65,10 +63,44 @@ final class PinController: NSObject {
         window.orderOut(nil)
         panels.removeAll { $0 === window }
     }
+
+    #if ZAS_TEST
+    func closeAll() {
+        panels.forEach { $0.orderOut(nil) }
+        panels.removeAll()
+    }
+
+    func simulateHover() {
+        panels.compactMap { $0.contentView as? PinView }.forEach { $0.closeButton?.isHidden = false }
+    }
+    #endif
+}
+
+private final class PinCloseButton: NSButton {
+    init(target: AnyObject, action: Selector) {
+        super.init(frame: .zero)
+        image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Cerrar")?
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 9, weight: .bold))
+        imagePosition = .imageOnly
+        isBordered = false
+        contentTintColor = .white
+        toolTip = "Cerrar"
+        self.target = target
+        self.action = action
+        wantsLayer = true
+        layer?.cornerRadius = 11
+        layer?.backgroundColor = NSColor.black.withAlphaComponent(0.65).cgColor
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) no se usa")
+    }
 }
 
 private final class PinView: NSView {
     private let image: NSImage
+    weak var closeButton: NSButton?
+    private var trackingArea: NSTrackingArea?
 
     init(frame: CGRect, image: NSImage) {
         self.image = image
@@ -82,6 +114,29 @@ private final class PinView: NSView {
     override var mouseDownCanMoveWindow: Bool { true }
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let trackingArea {
+            removeTrackingArea(trackingArea)
+        }
+        let area = NSTrackingArea(
+            rect: .zero,
+            options: [.activeAlways, .inVisibleRect, .mouseEnteredAndExited],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        trackingArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        closeButton?.isHidden = false
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        closeButton?.isHidden = true
+    }
 
     override func draw(_ dirtyRect: NSRect) {
         NSBezierPath(roundedRect: bounds, xRadius: 8, yRadius: 8).addClip()

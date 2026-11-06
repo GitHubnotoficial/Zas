@@ -1,6 +1,9 @@
 import AppKit
 
 MainActor.assumeIsolated {
+    #if ZAS_TEST
+    SelfTest.run()
+    #else
     let app = NSApplication.shared
     let delegate = AppDelegate()
     app.delegate = delegate
@@ -9,4 +12,5 @@ MainActor.assumeIsolated {
     withExtendedLifetime(delegate) {
         app.run()
     }
+    #endif
 }

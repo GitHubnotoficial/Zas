@@ -1,11 +1,11 @@
 import AppKit
 
 /// Captura con la herramienta del sistema (`screencapture`) y maneja archivos y portapapeles.
+@MainActor
 enum Capture {
-    /// Carpeta donde queda el historial: ~/Pictures/Zas
+    /// Carpeta del historial. Por defecto, Imágenes/Zas.
     static var folder: URL {
-        let pictures = FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask)[0]
-        let url = pictures.appendingPathComponent("Zas", isDirectory: true)
+        let url = Settings.shared.saveFolder
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
     }
@@ -14,7 +14,22 @@ enum Capture {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyy-MM-dd HH.mm.ss"
-        return folder.appendingPathComponent("Zas \(formatter.string(from: Date())).\(ext)")
+        let base = "Zas \(formatter.string(from: Date()))"
+
+        var url = folder.appendingPathComponent("\(base).\(ext)")
+        var suffix = 2
+        while FileManager.default.fileExists(atPath: url.path) {
+            url = folder.appendingPathComponent("\(base) \(suffix).\(ext)")
+            suffix += 1
+        }
+        return url
+    }
+
+    /// Archivo temporal para capturas que no van al historial.
+    static func temporaryFileURL() -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("png")
     }
 
     static func regionArgument(_ rect: CGRect) -> String {
@@ -25,8 +40,7 @@ enum Capture {
         return "-R\(x),\(y),\(width),\(height)"
     }
 
-    /// Corre `screencapture` en segundo plano. Devuelve `false` si no quedó archivo
-    /// (por ejemplo, si el usuario canceló la selección de ventana).
+    /// Corre `screencapture` en segundo plano. Devuelve `false` si no quedó archivo.
     static func run(
         arguments: [String],
         to url: URL,
@@ -71,17 +85,15 @@ enum Capture {
         pasteboard.setString(text, forType: .string)
     }
 
-    /// Archivo temporal para capturas que no van al historial.
-    static func temporaryFileURL() -> URL {
-        FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString)
-            .appendingPathExtension("png")
-    }
-
     /// Copia el archivo en sí (se usa para los videos).
     static func copyFile(at url: URL) {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.writeObjects([url as NSURL])
+    }
+
+    static func playSound() {
+        guard Settings.shared.playSound else { return }
+        NSSound(named: NSSound.Name("Tink"))?.play()
     }
 }

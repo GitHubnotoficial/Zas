@@ -14,21 +14,36 @@ enum RecorderError: LocalizedError {
     }
 }
 
-/// Graba un área de la pantalla a MP4 (H.264, 30 fps, máximo 1920 px de lado).
+/// Graba un área de la pantalla a MP4 (H.264, 30 fps, máximo 1920 px de lado),
+/// con el micrófono opcional en macOS 15 o más nuevo.
 /// El tamaño está pensado para que el archivo sea liviano y fácil de subir.
 final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
+    static var supportsMicrophone: Bool {
+        if #available(macOS 15.0, *) {
+            return true
+        }
+        return false
+    }
+
     /// Se llama si la grabación se corta sola (por ejemplo, si se desconecta la pantalla).
     var onUnexpectedStop: (@MainActor (Error) -> Void)?
 
     private let queue = DispatchQueue(label: "zas.recorder")
     private var stream: SCStream?
     private var writer: AVAssetWriter?
-    private var input: AVAssetWriterInput?
+    private var videoInput: AVAssetWriterInput?
+    private var audioInput: AVAssetWriterInput?
     private var outputURL: URL?
     private var sessionStarted = false
     private var lastTime = CMTime.zero
 
-    func start(displayID: CGDirectDisplayID, rect: CGRect, scale: CGFloat, to url: URL) async throws {
+    func start(
+        displayID: CGDirectDisplayID,
+        rect: CGRect,
+        scale: CGFloat,
+        microphone: Bool,
+        to url: URL
+    ) async throws {
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
         guard let display = content.displays.first(where: { $0.displayID == displayID }) else {
             throw RecorderError.displayNotFound
@@ -54,7 +69,7 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
         configuration.showsCursor = true
 
         let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
-        let settings: [String: Any] = [
+        let videoSettings: [String: Any] = [
             AVVideoCodecKey: AVVideoCodecType.h264,
             AVVideoWidthKey: width,
             AVVideoHeightKey: height,
@@ -63,22 +78,47 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
                 AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel,
             ] as [String: Any],
         ]
-        let input = AVAssetWriterInput(mediaType: .video, outputSettings: settings)
-        input.expectsMediaDataInRealTime = true
-        guard writer.canAdd(input) else {
+        let videoInput = AVAssetWriterInput(mediaType: .video, outputSettings: videoSettings)
+        videoInput.expectsMediaDataInRealTime = true
+        guard writer.canAdd(videoInput) else {
             throw RecorderError.writerSetupFailed
         }
-        writer.add(input)
+        writer.add(videoInput)
+
+        var audioInput: AVAssetWriterInput?
+        var capturesMicrophone = false
+        if microphone, #available(macOS 15.0, *) {
+            capturesMicrophone = await AVCaptureDevice.requestAccess(for: .audio)
+            if capturesMicrophone {
+                configuration.captureMicrophone = true
+                let input = AVAssetWriterInput(mediaType: .audio, outputSettings: [
+                    AVFormatIDKey: kAudioFormatMPEG4AAC,
+                    AVSampleRateKey: 48_000,
+                    AVNumberOfChannelsKey: 1,
+                    AVEncoderBitRateKey: 96_000,
+                ])
+                input.expectsMediaDataInRealTime = true
+                if writer.canAdd(input) {
+                    writer.add(input)
+                    audioInput = input
+                }
+            }
+        }
+
         guard writer.startWriting() else {
             throw writer.error ?? RecorderError.writerSetupFailed
         }
 
         self.writer = writer
-        self.input = input
+        self.videoInput = videoInput
+        self.audioInput = audioInput
         self.outputURL = url
 
         let stream = SCStream(filter: filter, configuration: configuration, delegate: self)
         try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: queue)
+        if capturesMicrophone, #available(macOS 15.0, *) {
+            try stream.addStreamOutput(self, type: .microphone, sampleHandlerQueue: queue)
+        }
         try await stream.startCapture()
         self.stream = stream
     }
@@ -92,12 +132,13 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
 
         return await withCheckedContinuation { (continuation: CheckedContinuation<URL?, Never>) in
             queue.async { [self] in
-                guard let writer, let input, let outputURL, sessionStarted else {
+                guard let writer, let videoInput, let outputURL, sessionStarted else {
                     self.writer?.cancelWriting()
                     continuation.resume(returning: nil)
                     return
                 }
-                input.markAsFinished()
+                videoInput.markAsFinished()
+                audioInput?.markAsFinished()
                 // Si la pantalla quedó quieta al final, el último cuadro cubre ese tiempo.
                 let now = CMClockGetTime(CMClockGetHostTimeClock())
                 writer.endSession(atSourceTime: CMTimeMaximum(lastTime, now))
@@ -113,20 +154,24 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
         didOutputSampleBuffer sampleBuffer: CMSampleBuffer,
         of type: SCStreamOutputType
     ) {
-        guard type == .screen,
-              sampleBuffer.isValid,
-              let writer,
-              let input,
-              Self.isCompleteFrame(sampleBuffer)
-        else { return }
+        guard sampleBuffer.isValid, let writer else { return }
 
-        let time = sampleBuffer.presentationTimeStamp
-        if !sessionStarted {
-            writer.startSession(atSourceTime: time)
-            sessionStarted = true
+        if type == .screen {
+            guard let videoInput, Self.isCompleteFrame(sampleBuffer) else { return }
+            let time = sampleBuffer.presentationTimeStamp
+            if !sessionStarted {
+                writer.startSession(atSourceTime: time)
+                sessionStarted = true
+            }
+            if videoInput.isReadyForMoreMediaData, videoInput.append(sampleBuffer) {
+                lastTime = time
+            }
+            return
         }
-        if input.isReadyForMoreMediaData, input.append(sampleBuffer) {
-            lastTime = time
+
+        // Lo único que queda es el micrófono. El audio espera al primer cuadro de video.
+        if sessionStarted, let audioInput, audioInput.isReadyForMoreMediaData {
+            audioInput.append(sampleBuffer)
         }
     }
 

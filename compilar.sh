@@ -5,7 +5,7 @@ set -euo pipefail
 APP_NAME="Zas"
 BUNDLE_ID="local.zas.app"
 MIN_MACOS="13.0"
-VERSION="0.2.0"
+VERSION="0.3.0"
 
 cd "$(dirname "$0")"
 
@@ -14,7 +14,12 @@ BUNDLE="$BUILD_DIR/$APP_NAME.app"
 SDK="$(xcrun --show-sdk-path)"
 
 rm -rf "$BUILD_DIR"
-mkdir -p "$BUNDLE/Contents/MacOS"
+mkdir -p "$BUNDLE/Contents/MacOS" "$BUNDLE/Contents/Resources"
+
+echo "Creando icono..."
+xcrun swift Tools/icono.swift "$BUILD_DIR/Zas.iconset" "$BUILD_DIR/icono.png"
+iconutil -c icns "$BUILD_DIR/Zas.iconset" -o "$BUNDLE/Contents/Resources/Zas.icns"
+rm -rf "$BUILD_DIR/Zas.iconset"
 
 for ARCH in arm64 x86_64; do
     echo "Compilando para $ARCH..."
@@ -43,9 +48,12 @@ cat > "$BUNDLE/Contents/Info.plist" <<PLIST
     <key>CFBundleShortVersionString</key><string>$VERSION</string>
     <key>CFBundleVersion</key><string>$VERSION</string>
     <key>LSMinimumSystemVersion</key><string>$MIN_MACOS</string>
+    <key>CFBundleIconFile</key><string>Zas</string>
+    <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
     <key>LSUIElement</key><true/>
     <key>NSHighResolutionCapable</key><true/>
     <key>NSScreenCaptureUsageDescription</key><string>Zas necesita ver la pantalla para tomar capturas y grabar video.</string>
+    <key>NSMicrophoneUsageDescription</key><string>Zas usa el micrófono solo cuando activas grabar tu voz en los videos.</string>
 </dict>
 </plist>
 PLIST

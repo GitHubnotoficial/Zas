@@ -17,23 +17,23 @@ final class HotKeys {
         InstallEventHandler(GetApplicationEventTarget(), hotKeyCallback, 1, &spec, nil, nil)
     }
 
+    /// Devuelve el identificador del atajo, o `nil` si otra app ya lo tiene ocupado.
     @discardableResult
-    func register(keyCode: Int, modifiers: Int, action: @escaping @MainActor () -> Void) -> UInt32? {
+    func register(keyCode: UInt32, modifiers: UInt32, action: @escaping @MainActor () -> Void) -> UInt32? {
         let id = nextID
         nextID += 1
 
         let hotKeyID = EventHotKeyID(signature: OSType(0x5A41_5321), id: id)
         var ref: EventHotKeyRef?
         let status = RegisterEventHotKey(
-            UInt32(keyCode),
-            UInt32(modifiers),
+            keyCode,
+            modifiers,
             hotKeyID,
             GetApplicationEventTarget(),
             0,
             &ref
         )
         guard status == noErr, let ref else {
-            NSLog("Zas: no se pudo registrar el atajo %d (error %d)", keyCode, status)
             return nil
         }
         refs[id] = ref
