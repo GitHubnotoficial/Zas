@@ -1,0 +1,25 @@
+name: Video promocional
+
+on:
+  push:
+    branches: [promo]
+
+jobs:
+  promo:
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Renderizar
+        run: |
+          mkdir -p salida
+          xcrun swiftc -O -swift-version 5 -sdk "$(xcrun --show-sdk-path)" -o promo Tools/promo.swift
+          ./promo "$PWD/salida"
+          ls -la salida
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: promo
+          path: salida
+          if-no-files-found: error
