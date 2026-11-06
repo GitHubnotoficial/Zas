@@ -422,12 +422,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func showRecordingUI(_ selection: Selection) {
         // Sin menú, el clic en la barra llama a toggleRecording y detiene.
         statusItem.menu = nil
-        statusItem.button?.image = NSImage(
+        // Colores fijos: la barra de menú ignora el tinte en los iconos de plantilla.
+        let stopIcon = NSImage(
             systemSymbolName: "stop.circle.fill",
             accessibilityDescription: "Detener grabación"
-        )
+        )?.withSymbolConfiguration(NSImage.SymbolConfiguration(paletteColors: [.white, .systemRed]))
+        stopIcon?.isTemplate = false
+        statusItem.button?.image = stopIcon
         statusItem.button?.imagePosition = .imageLeft
-        statusItem.button?.contentTintColor = .systemRed
         statusItem.button?.title = " 0:00"
 
         recordingStart = Date()

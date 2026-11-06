@@ -78,6 +78,11 @@ jobs:
             sudo sqlite3 "$DB" "INSERT OR REPLACE INTO access (service,client,client_type,auth_value,auth_reason,auth_version,flags,last_modified) VALUES ('$SERVICE','$PWD/build/ZasConductor',1,2,4,1,0,$NOW);"
           done
           sudo sqlite3 "$USERDB" "INSERT OR REPLACE INTO access (service,client,client_type,auth_value,auth_reason,auth_version,flags,last_modified) VALUES ('kTCCServicePostEvent','$PWD/build/ZasConductor',1,2,4,1,0,$NOW);" || true
+          # macOS 15 pregunta con un aviso propio: aquí se da por aceptado para que no tape la app.
+          APPROVALS="$HOME/Library/Group Containers/group.com.apple.replayd/ScreenCaptureApprovals.plist"
+          mkdir -p "$(dirname "$APPROVALS")"
+          defaults write "$APPROVALS" local.zas.app -date "2100-01-01 00:00:00 +0000"
+          killall replayd || true
           defaults write local.zas.app welcomed -bool true
           open /Applications/Zas.app
           sleep 4
