@@ -129,6 +129,32 @@ func zasWindowCount(minimumWidth: CGFloat) -> Int {
     }.count
 }
 
+/// Ventana del aviso del sistema, sea cual sea el sitio donde aparezca.
+func systemPromptFrame() -> CGRect? {
+    let ignored: Set<String> = ["Zas", "Calculator", "Dock", "Window Server", "Control Center", "SystemUIServer", "Finder"]
+    let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]]
+    for info in list ?? [] {
+        let owner = info[kCGWindowOwnerName as String] as? String ?? ""
+        guard !ignored.contains(owner),
+              let bounds = info[kCGWindowBounds as String] as? NSDictionary,
+              let rect = CGRect(dictionaryRepresentation: bounds),
+              rect.width > 230, rect.width < 320, rect.height > 280, rect.height < 380
+        else { continue }
+        print("aviso del sistema: \(owner) \(rect)")
+        return rect
+    }
+    return nil
+}
+
+func dismissSystemPrompt() {
+    for _ in 0..<4 {
+        guard let frame = systemPromptFrame() else { return }
+        // El botón Allow queda 263 puntos por debajo del borde superior del aviso.
+        click(at: CGPoint(x: frame.midX, y: frame.minY + 263))
+        wait(0.8)
+    }
+}
+
 let screen = NSScreen.screens[0]
 let scale = Int(screen.backingScaleFactor)
 print("pantalla \(screen.frame.size) escala \(scale)")
@@ -152,8 +178,7 @@ check(region != nil, "⇧⌘2 y arrastrar crea el archivo")
 // macOS 15 muestra su propio aviso en la primera captura. Se acepta como lo haría una persona.
 wait(1.5)
 shot("e2e-00-aviso-macos")
-click(at: CGPoint(x: screen.frame.width / 2 + 80, y: 428))
-wait(1)
+dismissSystemPrompt()
 
 if let size = pixelSize(region) {
     check(size == (300 * scale, 250 * scale), "el área mide lo arrastrado (\(size))")
@@ -176,8 +201,12 @@ check(zasWindowCount(minimumWidth: 700) >= 1, "clic en la miniatura abre el edit
 shot("e2e-04-editor")
 
 // 3. Editor: dibujar con el ratón, deshacer, rehacer y copiar con Enter.
+dismissSystemPrompt()
+check(systemPromptFrame() == nil, "el aviso del sistema se puede aceptar y no tapa el editor")
 let editorFrame = windowFrame(owner: "Zas")
 if let editorFrame {
+    click(at: CGPoint(x: editorFrame.midX, y: editorFrame.maxY - 8))
+    wait(0.2)
     let center = CGPoint(x: editorFrame.midX, y: editorFrame.midY + 26)
     drag(from: CGPoint(x: center.x - 90, y: center.y - 50), to: CGPoint(x: center.x + 80, y: center.y + 50))
     wait(0.3)
@@ -197,6 +226,19 @@ if let editorFrame {
         press(kVK_Return)
     }
     check(annotated?.lastPathComponent.contains("anotada") == true, "Enter guarda la versión anotada")
+    // La flecha y el cuadro se dibujaron sobre una imagen negra: buscar su rojo prueba que funcionó el ratón.
+    if let annotated, let rep = (try? Data(contentsOf: annotated)).flatMap({ NSBitmapImageRep(data: $0) }) {
+        var redPixels = 0
+        for x in stride(from: 0, to: rep.pixelsWide, by: 2) {
+            for y in stride(from: 0, to: rep.pixelsHigh, by: 2) {
+                if let color = rep.colorAt(x: x, y: y)?.usingColorSpace(.sRGB),
+                   color.redComponent > 0.7, color.greenComponent < 0.4 {
+                    redPixels += 1
+                }
+            }
+        }
+        check(redPixels > 150, "lo dibujado con el ratón sale en la imagen (\(redPixels) puntos rojos)")
+    }
     wait(0.4)
     check(NSPasteboard.general.changeCount != beforeCopy, "la versión anotada queda en el portapapeles")
     check(zasWindowCount(minimumWidth: 700) == 0, "el editor se cierra al copiar")

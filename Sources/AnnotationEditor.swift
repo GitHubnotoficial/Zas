@@ -80,10 +80,19 @@ private final class DotButton: NSButton {
         ))
         dot.fill()
         if dotColor != nil {
-            NSColor.separatorColor.setStroke()
-            dot.lineWidth = 0.5
+            // Contorno visible: si no, el blanco desaparece sobre la barra clara.
+            NSColor.tertiaryLabelColor.setStroke()
+            dot.lineWidth = 1
             dot.stroke()
         }
+    }
+}
+
+/// Fondo del editor. Se dibuja aquí para que siga el modo claro u oscuro.
+private final class EditorBackgroundView: NSView {
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.underPageBackgroundColor.setFill()
+        dirtyRect.fill()
     }
 }
 
@@ -169,9 +178,7 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
         window.delegate = self
         window.collectionBehavior = [.fullScreenAuxiliary, .moveToActiveSpace]
 
-        let content = NSView(frame: CGRect(origin: .zero, size: contentSize))
-        content.wantsLayer = true
-        content.layer?.backgroundColor = NSColor.underPageBackgroundColor.cgColor
+        let content = EditorBackgroundView(frame: CGRect(origin: .zero, size: contentSize))
         content.addSubview(canvas)
         buildToolbar(in: content, height: toolbarHeight)
         window.contentView = content
