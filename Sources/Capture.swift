@@ -77,6 +77,31 @@ enum Capture {
         return url
     }
 
+    static func uniqueURL(in folder: URL, name: String) -> URL {
+        let base = (name as NSString).deletingPathExtension
+        let ext = (name as NSString).pathExtension
+        var url = folder.appendingPathComponent(name)
+        var suffix = 2
+        while FileManager.default.fileExists(atPath: url.path) {
+            url = folder.appendingPathComponent("\(base) \(suffix).\(ext)")
+            suffix += 1
+        }
+        return url
+    }
+
+    /// Guarda una imagen ya compuesta con su tamaño real en puntos.
+    static func writePNG(_ image: CGImage, to url: URL, pointSize: CGSize) -> Bool {
+        let rep = NSBitmapImageRep(cgImage: image)
+        rep.size = pointSize
+        guard let data = rep.representation(using: .png, properties: [:]) else { return false }
+        return (try? data.write(to: url)) != nil
+    }
+
+    static func image(at url: URL) -> CGImage? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+        return CGImageSourceCreateImageAtIndex(source, 0, nil)
+    }
+
     /// Archivo para capturas que no van al historial.
     static func temporaryFileURL() -> URL {
         scratchFolder

@@ -126,7 +126,7 @@ private struct SettingsView: View {
             shortcuts.tabItem { Label("Atajos", systemImage: "command") }
             video.tabItem { Label("Video", systemImage: "video") }
         }
-        .frame(width: 480, height: 400)
+        .frame(width: 480, height: 470)
     }
 
     private var general: some View {
@@ -210,6 +210,12 @@ private struct SettingsView: View {
                 Text("1 minuto").tag(60.0)
                 Text("5 minutos").tag(300.0)
             }
+            Picker("Fluidez", selection: $settings.videoFPS) {
+                Text("30 cuadros por segundo").tag(30)
+                Text("60 cuadros por segundo").tag(60)
+            }
+            Toggle("Mostrar el cursor", isOn: $settings.videoCursor)
+            Toggle("Grabar el sonido del Mac", isOn: $settings.systemAudio)
             Toggle("Grabar con micrófono", isOn: $settings.recordMicrophone)
                 .disabled(!ScreenRecorder.supportsMicrophone)
             if !ScreenRecorder.supportsMicrophone {
@@ -322,6 +328,93 @@ private struct WelcomeView: View {
     }
 }
 
+/// Todas las capturas guardadas, con filtro y borrado a la Papelera.
+private struct HistoryView: View {
+    enum Filter: String, CaseIterable {
+        case all = "Todo"
+        case images = "Capturas"
+        case videos = "Videos"
+    }
+
+    let onOpen: (URL) -> Void
+    @State private var files: [URL] = []
+    @State private var filter = Filter.all
+
+    private var visible: [URL] {
+        files.filter {
+            switch filter {
+            case .all: return true
+            case .images: return $0.pathExtension == "png"
+            case .videos: return $0.pathExtension == "mp4"
+            }
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Picker("", selection: $filter) {
+                ForEach(Filter.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(width: 260)
+            .padding(.vertical, 12)
+
+            if visible.isEmpty {
+                Text("Aún no hay capturas aquí.")
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 160), spacing: 12)], spacing: 12) {
+                        ForEach(visible, id: \.self) { file in
+                            tile(file)
+                        }
+                    }
+                    .padding(16)
+                }
+            }
+        }
+        .frame(width: 720, height: 520)
+        .onAppear(perform: reload)
+    }
+
+    private func tile(_ file: URL) -> some View {
+        VStack(spacing: 6) {
+            Group {
+                if let preview = Recents.preview(of: file) {
+                    Image(nsImage: preview).resizable().aspectRatio(contentMode: .fit)
+                } else {
+                    Image(systemName: "film").font(.largeTitle).foregroundStyle(.secondary)
+                }
+            }
+            .frame(width: 160, height: 100)
+            .background(.quaternary, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            Text(Recents.title(for: file))
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { onOpen(file) }
+        .contextMenu {
+            Button("Copiar y mostrar") { onOpen(file) }
+            Button("Mostrar en Finder") { NSWorkspace.shared.activateFileViewerSelecting([file]) }
+            Button("Mover a la Papelera") {
+                NSWorkspace.shared.recycle([file]) { _, _ in
+                    Task { @MainActor in reload() }
+                }
+            }
+        }
+    }
+
+    private func reload() {
+        files = Recents.files(limit: 500)
+    }
+}
+
 /// Crea y recuerda las dos ventanas de la app.
 @MainActor
 final class WindowCoordinator: NSObject, NSWindowDelegate {
@@ -342,6 +435,22 @@ final class WindowCoordinator: NSObject, NSWindowDelegate {
         }
         NSApp.activate(ignoringOtherApps: true)
         settingsWindow?.makeKeyAndOrderFront(nil)
+    }
+
+    private var historyWindow: NSWindow?
+
+    func showHistory(onOpen: @escaping (URL) -> Void) {
+        let host = NSHostingController(rootView: HistoryView(onOpen: onOpen))
+        historyWindow?.close()
+        let window = NSWindow(contentViewController: host)
+        window.title = "Historial de Zas"
+        window.styleMask = [.titled, .closable, .resizable]
+        window.isReleasedWhenClosed = false
+        window.setContentSize(host.view.fittingSize)
+        window.center()
+        historyWindow = window
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
     }
 
     func showWelcome(hasPermission: Bool, openSettings: @escaping () -> Void, relaunch: @escaping () -> Void) {
@@ -377,6 +486,8 @@ final class WindowCoordinator: NSObject, NSWindowDelegate {
         welcomeWindow?.close()
         settingsWindow = nil
         welcomeWindow = nil
+        historyWindow?.close()
+        historyWindow = nil
     }
     #endif
 }

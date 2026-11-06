@@ -46,13 +46,20 @@ Puedes cambiarlos en **Ajustes**, desde el icono de Zas en la barra de menú.
 
 Claude no suele poder ver un video. Por eso, al terminar una grabación Zas copia una **imagen resumen** con hasta doce momentos y su minuto. El MP4 sigue guardado y se puede copiar desde su miniatura. En **Ajustes** puedes hacer que siempre se copie el video.
 
+## En la selección
+
+La barra de vidrio cambia de modo: área, texto, 3 segundos, desplazamiento, video o pantalla completa. La tecla F congela la pantalla y muestra una lupa para acertar al píxel.
+
+Con **desplazamiento**, eliges un área y vas bajando por el contenido. Enter termina y une todo en una imagen larga.
+
 ## Después de capturar
 
 - La imagen queda copiada: pégala con ⌘V.
 - Aparece una miniatura en la esquina. Las capturas seguidas se apilan, hasta cuatro.
 - Arrastra una miniatura para soltar el archivo en otra app.
 - Desliza con dos dedos hacia el borde para descartarla.
-- Si ya se cerró, búscala en **Recientes**, en el menú de Zas.
+- Si ya se cerró, búscala en **Recientes** o en **Ver historial…**, en el menú de Zas.
+- Con clic derecho en un video puedes recortarlo o crear un GIF.
 - Pasa el cursor por encima para copiarla otra vez, copiar su ruta, anotar o fijar en pantalla. Con clic derecho, verla en Finder. "Copiado" marca la que está en el portapapeles.
 - El archivo queda guardado en `Imágenes/Zas`, o en la carpeta que elijas en Ajustes. Si apagas **Guardar una copia de cada captura**, las imágenes se borran al cerrar Zas; los videos siempre se guardan.
 
@@ -62,6 +69,7 @@ Haz clic en una miniatura para abrirlo. Enter copia el resultado y cierra.
 
 | Tecla | Herramienta |
 | --- | --- |
+| F | Foco: oscurece todo menos un área |
 | E | Borrador |
 | V | Mover, cambiar de tamaño o borrar una marca |
 | A | Flecha |

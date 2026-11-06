@@ -321,6 +321,23 @@ if let size = pixelSize(repeated) {
 }
 wait(0.8)
 
+// Congelar la pantalla y capturar de esa imagen.
+moveMouse(to: CGPoint(x: 150, y: 120))
+let frozen = newFile("png", timeout: 6) {
+    hotKey(kVK_ANSI_2)
+    wait(0.6)
+    press(kVK_ANSI_F)
+    wait(1.2)
+    shot("e2e-03c-congelada")
+    drag(from: CGPoint(x: 160, y: 130), to: CGPoint(x: 360, y: 280))
+}
+if let size = pixelSize(frozen) {
+    check(size == (200 * scale, 150 * scale), "capturar con la pantalla congelada (\(size))")
+} else {
+    check(false, "capturar con la pantalla congelada")
+}
+wait(0.8)
+
 // Repetir el atajo también cancela.
 let toggled = newFile("png", timeout: 1) {
     hotKey(kVK_ANSI_2)

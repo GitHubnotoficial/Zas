@@ -6,6 +6,7 @@ enum SelectionMode {
     case recording
     case text
     case timed
+    case scroll
 }
 
 extension NSScreen {
@@ -84,6 +85,8 @@ struct Selection {
     var windowID: CGWindowID?
     /// Tamaño completo de la ventana: `rect` solo cubre la parte que cabe en esta pantalla.
     var windowSize: CGSize?
+    /// Recorte de la pantalla congelada: ya no hace falta capturar.
+    var frozen: CGImage?
 
     static func fullScreen(_ screen: NSScreen) -> Selection {
         Selection(screen: screen, rect: CGRect(origin: .zero, size: screen.frame.size))
@@ -145,6 +148,7 @@ final class SelectionOverlay {
         guard !isActive else { return }
         self.completion = completion
         self.mode = mode
+        isFrozen = false
 
         let windows = WindowFinder.onScreenWindows()
         let target = NSScreen.underMouse
@@ -195,6 +199,32 @@ final class SelectionOverlay {
         finish(nil)
     }
 
+    private(set) var isFrozen = false
+
+    /// Congela lo que se ve: sirve para capturar menús o algo que se mueve.
+    /// Al congelar aparece la lupa, porque ya hay píxeles que ampliar.
+    fileprivate func freeze() {
+        guard !isFrozen else { return }
+        isFrozen = true
+        let current = panels
+        current.forEach { $0.alphaValue = 0 }
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 90_000_000)
+            for panel in current {
+                guard let view = panel.contentView as? OverlayView else { continue }
+                let url = Capture.temporaryFileURL()
+                await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                    Capture.run(arguments: view.freezeArguments, to: url) { _ in
+                        continuation.resume()
+                    }
+                }
+                view.setFrozen(Capture.image(at: url))
+                try? FileManager.default.removeItem(at: url)
+                panel.alphaValue = 1
+            }
+        }
+    }
+
     fileprivate func choose(mode: SelectionMode) {
         self.mode = mode
         for panel in panels {
@@ -230,6 +260,10 @@ final class SelectionOverlay {
         }
     }
 
+    func testFreeze() {
+        freeze()
+    }
+
     func testChoose(mode: SelectionMode) {
         choose(mode: mode)
     }
@@ -250,6 +284,10 @@ private final class OverlayView: NSView {
     private let dimLayer = CAShapeLayer()
     private let frameLayer = CAShapeLayer()
     private let handles = (0..<4).map { _ in CALayer() }
+    private let frozenLayer = CALayer()
+    private let magnifier = CALayer()
+    private var frozenImage: CGImage?
+    private var mousePoint: NSPoint?
     private let sizePill = GlassView(frame: .zero, radius: 13)
     private let sizeLabel = NSTextField(labelWithString: "")
     private var hud: GlassView?
@@ -278,6 +316,10 @@ private final class OverlayView: NSView {
 
     private func buildLayers() {
         guard let root = layer else { return }
+        frozenLayer.frame = bounds
+        frozenLayer.contentsGravity = .resize
+        root.addSublayer(frozenLayer)
+
         dimLayer.frame = bounds
         dimLayer.fillColor = NSColor.black.withAlphaComponent(0.3).cgColor
         dimLayer.fillRule = .evenOdd
@@ -298,6 +340,57 @@ private final class OverlayView: NSView {
             handle.shadowOffset = .zero
             root.addSublayer(handle)
         }
+
+        magnifier.bounds = CGRect(x: 0, y: 0, width: 132, height: 132)
+        magnifier.cornerRadius = 66
+        magnifier.masksToBounds = true
+        magnifier.borderWidth = 3
+        magnifier.borderColor = NSColor.white.cgColor
+        magnifier.magnificationFilter = .nearest
+        magnifier.contentsGravity = .resize
+        magnifier.isHidden = true
+        root.addSublayer(magnifier)
+    }
+
+    var freezeArguments: [String] {
+        let origin = screen.globalTopLeftOrigin
+        return ["-x", Capture.regionArgument(CGRect(origin: origin, size: bounds.size))]
+    }
+
+    func setFrozen(_ image: CGImage?) {
+        frozenImage = image
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        frozenLayer.contents = image
+        CATransaction.commit()
+        refresh()
+    }
+
+    private func crop(_ rect: CGRect) -> CGImage? {
+        guard let frozenImage else { return nil }
+        let scale = CGFloat(frozenImage.width) / max(bounds.width, 1)
+        return frozenImage.cropping(to: CGRect(
+            x: rect.minX * scale,
+            y: rect.minY * scale,
+            width: rect.width * scale,
+            height: rect.height * scale
+        ))
+    }
+
+    /// Doce puntos alrededor del cursor, ampliados, para acertar al píxel.
+    private func refreshMagnifier() {
+        guard frozenImage != nil, let mousePoint,
+              let piece = crop(CGRect(x: mousePoint.x - 6, y: mousePoint.y - 6, width: 12, height: 12))
+        else {
+            magnifier.isHidden = true
+            return
+        }
+        magnifier.contents = piece
+        let side = magnifier.bounds.width
+        let x = mousePoint.x + 28 + side > bounds.maxX ? mousePoint.x - 28 - side / 2 : mousePoint.x + 28 + side / 2
+        let y = mousePoint.y + 28 + side > bounds.maxY ? mousePoint.y - 28 - side / 2 : mousePoint.y + 28 + side / 2
+        magnifier.position = CGPoint(x: x, y: y)
+        magnifier.isHidden = false
     }
 
     private func buildPill() {
@@ -314,6 +407,7 @@ private final class OverlayView: NSView {
             (.screenshot, "viewfinder", "Capturar área o ventana"),
             (.text, "text.viewfinder", "Copiar texto"),
             (.timed, "timer", "Capturar en 3 segundos"),
+            (.scroll, "arrow.up.and.down", "Capturar con desplazamiento"),
             (.recording, "record.circle", "Grabar video"),
         ]
         let hint = NSTextField(labelWithString: "Esc para salir")
@@ -322,7 +416,7 @@ private final class OverlayView: NSView {
         hint.sizeToFit()
 
         let padding: CGFloat = 6
-        let width = padding + CGFloat(entries.count + 1) * (Design.actionSize + 2) + 10 + hint.frame.width + 14
+        let width = padding + CGFloat(entries.count + 2) * (Design.actionSize + 2) + 10 + hint.frame.width + 14
         let height = Design.actionSize + padding * 2
         let glass = GlassView(frame: CGRect(x: 0, y: 0, width: width, height: height), radius: 14)
 
@@ -337,6 +431,10 @@ private final class OverlayView: NSView {
         let full = GlassButton(symbol: "macwindow", tooltip: "Capturar toda la pantalla", target: self, action: #selector(fullScreenPressed))
         full.frame.origin = CGPoint(x: x, y: padding)
         glass.addSubview(full)
+        x += Design.actionSize + 2
+        let still = GlassButton(symbol: "pause.circle", tooltip: "Congelar la pantalla (F)", target: self, action: #selector(freezePressed))
+        still.frame.origin = CGPoint(x: x, y: padding)
+        glass.addSubview(still)
         x += Design.actionSize + 12
 
         hint.frame.origin = CGPoint(x: x, y: ((height - hint.frame.height) / 2).rounded())
@@ -358,8 +456,13 @@ private final class OverlayView: NSView {
         owner?.choose(mode: entry.0)
     }
 
+    @objc private func freezePressed() {
+        owner?.freeze()
+    }
+
     @objc private func fullScreenPressed() {
-        let selection = Selection.fullScreen(screen)
+        var selection = Selection.fullScreen(screen)
+        selection.frozen = frozenImage
         let owner = self.owner
         Task { @MainActor in
             owner?.finish(selection)
@@ -432,6 +535,7 @@ private final class OverlayView: NSView {
     }
 
     private func updateHover(at point: NSPoint) {
+        mousePoint = point
         let origin = screen.globalTopLeftOrigin
         let global = CGPoint(x: point.x + origin.x, y: point.y + origin.y)
         hoveredWindow = hud?.frame.contains(point) == true ? nil : windows.first { $0.frame.contains(global) }
@@ -455,6 +559,7 @@ private final class OverlayView: NSView {
 
     override func mouseDragged(with event: NSEvent) {
         currentPoint = clampedPoint(for: event)
+        mousePoint = currentPoint
         NSCursor.crosshair.set()
         refresh()
     }
@@ -465,7 +570,7 @@ private final class OverlayView: NSView {
         startPoint = nil
         currentPoint = nil
 
-        let selection: Selection
+        var selection: Selection
         if let rect, rect.width >= 4, rect.height >= 4 {
             selection = Selection(screen: screen, rect: rect.integral)
         } else if let hoveredWindow, let hoveredRect {
@@ -478,6 +583,11 @@ private final class OverlayView: NSView {
         } else {
             // Clic en el escritorio: toda la pantalla.
             selection = .fullScreen(screen)
+        }
+        if frozenImage != nil {
+            selection.frozen = crop(selection.rect)
+            selection.windowID = nil
+            selection.windowSize = nil
         }
 
         let owner = self.owner
@@ -497,6 +607,8 @@ private final class OverlayView: NSView {
     override func keyDown(with event: NSEvent) {
         if event.keyCode == UInt16(kVK_Escape) {
             owner?.finish(nil)
+        } else if event.charactersIgnoringModifiers?.lowercased() == "f" {
+            owner?.freeze()
         } else {
             super.keyDown(with: event)
         }
@@ -525,6 +637,7 @@ private final class OverlayView: NSView {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         defer { CATransaction.commit() }
+        refreshMagnifier()
 
         let dragging = selectionRect.map { $0.width > 0 && $0.height > 0 } ?? false
         let isWindow = !dragging && hoveredRect != nil

@@ -2,7 +2,7 @@ import AppKit
 import CoreImage
 
 enum AnnotationTool: Int, CaseIterable {
-    case select, arrow, rectangle, ellipse, highlight, pencil, text, counter, pixelate, crop, eraser
+    case select, arrow, rectangle, ellipse, highlight, pencil, text, counter, pixelate, crop, eraser, spotlight, picture
 
     var label: String {
         switch self {
@@ -17,6 +17,8 @@ enum AnnotationTool: Int, CaseIterable {
         case .pixelate: return "Pixelar"
         case .crop: return "Recortar"
         case .eraser: return "Borrador"
+        case .spotlight: return "Foco"
+        case .picture: return "Imagen"
         }
     }
 
@@ -33,6 +35,8 @@ enum AnnotationTool: Int, CaseIterable {
         case .pixelate: return "X"
         case .crop: return "C"
         case .eraser: return "E"
+        case .spotlight: return "F"
+        case .picture: return ""
         }
     }
 
@@ -44,6 +48,8 @@ enum AnnotationTool: Int, CaseIterable {
         case .ellipse: return "circle"
         case .highlight: return "highlighter"
         case .eraser: return "eraser"
+        case .spotlight: return "scope"
+        case .picture: return "photo"
         case .pencil: return "scribble"
         case .text: return "textformat"
         case .counter: return "1.circle"
@@ -65,6 +71,14 @@ struct Annotation {
     var pixelBrush = false
     /// Tamaño de los bloques al censurar: más grande, más ilegible.
     var blockSize: CGFloat = 14
+    /// Rectángulo relleno en vez de contorno.
+    var filled = false
+    /// Línea sin punta en vez de flecha.
+    var plainLine = false
+    /// Desenfoque suave en vez de bloques.
+    var smoothBlur = false
+    /// Imagen añadida encima de la captura.
+    var picture: NSImage?
 
     /// Se dibuja siguiendo el cursor, no entre dos puntos.
     var isFreehand: Bool {
@@ -181,9 +195,11 @@ struct Annotation {
 struct AnnotationDocument: Equatable {
     var annotations: [Annotation] = []
     var crop: CGRect?
+    /// Imagen transformada (rotada, con fondo...). `nil` es la captura original.
+    var base: NSImage?
 
     static func == (lhs: AnnotationDocument, rhs: AnnotationDocument) -> Bool {
-        lhs.crop == rhs.crop && lhs.annotations.count == rhs.annotations.count
+        lhs.crop == rhs.crop && lhs.base === rhs.base && lhs.annotations.count == rhs.annotations.count
             && zip(lhs.annotations, rhs.annotations).allSatisfy {
                 $0.points == $1.points && $0.color == $1.color && $0.lineWidth == $1.lineWidth
             }
@@ -204,10 +220,23 @@ enum AnnotationRenderer {
         case .arrow:
             drawArrow(annotation)
         case .rectangle:
-            annotation.color.setStroke()
             let path = NSBezierPath(roundedRect: annotation.rect, xRadius: 3, yRadius: 3)
-            path.lineWidth = annotation.lineWidth
-            path.stroke()
+            if annotation.filled {
+                annotation.color.setFill()
+                path.fill()
+            } else {
+                annotation.color.setStroke()
+                path.lineWidth = annotation.lineWidth
+                path.stroke()
+            }
+        case .spotlight:
+            let shade = NSBezierPath(rect: CGRect(origin: .zero, size: imageSize))
+            shade.append(NSBezierPath(roundedRect: annotation.rect, xRadius: 8, yRadius: 8))
+            shade.windingRule = .evenOdd
+            NSColor.black.withAlphaComponent(0.55).setFill()
+            shade.fill()
+        case .picture:
+            annotation.picture?.draw(in: annotation.rect)
         case .ellipse:
             annotation.color.setStroke()
             let path = NSBezierPath(ovalIn: annotation.rect)
@@ -253,6 +282,16 @@ enum AnnotationRenderer {
         guard annotation.points.count > 1 else { return }
         let start = annotation.points[0]
         let end = annotation.points[1]
+        if annotation.plainLine {
+            annotation.color.setStroke()
+            let line = NSBezierPath()
+            line.lineWidth = annotation.lineWidth
+            line.lineCapStyle = .round
+            line.move(to: start)
+            line.line(to: end)
+            line.stroke()
+            return
+        }
         let angle = atan2(end.y - start.y, end.x - start.x)
         let length = hypot(end.x - start.x, end.y - start.y)
         let headLength = min(12 + annotation.lineWidth * 3, length * 0.7)
@@ -336,17 +375,16 @@ enum AnnotationRenderer {
     }
 
     /// Versión de toda la imagen en bloques, de la que se recorta cada zona pixelada.
-    static func makePixelated(_ image: NSImage, block: CGFloat = 14) -> NSImage? {
+    static func makePixelated(_ image: NSImage, block: CGFloat = 14, smooth: Bool = false) -> NSImage? {
         guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
             return nil
         }
         let source = CIImage(cgImage: cgImage)
         let blockSize = max(CGFloat(cgImage.width) / max(image.size.width, 1), 1) * block
-        guard let filter = CIFilter(
-            name: "CIPixellate",
-            parameters: [kCIInputImageKey: source, kCIInputScaleKey: blockSize]
-        ),
-            let output = filter.outputImage?.cropped(to: source.extent),
+        let filter = smooth
+            ? CIFilter(name: "CIGaussianBlur", parameters: [kCIInputImageKey: source.clampedToExtent(), kCIInputRadiusKey: blockSize * 0.6])
+            : CIFilter(name: "CIPixellate", parameters: [kCIInputImageKey: source, kCIInputScaleKey: blockSize])
+        guard let output = filter?.outputImage?.cropped(to: source.extent),
             let result = CIContext().createCGImage(output, from: source.extent)
         else { return nil }
         return NSImage(cgImage: result, size: image.size)

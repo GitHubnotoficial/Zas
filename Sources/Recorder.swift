@@ -37,6 +37,7 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
     private var writer: AVAssetWriter?
     private var videoInput: AVAssetWriterInput?
     private var audioInput: AVAssetWriterInput?
+    private var systemInput: AVAssetWriterInput?
     private var outputURL: URL?
     private var sessionStarted = false
     private var lastTime = CMTime.zero
@@ -46,7 +47,10 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
         rect: CGRect,
         scale: CGFloat,
         microphone: Bool,
-        to url: URL
+        to url: URL,
+        systemAudio: Bool = false,
+        fps: Int = 30,
+        showsCursor: Bool = true
     ) async throws {
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
         guard let display = content.displays.first(where: { $0.displayID == displayID }) else {
@@ -67,10 +71,12 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
         configuration.sourceRect = rect
         configuration.width = width
         configuration.height = height
-        configuration.minimumFrameInterval = CMTime(value: 1, timescale: 30)
+        configuration.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(max(fps, 1)))
         configuration.pixelFormat = kCVPixelFormatType_32BGRA
         configuration.queueDepth = 6
-        configuration.showsCursor = true
+        configuration.showsCursor = showsCursor
+        configuration.capturesAudio = systemAudio
+        configuration.excludesCurrentProcessAudio = true
 
         let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
         let videoSettings: [String: Any] = [
@@ -110,6 +116,21 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
             }
         }
 
+        var systemInput: AVAssetWriterInput?
+        if systemAudio {
+            let input = AVAssetWriterInput(mediaType: .audio, outputSettings: [
+                AVFormatIDKey: kAudioFormatMPEG4AAC,
+                AVSampleRateKey: 48_000,
+                AVNumberOfChannelsKey: 2,
+                AVEncoderBitRateKey: 160_000,
+            ])
+            input.expectsMediaDataInRealTime = true
+            if writer.canAdd(input) {
+                writer.add(input)
+                systemInput = input
+            }
+        }
+
         guard writer.startWriting() else {
             throw writer.error ?? RecorderError.writerSetupFailed
         }
@@ -117,11 +138,15 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
         self.writer = writer
         self.videoInput = videoInput
         self.audioInput = audioInput
+        self.systemInput = systemInput
         self.outputURL = url
 
         do {
             let stream = SCStream(filter: filter, configuration: configuration, delegate: self)
             try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: queue)
+            if systemInput != nil {
+                try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: queue)
+            }
             if capturesMicrophone, #available(macOS 15.0, *) {
                 try stream.addStreamOutput(self, type: .microphone, sampleHandlerQueue: queue)
             }
@@ -156,6 +181,7 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
                 }
                 videoInput.markAsFinished()
                 audioInput?.markAsFinished()
+                systemInput?.markAsFinished()
                 // Si la pantalla quedó quieta al final, el último cuadro cubre ese tiempo.
                 let now = CMClockGetTime(CMClockGetHostTimeClock())
                 writer.endSession(atSourceTime: CMTimeMaximum(lastTime, now))
@@ -200,6 +226,13 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
             }
             if videoInput.isReadyForMoreMediaData, videoInput.append(sampleBuffer) {
                 lastTime = time
+            }
+            return
+        }
+
+        if type == .audio {
+            if sessionStarted, let systemInput, systemInput.isReadyForMoreMediaData {
+                systemInput.append(sampleBuffer)
             }
             return
         }

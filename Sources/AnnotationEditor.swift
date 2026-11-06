@@ -242,7 +242,7 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
     /// Barra de vidrio flotante.
     private func buildToolbar(in content: NSView) {
         let tools: [AnnotationTool] = [
-            .select, .arrow, .rectangle, .ellipse, .pencil, .highlight, .text, .counter, .pixelate, .eraser, .crop,
+            .select, .arrow, .rectangle, .ellipse, .pencil, .highlight, .text, .counter, .pixelate, .spotlight, .eraser, .crop,
         ]
         let padding: CGFloat = 6
         let barHeight = Design.actionSize + padding * 2
@@ -283,6 +283,7 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
         let save = GlassButton(symbol: "square.and.arrow.down", tooltip: "Guardar", target: self, action: #selector(savePressed(_:)))
         place(save)
         saveButton = save
+        place(GlassButton(symbol: "photo.on.rectangle", tooltip: "Imagen: rotar, fondo, tamaño", target: self, action: #selector(imagePressed(_:))))
         let text = GlassButton(symbol: "text.viewfinder", tooltip: "Seleccionar texto en la imagen", target: self, action: #selector(toggleTextMode))
         place(text, gap: 8)
         textButton = text
@@ -371,25 +372,30 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
         subBar?.removeFromSuperview()
         subBar = nil
         let tool = canvas.tool
-        guard [.pencil, .highlight, .eraser, .pixelate].contains(tool),
+        guard [.pencil, .highlight, .eraser, .pixelate, .rectangle, .arrow].contains(tool),
               let size = Self.sizes[tool], let content = window.contentView
         else { return }
 
         let bar = GlassView(frame: .zero, radius: 12)
         var x: CGFloat = 12
-        if tool == .pixelate {
-            let mode = NSSegmentedControl(
-                labels: ["Recuadro", "Pincel"],
-                trackingMode: .selectOne,
-                target: self,
-                action: #selector(pixelModeChanged(_:))
-            )
-            mode.selectedSegment = canvas.pixelBrush ? 1 : 0
+        func addSegment(_ labels: [String], selected: Int, action: Selector) {
+            let mode = NSSegmentedControl(labels: labels, trackingMode: .selectOne, target: self, action: action)
+            mode.selectedSegment = selected
             mode.controlSize = .small
             mode.sizeToFit()
             mode.frame.origin = CGPoint(x: x, y: 9)
             bar.addSubview(mode)
             x += mode.frame.width + 12
+        }
+        if tool == .pixelate {
+            addSegment(["Pixelado", "Desenfoque"], selected: canvas.smoothBlur ? 1 : 0, action: #selector(blurStyleChanged(_:)))
+            addSegment(["Recuadro", "Pincel"], selected: canvas.pixelBrush ? 1 : 0, action: #selector(pixelModeChanged(_:)))
+        }
+        if tool == .rectangle {
+            addSegment(["Contorno", "Relleno"], selected: canvas.filled ? 1 : 0, action: #selector(fillChanged(_:)))
+        }
+        if tool == .arrow {
+            addSegment(["Flecha", "Línea"], selected: canvas.plainLine ? 1 : 0, action: #selector(lineChanged(_:)))
         }
 
         let sizeEnabled = tool != .pixelate || canvas.pixelBrush
@@ -439,6 +445,75 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
         subBar = bar
     }
 
+    @objc private func blurStyleChanged(_ sender: NSSegmentedControl) {
+        canvas.smoothBlur = sender.selectedSegment == 1
+    }
+
+    @objc private func fillChanged(_ sender: NSSegmentedControl) {
+        canvas.filled = sender.selectedSegment == 1
+    }
+
+    @objc private func lineChanged(_ sender: NSSegmentedControl) {
+        canvas.plainLine = sender.selectedSegment == 1
+    }
+
+    // MARK: - Imagen
+
+    @objc private func imagePressed(_ sender: NSButton) {
+        let menu = NSMenu()
+        func add(_ title: String, _ action: Selector, tag: Int = 0, to target: NSMenu? = nil) {
+            let item = (target ?? menu).addItem(withTitle: title, action: action, keyEquivalent: "")
+            item.target = self
+            item.tag = tag
+        }
+        add("Rotar a la derecha", #selector(rotateImage(_:)), tag: 1)
+        add("Rotar a la izquierda", #selector(rotateImage(_:)))
+        add("Voltear en horizontal", #selector(flipImage(_:)), tag: 1)
+        add("Voltear en vertical", #selector(flipImage(_:)))
+        menu.addItem(.separator())
+        let sizes = NSMenu()
+        for percent in [75, 50, 25] {
+            add("\(percent) %", #selector(resizeImage(_:)), tag: percent, to: sizes)
+        }
+        menu.addItem(withTitle: "Cambiar tamaño", action: nil, keyEquivalent: "").submenu = sizes
+        let fonts = NSMenu()
+        for (index, entry) in ImageTools.backgrounds.enumerated() {
+            add(entry.name, #selector(addBackground(_:)), tag: index, to: fonts)
+        }
+        menu.addItem(withTitle: "Añadir fondo", action: nil, keyEquivalent: "").submenu = fonts
+        menu.addItem(.separator())
+        add("Añadir otra imagen…", #selector(addOtherImage))
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.height + 6), in: sender)
+    }
+
+    @objc private func rotateImage(_ sender: NSMenuItem) {
+        canvas.applyImage { ImageTools.rotated($0, clockwise: sender.tag == 1) }
+    }
+
+    @objc private func flipImage(_ sender: NSMenuItem) {
+        canvas.applyImage { ImageTools.flipped($0, horizontally: sender.tag == 1) }
+    }
+
+    @objc private func resizeImage(_ sender: NSMenuItem) {
+        canvas.applyImage { ImageTools.resized($0, factor: CGFloat(sender.tag) / 100) }
+    }
+
+    @objc private func addBackground(_ sender: NSMenuItem) {
+        canvas.applyImage { ImageTools.withBackground($0, colors: ImageTools.backgrounds[sender.tag].colors) }
+    }
+
+    @objc private func addOtherImage() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.image]
+        panel.beginSheetModal(for: window) { [weak self] response in
+            let url = panel.url
+            Task { @MainActor in
+                guard response == .OK, let url, let picture = NSImage(contentsOf: url) else { return }
+                self?.canvas.addPicture(picture)
+            }
+        }
+    }
+
     @objc private func pixelModeChanged(_ sender: NSSegmentedControl) {
         canvas.pixelBrush = sender.selectedSegment == 1
         buildSubBar()
@@ -481,7 +556,7 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
     /// Cada herramienta muestra solo lo que le sirve.
     private func buildPalette() -> NSView {
         let tool = canvas.tool
-        let showsColor = tool != .eraser && tool != .pixelate && tool != .crop
+        let showsColor = tool != .eraser && tool != .pixelate && tool != .crop && tool != .spotlight
         let colors = tool == .highlight ? Self.markers : Self.palette
         let size = Self.sizes[tool]
 
@@ -515,11 +590,14 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
             well.target = self
             well.action = #selector(wellChanged(_:))
             view.addSubview(well)
-            let label = NSTextField(labelWithString: "Elegir cualquier color")
+            let label = NSTextField(labelWithString: "Cualquier color")
             label.font = .systemFont(ofSize: 12, weight: .medium)
             label.sizeToFit()
             label.frame.origin = CGPoint(x: 54, y: y + 6)
             view.addSubview(label)
+            let picker = GlassButton(symbol: "eyedropper", tooltip: "Tomar un color de la pantalla", target: self, action: #selector(sampleColor), size: 28)
+            picker.frame.origin = CGPoint(x: width - 40, y: y)
+            view.addSubview(picker)
             y -= 4
         }
         if let size {
@@ -556,6 +634,16 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
         let colors = canvas.tool == .highlight ? Self.markers : Self.palette
         setColor(colors[sender.tag].1)
         colorPopover.performClose(nil)
+    }
+
+    @objc private func sampleColor() {
+        colorPopover.performClose(nil)
+        NSColorSampler().show { [weak self] color in
+            guard let color else { return }
+            Task { @MainActor in
+                self?.setColor(color)
+            }
+        }
     }
 
     @objc private func wellChanged(_ sender: NSColorWell) {

@@ -292,6 +292,49 @@ enum SelfTest {
         check(AnnotationEditor.baseName(of: edited) == "Zas 2026", "editar dos veces no acumula \"anotada\" en el nombre")
         check(AnnotationEditor.baseName(of: URL(fileURLWithPath: "/x/Zas 2026.png")) == "Zas 2026", "el nombre original no cambia")
 
+        // Captura con desplazamiento: tres tramos solapados de una columna de franjas.
+        func strip(from start: Int) -> CGImage {
+            let width = 40, height = 120
+            let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+            for row in 0..<height {
+                let value = start + row
+                context.setFillColor(CGColor(red: CGFloat((value * 37) % 251) / 255, green: CGFloat((value * 91) % 241) / 255, blue: CGFloat((value * 17) % 239) / 255, alpha: 1))
+                context.fill(CGRect(x: 0, y: height - 1 - row, width: width, height: 1))
+            }
+            return context.makeImage()!
+        }
+        var stitcher = ScrollStitcher()
+        stitcher.add(strip(from: 0))
+        check(stitcher.add(strip(from: 50)), "une un tramo desplazado")
+        check(!stitcher.add(strip(from: 50)), "ignora un tramo repetido")
+        stitcher.add(strip(from: 100))
+        check(stitcher.height == 220 && stitcher.composed()?.height == 220, "la imagen larga mide lo correcto (\(stitcher.height))")
+
+        // Herramientas de imagen.
+        let tall = demoImage(scale: 2, width: 300, height: 200)
+        check(ImageTools.rotated(tall, clockwise: true)?.size == CGSize(width: 200, height: 300), "rotar intercambia ancho y alto")
+        check(ImageTools.resized(tall, factor: 0.5)?.size == CGSize(width: 150, height: 100), "cambiar el tamaño reduce la imagen")
+        check(ImageTools.withBackground(tall, colors: ImageTools.backgrounds[0].colors, padding: 50)?.size == CGSize(width: 400, height: 300), "el fondo añade margen")
+        let toolCanvas = AnnotationCanvas(frame: CGRect(x: 0, y: 0, width: 300, height: 200), image: tall)
+        toolCanvas.add(Annotation(tool: .rectangle, color: .red, lineWidth: 4, points: [CGPoint(x: 10, y: 10), CGPoint(x: 60, y: 60)], filled: true))
+        toolCanvas.applyImage { ImageTools.rotated($0, clockwise: true) }
+        check(toolCanvas.exportPNG().flatMap { NSBitmapImageRep(data: $0) }?.pixelsWide == 400, "rotar en el editor cambia la exportación")
+        check(toolCanvas.document.annotations.isEmpty, "rotar integra las marcas")
+        toolCanvas.undo(nil)
+        check(toolCanvas.document.annotations.count == 1, "rotar se puede deshacer")
+        let spot = AnnotationCanvas(frame: CGRect(x: 0, y: 0, width: 300, height: 200), image: tall)
+        let spotBefore = spot.exportPNG().flatMap { NSBitmapImageRep(data: $0) }?.colorAt(x: 590, y: 390)?.usingColorSpace(.sRGB)
+        spot.add(Annotation(tool: .spotlight, color: .black, lineWidth: 1, points: [CGPoint(x: 10, y: 10), CGPoint(x: 100, y: 100)]))
+        let spotAfter = spot.exportPNG().flatMap { NSBitmapImageRep(data: $0) }?.colorAt(x: 590, y: 390)?.usingColorSpace(.sRGB)
+        check((spotAfter?.brightnessComponent ?? 1) < (spotBefore?.brightnessComponent ?? 0) * 0.7, "el foco oscurece lo de alrededor")
+        let blur = AnnotationCanvas(frame: CGRect(x: 0, y: 0, width: 300, height: 200), image: tall)
+        let blurPlain = blur.exportPNG()
+        blur.add(Annotation(tool: .pixelate, color: .red, lineWidth: 5, points: [CGPoint(x: 10, y: 10), CGPoint(x: 280, y: 180)], smoothBlur: true))
+        check(blur.exportPNG() != blurPlain, "el desenfoque suave cambia la imagen")
+        let picture = AnnotationCanvas(frame: CGRect(x: 0, y: 0, width: 300, height: 200), image: tall)
+        picture.addPicture(demoImage(scale: 1, width: 80, height: 60))
+        check(picture.document.annotations.first?.tool == .picture, "se puede añadir otra imagen")
+
         // Física de la interfaz.
         check(abs(Spring.value(at: 2, response: 0.42, damping: 0.86) - 1) < 0.001, "el resorte se asienta en su destino")
         let peak = stride(from: 0.0, to: 1.0, by: 0.01).map { Spring.value(at: $0, response: 0.42, damping: 0.86) }.max() ?? 0
@@ -622,6 +665,15 @@ enum SelfTest {
         check(max(sheetRep?.pixelsWide ?? 9999, sheetRep?.pixelsHigh ?? 9999) <= 1568, "el resumen no supera el tamaño que Claude lee sin reducir")
         try? FileManager.default.copyItem(at: sheet, to: output.appendingPathComponent("resumen-video.png"))
 
+        // GIF y recorte, sobre el video recién grabado.
+        let gif = Capture.temporaryFileURL().deletingPathExtension().appendingPathExtension("gif")
+        let gifOK = await GifExporter.export(video: url, to: gif)
+        check(gifOK && NSImage(contentsOf: gif) != nil, "se puede crear un GIF")
+        let trimmed = Capture.temporaryFileURL().deletingPathExtension().appendingPathExtension("mp4")
+        let trimOK = await VideoTrimmer.export(video: url, from: .zero, to: CMTime(seconds: 1, preferredTimescale: 600), output: trimmed)
+        let trimmedLength = (try? await AVURLAsset(url: trimmed).load(.duration))?.seconds ?? 0
+        check(trimOK && trimmedLength < 1.6, "se puede recortar un video (\(String(format: "%.1f", trimmedLength)) s)")
+
         // Las capturas recientes incluyen lo último y salen en orden.
         let recent = Recents.files()
         check(recent.first?.lastPathComponent == sheet.lastPathComponent, "las recientes empiezan por lo último")
@@ -666,6 +718,10 @@ enum SelfTest {
             await shoot("\(label)-01-seleccion-ventana")
             overlay.simulateDrag(from: CGPoint(x: 310, y: 200), to: CGPoint(x: 760, y: 470))
             await shoot("\(label)-02-seleccion-area")
+            overlay.testFreeze()
+            await wait(1)
+            overlay.simulateHover(at: CGPoint(x: 400, y: 300))
+            await shoot("\(label)-02b-congelada-lupa")
             overlay.simulateHover(at: CGPoint(x: 400, y: 330))
             overlay.testChoose(mode: .recording)
             check(overlay.mode == .recording, "la barra de vidrio cambia el modo")
@@ -737,6 +793,9 @@ enum SelfTest {
             keepAlive.append(windows)
             windows.showSettings()
             await shoot("\(label)-09-ajustes")
+            windows.closeAll()
+            windows.showHistory { _ in }
+            await shoot("\(label)-09b-historial")
             windows.closeAll()
             windows.showWelcome(hasPermission: false, openSettings: {}, relaunch: {})
             await shoot("\(label)-10-permiso")

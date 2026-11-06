@@ -25,18 +25,24 @@ final class AnnotationCanvas: NSView {
     var onRequestZoom: ((Int) -> Void)?
     var onToolShortcut: ((AnnotationTool) -> Void)?
 
-    private let image: NSImage
+    private let original: NSImage
+    private var image: NSImage { document.base ?? original }
     /// Una versión pixelada por cada intensidad usada.
-    private var pixelatedVersions: [CGFloat: NSImage] = [:]
+    private var pixelatedVersions: [String: NSImage] = [:]
 
-    private func pixelated(block: CGFloat) -> NSImage? {
-        if let cached = pixelatedVersions[block] {
+    private func pixelated(block: CGFloat, smooth: Bool) -> NSImage? {
+        let key = "\(ObjectIdentifier(image).hashValue)-\(block)-\(smooth)"
+        if let cached = pixelatedVersions[key] {
             return cached
         }
-        let version = AnnotationRenderer.makePixelated(image, block: block)
-        pixelatedVersions[block] = version
+        let version = AnnotationRenderer.makePixelated(image, block: block, smooth: smooth)
+        pixelatedVersions[key] = version
         return version
     }
+
+    var filled = false
+    var plainLine = false
+    var smoothBlur = false
 
     private enum DragMode {
         case none
@@ -64,8 +70,9 @@ final class AnnotationCanvas: NSView {
     private var textPoint: CGPoint = .zero
 
     init(frame: CGRect, image: NSImage) {
-        self.image = image
+        original = image
         super.init(frame: frame)
+        registerForDraggedTypes([.fileURL, .png, .tiff])
     }
 
     required init?(coder: NSCoder) {
@@ -233,6 +240,47 @@ final class AnnotationCanvas: NSView {
 
     var selectionForTesting: Int? { selectedIndex }
 
+    /// Cambia la imagen entera con las marcas ya integradas. Se puede deshacer.
+    func applyImage(_ transform: (NSImage) -> NSImage?) {
+        commitText()
+        guard let data = exportPNG(), let flattened = NSImage(data: data), let result = transform(flattened) else { return }
+        selectedIndex = nil
+        mutate {
+            $0.base = result
+            $0.annotations = []
+            $0.crop = nil
+        }
+        documentGeometryChanged()
+    }
+
+    /// Pone otra imagen encima de la captura, lista para moverla.
+    func addPicture(_ picture: NSImage, at center: CGPoint? = nil) {
+        let content = contentRect
+        let ratio = min(1, content.width * 0.5 / max(picture.size.width, 1), content.height * 0.5 / max(picture.size.height, 1))
+        let size = CGSize(width: picture.size.width * ratio, height: picture.size.height * ratio)
+        let middle = center ?? CGPoint(x: content.midX, y: content.midY)
+        add(Annotation(
+            tool: .picture,
+            color: .clear,
+            lineWidth: 1,
+            points: [
+                CGPoint(x: middle.x - size.width / 2, y: middle.y - size.height / 2),
+                CGPoint(x: middle.x + size.width / 2, y: middle.y + size.height / 2),
+            ],
+            picture: picture
+        ))
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        NSImage.canInit(with: sender.draggingPasteboard) ? .copy : []
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        guard let picture = NSImage(pasteboard: sender.draggingPasteboard) else { return false }
+        addPicture(picture, at: imagePoint(fromView: convert(sender.draggingLocation, from: nil)))
+        return true
+    }
+
     func applyCrop(_ rect: CGRect) {
         mutate { $0.crop = rect }
         documentGeometryChanged()
@@ -282,7 +330,10 @@ final class AnnotationCanvas: NSView {
                 lineWidth: lineWidth,
                 points: [point],
                 pixelBrush: tool == .pixelate && pixelBrush,
-                blockSize: blockSize
+                blockSize: blockSize,
+                filled: filled,
+                plainLine: plainLine,
+                smoothBlur: smoothBlur
             )
         }
     }
@@ -570,7 +621,7 @@ final class AnnotationCanvas: NSView {
         guard let context = NSGraphicsContext.current?.cgContext else { return }
         context.beginTransparencyLayer(auxiliaryInfo: nil)
         for annotation in document.annotations + (draft.map { [$0] } ?? []) {
-            let version = annotation.tool == .pixelate ? pixelated(block: annotation.blockSize) : nil
+            let version = annotation.tool == .pixelate ? pixelated(block: annotation.blockSize, smooth: annotation.smoothBlur) : nil
             AnnotationRenderer.draw(annotation, pixelated: version, imageSize: image.size)
         }
         context.endTransparencyLayer()

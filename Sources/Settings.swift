@@ -116,6 +116,9 @@ final class Settings: ObservableObject {
         static let videoCopiesSummary = "videoCopiesSummary"
         static let videoEvery = "videoEvery"
         static let videoLimit = "videoLimit"
+        static let systemAudio = "systemAudio"
+        static let videoFPS = "videoFPS"
+        static let videoCursor = "videoCursor"
         static let loginItemConfigured = "loginItemConfigured"
     }
 
@@ -153,6 +156,18 @@ final class Settings: ObservableObject {
         didSet { defaults.set(videoLimit, forKey: Key.videoLimit) }
     }
 
+    @Published var systemAudio: Bool {
+        didSet { defaults.set(systemAudio, forKey: Key.systemAudio) }
+    }
+
+    @Published var videoFPS: Int {
+        didSet { defaults.set(videoFPS, forKey: Key.videoFPS) }
+    }
+
+    @Published var videoCursor: Bool {
+        didSet { defaults.set(videoCursor, forKey: Key.videoCursor) }
+    }
+
     @Published var saveFolder: URL {
         didSet { defaults.set(saveFolder.path, forKey: Key.saveFolder) }
     }
@@ -186,7 +201,7 @@ final class Settings: ObservableObject {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        defaults.register(defaults: [Key.playSound: true, Key.thumbnailSeconds: 6.0, Key.saveCaptures: true, Key.videoCopiesSummary: true, Key.videoEvery: 2.0])
+        defaults.register(defaults: [Key.playSound: true, Key.thumbnailSeconds: 6.0, Key.saveCaptures: true, Key.videoCopiesSummary: true, Key.videoEvery: 2.0, Key.videoFPS: 30, Key.videoCursor: true])
 
         playSound = defaults.bool(forKey: Key.playSound)
         thumbnailSeconds = defaults.double(forKey: Key.thumbnailSeconds)
@@ -195,6 +210,9 @@ final class Settings: ObservableObject {
         videoCopiesSummary = defaults.bool(forKey: Key.videoCopiesSummary)
         videoEvery = defaults.double(forKey: Key.videoEvery)
         videoLimit = defaults.double(forKey: Key.videoLimit)
+        systemAudio = defaults.bool(forKey: Key.systemAudio)
+        videoFPS = defaults.integer(forKey: Key.videoFPS)
+        videoCursor = defaults.bool(forKey: Key.videoCursor)
 
         if let path = defaults.string(forKey: Key.saveFolder) {
             saveFolder = URL(fileURLWithPath: path, isDirectory: true)

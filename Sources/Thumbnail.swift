@@ -27,6 +27,8 @@ final class ThumbnailController {
     var onPin: ((NSImage) -> Void)?
     var onSummarize: ((URL) -> Void)?
     var onSelectText: ((NSImage, URL) -> Void)?
+    var onTrim: ((URL) -> Void)?
+    var onGif: ((URL) -> Void)?
 
     private final class Item: @unchecked Sendable {
         let panel: CardPanel
@@ -136,6 +138,12 @@ final class ThumbnailController {
         }
         view.onSummarize = { [weak self] in
             self?.onSummarize?(file)
+        }
+        view.onTrim = { [weak self] in
+            self?.onTrim?(file)
+        }
+        view.onGif = { [weak self] in
+            self?.onGif?(file)
         }
         view.onDragEnded = { [weak self] in
             self?.syncHover()
@@ -376,6 +384,8 @@ private final class ThumbnailView: NSView, NSDraggingSource {
     var onCopy: (() -> Void)?
     var onCopyPath: (() -> Void)?
     var onSummarize: (() -> Void)?
+    var onTrim: (() -> Void)?
+    var onGif: (() -> Void)?
     var onDragEnded: (() -> Void)?
 
     var isInClipboard = false {
@@ -495,6 +505,8 @@ private final class ThumbnailView: NSView, NSDraggingSource {
     @objc private func copyPath() { onCopyPath?() }
     @objc private func summarize() { onSummarize?() }
     @objc private func closeCard() { onClose?() }
+    @objc private func trim() { onTrim?() }
+    @objc private func makeGif() { onGif?() }
 
     /// Vuelve a poner esta captura en el portapapeles. Sirve para pegar una de las anteriores.
     @MainActor
@@ -544,6 +556,10 @@ private final class ThumbnailView: NSView, NSDraggingSource {
         }
         if kind != .text, !Capture.isScratch(file) {
             menu.addItem(withTitle: "Mostrar en Finder", action: #selector(reveal), keyEquivalent: "").target = self
+        }
+        if kind == .video {
+            menu.addItem(withTitle: "Recortar video…", action: #selector(trim), keyEquivalent: "").target = self
+            menu.addItem(withTitle: "Crear GIF", action: #selector(makeGif), keyEquivalent: "").target = self
         }
         menu.addItem(withTitle: "Cerrar", action: #selector(closeCard), keyEquivalent: "").target = self
         return menu

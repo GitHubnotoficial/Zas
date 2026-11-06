@@ -12,6 +12,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let recentsStrip = RecentsStripView()
     private var lastCaptureRect: CGRect?
     private var lastSelection: Selection?
+    private var trimWindows: [VideoTrimWindow] = []
+    private var scrollStitcher: ScrollStitcher?
+    private var scrollHotKeys: [UInt32] = []
+    private var scrollSelection: Selection?
     private var settingsObserver: AnyCancellable?
 
     private let overlay = SelectionOverlay()
@@ -49,6 +53,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         thumbnail.onSelectText = { [weak self] image, file in
             self?.openEditor(image: image, file: file, selectingText: true)
+        }
+        thumbnail.onTrim = { [weak self] video in
+            self?.trim(video)
+        }
+        thumbnail.onGif = { [weak self] video in
+            self?.makeGif(from: video)
         }
         thumbnail.onSummarize = { [weak self] video in
             self?.copySummary(of: video)
@@ -190,6 +200,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(recents)
         menu.delegate = self
         menu.addItem(.separator())
+        addItem("Ver historial…", symbol: nil, #selector(openHistory))
         let settings = addItem("Ajustes…", symbol: nil, #selector(openSettings))
         settings.keyEquivalent = ","
         menu.addItem(.separator())
@@ -341,6 +352,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             case .text: self.readText(selection)
             case .recording: self.startRecording(selection)
             case .timed: self.countDown(selection)
+            case .scroll: self.startScroll(selection)
             }
         }
     }
@@ -389,6 +401,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Una captura de pantalla completa no tiene de dónde "salir".
         lastCaptureRect = selection.isFullScreen ? nil : selection.appKitRect
         lastSelection = selection
+        // Con la pantalla congelada, la imagen ya existe.
+        if let frozen = selection.frozen {
+            let url = Capture.newFileURL(extension: "png")
+            let saved = Capture.writePNG(frozen, to: url, pointSize: pointSize)
+            finishCapture(url: url, succeeded: saved, pointSize: pointSize)
+            return
+        }
         // Pausa corta para que las ventanas de Zas ya no salgan en la imagen.
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 120_000_000)
@@ -399,19 +418,124 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func takeScreenshot(arguments: [String], pointSize: CGSize) {
         let url = Capture.newFileURL(extension: "png")
         Capture.run(arguments: arguments, to: url) { [weak self] succeeded in
-            guard let self else { return }
-            self.captureInFlight = false
-            self.thumbnail.resume()
+            self?.finishCapture(url: url, succeeded: succeeded, pointSize: pointSize)
+        }
+    }
+
+    private func finishCapture(url: URL, succeeded: Bool, pointSize: CGSize) {
+        captureInFlight = false
+        thumbnail.resume()
+        do {
             guard succeeded else {
-                self.showError("No se pudo capturar", "macOS no entregó la imagen. Inténtalo de nuevo.")
+                showError("No se pudo capturar", "macOS no entregó la imagen. Inténtalo de nuevo.")
                 return
             }
             guard let image = Capture.copyImage(at: url, pointSize: pointSize) else {
-                self.showError("No se pudo copiar", "macOS entregó un archivo que no se puede leer. Inténtalo de nuevo.")
+                showError("No se pudo copiar", "macOS entregó un archivo que no se puede leer. Inténtalo de nuevo.")
                 return
             }
             Capture.playSound()
-            self.thumbnail.show(image: image, file: url, kind: .screenshot, from: self.lastCaptureRect)
+            thumbnail.show(image: image, file: url, kind: .screenshot, from: lastCaptureRect)
+        }
+    }
+
+    // MARK: - Captura con desplazamiento
+
+    /// Va tomando tramos mientras se desplaza el contenido, y los une al terminar.
+    private func startScroll(_ selection: Selection) {
+        captureInFlight = true
+        scrollStitcher = ScrollStitcher()
+        scrollSelection = selection
+        if !selection.isFullScreen {
+            showRecordingBorder(around: selection.appKitRect)
+        }
+        Toast.shared.show("Desplázate hacia abajo. Enter termina y Esc cancela.", seconds: 4)
+        if let done = HotKeys.shared.register(keyCode: UInt32(kVK_Return), modifiers: 0, action: { [weak self] in
+            self?.finishScroll(save: true)
+        }) {
+            scrollHotKeys.append(done)
+        }
+        if let cancel = HotKeys.shared.register(keyCode: UInt32(kVK_Escape), modifiers: 0, action: { [weak self] in
+            self?.finishScroll(save: false)
+        }) {
+            scrollHotKeys.append(cancel)
+        }
+        takeScrollPiece()
+    }
+
+    private func takeScrollPiece() {
+        guard scrollStitcher != nil, let selection = scrollSelection else { return }
+        let url = Capture.temporaryFileURL()
+        Capture.run(arguments: ["-x", Capture.regionArgument(selection.globalTopLeftRect)], to: url) { [weak self] _ in
+            guard let self else { return }
+            if let image = Capture.image(at: url) {
+                self.scrollStitcher?.add(image)
+            }
+            try? FileManager.default.removeItem(at: url)
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 180_000_000)
+                self.takeScrollPiece()
+            }
+        }
+    }
+
+    private func finishScroll(save: Bool) {
+        guard let stitcher = scrollStitcher, let selection = scrollSelection else { return }
+        scrollStitcher = nil
+        scrollSelection = nil
+        scrollHotKeys.forEach { HotKeys.shared.unregister($0) }
+        scrollHotKeys.removeAll()
+        recordingBorder?.orderOut(nil)
+        recordingBorder = nil
+        Toast.shared.hide()
+
+        guard save, let image = stitcher.composed() else {
+            captureInFlight = false
+            thumbnail.resume()
+            return
+        }
+        let scale = CGFloat(stitcher.width) / max(selection.rect.width, 1)
+        let size = CGSize(width: CGFloat(image.width) / scale, height: CGFloat(image.height) / scale)
+        let url = Capture.newFileURL(extension: "png")
+        lastCaptureRect = nil
+        finishCapture(url: url, succeeded: Capture.writePNG(image, to: url, pointSize: size), pointSize: size)
+    }
+
+    // MARK: - Herramientas de video
+
+    private func trim(_ video: URL) {
+        let window = VideoTrimWindow(video: video)
+        window.onFinish = { [weak self] output in
+            self?.showVideoThumbnail(output, inClipboard: true)
+            Capture.copyFile(at: output)
+        }
+        window.onClose = { [weak self, weak window] in
+            Task { @MainActor in
+                self?.trimWindows.removeAll { $0 === window }
+            }
+        }
+        trimWindows.append(window)
+        window.show()
+    }
+
+    private func makeGif(from video: URL) {
+        Toast.shared.show("Creando el GIF…")
+        Task { @MainActor in
+            let name = "\(video.deletingPathExtension().lastPathComponent).gif"
+            let output = Capture.uniqueURL(in: video.deletingLastPathComponent(), name: name)
+            if await GifExporter.export(video: video, to: output) {
+                Capture.copyFile(at: output)
+                Capture.playSound()
+                Toast.shared.show("GIF copiado.")
+            } else {
+                Toast.shared.show("No se pudo crear el GIF.")
+            }
+        }
+    }
+
+    @objc private func openHistory() {
+        windows.showHistory { [weak self] file in
+            self?.reopenRecent(file)
         }
     }
 
@@ -506,7 +630,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     rect: rect,
                     scale: scale,
                     microphone: microphone,
-                    to: url
+                    to: url,
+                    systemAudio: Settings.shared.systemAudio,
+                    fps: Settings.shared.videoFPS,
+                    showsCursor: Settings.shared.videoCursor
                 )
                 self.showRecordingUI(selection)
             } catch {
