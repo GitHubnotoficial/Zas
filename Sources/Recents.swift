@@ -33,7 +33,7 @@ enum Recents {
     }
 
     /// Imagen pequeña sin cargar el archivo completo en memoria.
-    static func preview(of url: URL) -> NSImage? {
+    nonisolated static func preview(of url: URL) -> NSImage? {
         guard url.pathExtension.lowercased() == "png",
               let source = CGImageSourceCreateWithURL(url as CFURL, nil),
               let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [

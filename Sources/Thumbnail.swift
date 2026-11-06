@@ -49,6 +49,8 @@ final class ThumbnailController {
     private let maximumItems = 4
 
     private var items: [Item] = []
+    /// Tarjetas saliendo por el borde: también deben esconderse si llega otra captura.
+    private var leaving: [NSPanel] = []
     private var isSuspended = false
     private var screen: NSScreen?
 
@@ -176,6 +178,7 @@ final class ThumbnailController {
     func suspend() {
         guard !isSuspended else { return }
         isSuspended = true
+        leaving.forEach { $0.orderOut(nil) }
         for item in items {
             stopTimer(item)
             item.spring?.invalidate()
@@ -238,10 +241,12 @@ final class ThumbnailController {
         let start = panel.frame
         let edge = (screen ?? NSScreen.underMouse).frame.maxX + 12
         let target = start.offsetBy(dx: edge - start.minX, dy: 0)
+        leaving.append(panel)
         Spring.run(response: 0.34, damping: 1, step: { progress in
             panel.setFrame(start.moved(to: target, by: progress), display: true)
-        }, completion: {
+        }, completion: { [weak self] in
             panel.orderOut(nil)
+            self?.leaving.removeAll { $0 === panel }
         })
     }
 
@@ -487,7 +492,7 @@ private final class ThumbnailView: NSView, NSDraggingSource {
     }
 
     private func refreshBadge() {
-        guard let badgeText, !hovering else {
+        guard let badgeText, !hovering || flashText != nil else {
             badge.isHidden = true
             return
         }

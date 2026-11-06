@@ -29,9 +29,15 @@ final class AnnotationCanvas: NSView {
     private var image: NSImage { document.base ?? original }
     /// Una versión pixelada por cada intensidad usada.
     private var pixelatedVersions: [String: NSImage] = [:]
+    private var pixelatedSource: NSImage?
 
     private func pixelated(block: CGFloat, smooth: Bool) -> NSImage? {
-        let key = "\(ObjectIdentifier(image).hashValue)-\(block)-\(smooth)"
+        // Cada versión pesa tanto como la captura: pocas, y solo de la imagen actual.
+        if pixelatedSource !== image || pixelatedVersions.count >= 6 {
+            pixelatedVersions.removeAll()
+            pixelatedSource = image
+        }
+        let key = "\(block)-\(smooth)"
         if let cached = pixelatedVersions[key] {
             return cached
         }
@@ -67,6 +73,8 @@ final class AnnotationCanvas: NSView {
     private var dragStartDocument: AnnotationDocument?
 
     private var textField: NSTextField?
+    private var textStyle: (color: NSColor, width: CGFloat) = (.systemRed, 5)
+    private var editedMark: Annotation?
     private var textPoint: CGPoint = .zero
 
     init(frame: CGRect, image: NSImage) {
@@ -141,7 +149,11 @@ final class AnnotationCanvas: NSView {
 
     // MARK: - Historial
 
+    /// Cambia con cada edición, también al deshacer. Sirve para saber si hay algo sin guardar.
+    private(set) var revision = 0
+
     private func pushUndo(_ state: AnnotationDocument) {
+        revision += 1
         undoStack.append(state)
         redoStack.removeAll()
         onHistoryChanged?()
@@ -186,6 +198,15 @@ final class AnnotationCanvas: NSView {
         field.abortEditing()
         field.removeFromSuperview()
         window?.makeFirstResponder(self)
+        // Cancelar la edición de un texto lo devuelve como estaba.
+        if let original = editedMark {
+            editedMark = nil
+            add(original)
+        }
+    }
+
+    var hasPendingText: Bool {
+        !(textField?.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
     }
 
     @objc func undo(_ sender: Any?) {
@@ -211,6 +232,7 @@ final class AnnotationCanvas: NSView {
     }
 
     private func documentGeometryChanged() {
+        revision += 1
         needsDisplay = true
         window?.invalidateCursorRects(for: self)
         onHistoryChanged?()
@@ -418,16 +440,11 @@ final class AnnotationCanvas: NSView {
 
     private func editText(at index: Int) {
         let mark = document.annotations[index]
-        mutate { $0.annotations.remove(at: index) }
         selectedIndex = nil
-        let previousWidth = lineWidth
-        let previousColor = color
-        lineWidth = mark.lineWidth
-        color = mark.color
-        beginText(at: mark.points.first ?? .zero)
+        mutate { $0.annotations.remove(at: index) }
+        editedMark = mark
+        beginText(at: mark.points.first ?? .zero, width: mark.lineWidth, color: mark.color)
         textField?.stringValue = mark.text
-        lineWidth = previousWidth
-        color = previousColor
     }
 
     override func mouseDragged(with event: NSEvent) {
@@ -554,8 +571,11 @@ final class AnnotationCanvas: NSView {
 
     // MARK: - Texto
 
-    private func beginText(at point: CGPoint) {
+    private func beginText(at point: CGPoint, width: CGFloat? = nil, color: NSColor? = nil) {
+        let lineWidth = width ?? self.lineWidth
+        let color = color ?? self.color
         textPoint = point
+        textStyle = (color, lineWidth)
         let origin = viewPoint(fromImage: point)
         let fontSize = (12 + lineWidth * 2.4) * displayScale
 
@@ -598,7 +618,11 @@ final class AnnotationCanvas: NSView {
         // Devuelve el teclado al lienzo: si no, ⌘Z, Supr y las teclas de herramienta dejan de responder.
         window?.makeFirstResponder(self)
         if !text.isEmpty {
-            add(Annotation(tool: .text, color: color, lineWidth: lineWidth, points: [textPoint], text: text))
+            add(Annotation(tool: .text, color: textStyle.color, lineWidth: textStyle.width, points: [textPoint], text: text))
+            editedMark = nil
+        } else if let original = editedMark {
+            editedMark = nil
+            add(original)
         }
     }
 

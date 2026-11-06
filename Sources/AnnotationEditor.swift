@@ -147,7 +147,8 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
     private var penColor: NSColor = .systemRed
     private var markerColor = AnnotationEditor.markers[0].1
     private var toolSizes: [AnnotationTool: CGFloat] = [:]
-    private var savedHistoryCount = 0
+    private var savedRevision = 0
+    private var magnifyObserver: NSObjectProtocol?
 
     init(image: NSImage, file: URL) {
         self.image = image
@@ -225,7 +226,7 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
         canvas.onRequestZoom = { [weak self] step in self?.zoom(by: step) }
         canvas.onToolShortcut = { [weak self] tool in self?.select(tool: tool) }
 
-        NotificationCenter.default.addObserver(
+        magnifyObserver = NotificationCenter.default.addObserver(
             forName: NSScrollView.didEndLiveMagnifyNotification,
             object: scrollView,
             queue: .main
@@ -716,9 +717,9 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
         textButton?.isActive = true
         // Al seleccionar, el foco queda en la capa de Apple y Esc nunca llegaría al lienzo.
         escapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard event.keyCode == 53 else { return event }
+            guard event.keyCode == 53, let self, event.window === self.window else { return event }
             MainActor.assumeIsolated {
-                self?.closeTextMode()
+                self.closeTextMode()
             }
             return nil
         }
@@ -767,8 +768,7 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
         menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.height + 6), in: sender)
     }
 
-    private func nextCopyURL() -> URL {
-        let folder = Capture.imageFolder
+    private func nextCopyURL(in folder: URL) -> URL {
         let base = Self.baseName(of: file)
         var output = folder.appendingPathComponent("\(base) anotada.png")
         var suffix = 2
@@ -785,7 +785,7 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
             Toast.shared.show("No se pudo guardar. Revisa la carpeta en Ajustes.")
             return false
         }
-        savedHistoryCount = canvas.historyCount
+        savedRevision = canvas.revision
         return true
     }
 
@@ -795,14 +795,39 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
     }
 
     @objc private func saveCopy() {
-        let url = nextCopyURL()
+        // Guardar a propósito nunca va a la carpeta temporal.
+        let url = nextCopyURL(in: Capture.folder)
         if write(to: url) {
             announce(url)
         }
     }
 
     @objc private func replaceOriginal() {
-        if write(to: file) {
+        let alert = NSAlert()
+        alert.messageText = "¿Reemplazar el original?"
+        alert.informativeText = "La imagen anterior no se podrá recuperar."
+        let replace = alert.addButton(withTitle: "Reemplazar")
+        replace.hasDestructiveAction = true
+        alert.addButton(withTitle: "Cancelar")
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn else { return }
+            Task { @MainActor in
+                self?.performReplace()
+            }
+        }
+    }
+
+    private func performReplace() {
+        // Un proyecto se reemplaza como proyecto: si no, dejaría de abrirse.
+        if file.pathExtension == "zas" {
+            canvas.commitText()
+            guard let data = canvas.projectData(), (try? data.write(to: file)) != nil else {
+                Toast.shared.show("No se pudo guardar.")
+                return
+            }
+            savedRevision = canvas.revision
+            announce(file)
+        } else if write(to: file) {
             announce(file)
         }
     }
@@ -835,7 +860,7 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
                 guard response == .OK, let url, let self, let data = self.canvas.projectData(),
                       (try? data.write(to: url)) != nil
                 else { return }
-                self.savedHistoryCount = self.canvas.historyCount
+                self.savedRevision = self.canvas.revision
                 self.announce(url)
             }
         }
@@ -843,7 +868,7 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
 
     @objc func copyAndClose() {
         canvas.commitText()
-        let output = nextCopyURL()
+        let output = nextCopyURL(in: Capture.imageFolder)
         guard let data = canvas.exportPNG() else {
             Toast.shared.show("No se pudo crear la imagen.")
             return
@@ -874,14 +899,14 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
             closeTextMode()
             return false
         }
-        guard canvas.hasUnsavedMarks, canvas.historyCount != savedHistoryCount else { return true }
+        guard hasUnsavedWork else { return true }
 
         let alert = NSAlert()
         alert.messageText = "¿Cerrar sin copiar?"
         alert.informativeText = "Lo que dibujaste en esta captura se perderá."
         alert.addButton(withTitle: "Copiar y cerrar")
-        alert.addButton(withTitle: "Descartar")
-        alert.addButton(withTitle: "Seguir editando").keyEquivalent = "\u{1b}"
+        alert.addButton(withTitle: "Descartar").hasDestructiveAction = true
+        alert.addButton(withTitle: "Cancelar").keyEquivalent = "\u{1b}"
         alert.beginSheetModal(for: window) { [weak self] response in
             Task { @MainActor in
                 switch response {
@@ -894,7 +919,16 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
         return false
     }
 
+    var hasUnsavedWork: Bool {
+        canvas.hasPendingText || (canvas.hasUnsavedMarks && canvas.revision != savedRevision)
+    }
+
     func windowWillClose(_ notification: Notification) {
+        closeTextMode()
+        if let magnifyObserver {
+            NotificationCenter.default.removeObserver(magnifyObserver)
+            self.magnifyObserver = nil
+        }
         // Devuelve el foco a la app donde se estaba trabajando, se copie o no.
         previousApp?.activate(options: [])
         onClose?()

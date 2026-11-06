@@ -33,7 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var recordingStart = Date()
     private var recordingTimer: Timer?
     private var recordingBorder: NSPanel?
-    private var imageGenerator: AVAssetImageGenerator?
+    private var imageGenerators: [AVAssetImageGenerator] = []
     private var recordingActivity: NSObjectProtocol?
     private var permissionTimer: Timer?
     private var terminationSignal: DispatchSourceSignal?
@@ -96,6 +96,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     /// Si se cierra la app mientras graba, primero termina el video: si no, quedaría inservible.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        if editors.contains(where: \.hasUnsavedWork) {
+            let alert = NSAlert()
+            alert.messageText = "¿Salir sin copiar?"
+            alert.informativeText = "Hay marcas sin copiar en el editor. Se perderán."
+            let quit = alert.addButton(withTitle: "Salir")
+            quit.hasDestructiveAction = true
+            alert.addButton(withTitle: "Cancelar")
+            NSApp.activate(ignoringOtherApps: true)
+            if alert.runModal() != .alertFirstButtonReturn {
+                return .terminateCancel
+            }
+        }
         guard let recorder else { return .terminateNow }
 
         let alreadyStopping = isStopping
@@ -403,6 +415,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Una captura de pantalla completa no tiene de dónde "salir".
         lastCaptureRect = selection.isFullScreen ? nil : selection.appKitRect
         lastSelection = selection
+        // Repetir debe capturar de nuevo, no volver a guardar la imagen congelada.
+        lastSelection?.frozen = nil
         // Con la pantalla congelada, la imagen ya existe.
         if let frozen = selection.frozen {
             let url = Capture.newFileURL(extension: "png")
@@ -451,7 +465,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if !selection.isFullScreen {
             showRecordingBorder(around: selection.appKitRect)
         }
-        Toast.shared.show("Desplázate hacia abajo. Enter termina y Esc cancela.", seconds: 4)
+        Toast.shared.show("Desplázate. Enter termina, Esc cancela.", seconds: 4)
         if let done = HotKeys.shared.register(keyCode: UInt32(kVK_Return), modifiers: 0, action: { [weak self] in
             self?.finishScroll(save: true)
         }) {
@@ -462,7 +476,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }) {
             scrollHotKeys.append(cancel)
         }
-        takeScrollPiece()
+        // Espera a que las ventanas de Zas salgan de la imagen, igual que una captura normal.
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 200_000_000)
+            self.takeScrollPiece()
+        }
     }
 
     private func takeScrollPiece() {
@@ -472,6 +490,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard let self else { return }
             if let image = Capture.image(at: url) {
                 self.scrollStitcher?.add(image)
+                if self.scrollStitcher?.lostTrack == true {
+                    Toast.shared.show("Muy rápido. Sube un poco.", seconds: 1.5)
+                }
             }
             try? FileManager.default.removeItem(at: url)
             Task { @MainActor in
@@ -482,7 +503,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func finishScroll(save: Bool) {
-        guard let stitcher = scrollStitcher, let selection = scrollSelection else { return }
+        guard var stitcher = scrollStitcher, let selection = scrollSelection else { return }
         scrollStitcher = nil
         scrollSelection = nil
         scrollHotKeys.forEach { HotKeys.shared.unregister($0) }
@@ -491,9 +512,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         recordingBorder = nil
         Toast.shared.hide()
 
-        guard save, let image = stitcher.composed() else {
+        guard save else {
             captureInFlight = false
             thumbnail.resume()
+            return
+        }
+        // Un último tramo, para no perder lo que se desplazó justo antes de Enter.
+        let url = Capture.temporaryFileURL()
+        Capture.run(arguments: ["-x", Capture.regionArgument(selection.globalTopLeftRect)], to: url) { [weak self] _ in
+            if let image = Capture.image(at: url) {
+                stitcher.add(image)
+            }
+            try? FileManager.default.removeItem(at: url)
+            self?.saveScroll(stitcher, selection: selection)
+        }
+    }
+
+    private func saveScroll(_ stitcher: ScrollStitcher, selection: Selection) {
+        guard let image = stitcher.composed() else {
+            captureInFlight = false
+            thumbnail.resume()
+            Toast.shared.show("No se pudo unir la captura.")
             return
         }
         let scale = CGFloat(stitcher.width) / max(selection.rect.width, 1)
@@ -569,6 +608,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         captureInFlight = true
         let arguments = selection.captureArguments
         let url = Capture.temporaryFileURL()
+        if let frozen = selection.frozen, Capture.writePNG(frozen, to: url, pointSize: selection.imagePointSize) {
+            TextReader.read(from: url) { [weak self] text in
+                self?.finishText(text, imageURL: url)
+            }
+            return
+        }
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 120_000_000)
             Capture.run(arguments: arguments, to: url) { [weak self] succeeded in
@@ -740,7 +785,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         generator.appliesPreferredTrackTransform = true
         generator.maximumSize = CGSize(width: 560, height: 400)
         generator.requestedTimeToleranceAfter = .positiveInfinity
-        imageGenerator = generator
+        imageGenerators.append(generator)
 
         generator.generateCGImageAsynchronously(for: .zero) { [weak self] cgImage, _, _ in
             Task { @MainActor in
@@ -751,7 +796,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     image = NSImage(systemSymbolName: "film", accessibilityDescription: "Video") ?? NSImage()
                 }
                 self?.thumbnail.show(image: image, file: url, kind: .video, inClipboard: inClipboard)
-                self?.imageGenerator = nil
+                self?.imageGenerators.removeAll { $0 === generator }
             }
         }
     }

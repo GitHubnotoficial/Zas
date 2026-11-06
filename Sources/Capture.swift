@@ -99,7 +99,8 @@ enum Capture {
 
     static func image(at url: URL) -> CGImage? {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
-        return CGImageSourceCreateImageAtIndex(source, 0, nil)
+        // Se decodifica ya: el archivo puede borrarse enseguida.
+        return CGImageSourceCreateImageAtIndex(source, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary)
     }
 
     /// Archivo para capturas que no van al historial.

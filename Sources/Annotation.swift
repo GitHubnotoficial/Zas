@@ -202,6 +202,7 @@ struct AnnotationDocument: Equatable {
         lhs.crop == rhs.crop && lhs.base === rhs.base && lhs.annotations.count == rhs.annotations.count
             && zip(lhs.annotations, rhs.annotations).allSatisfy {
                 $0.points == $1.points && $0.color == $1.color && $0.lineWidth == $1.lineWidth
+                    && $0.blockSize == $1.blockSize && $0.text == $1.text
             }
     }
 

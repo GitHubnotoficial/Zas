@@ -310,6 +310,26 @@ enum SelfTest {
         stitcher.add(strip(from: 100))
         check(stitcher.height == 220 && stitcher.composed()?.height == 220, "la imagen larga mide lo correcto (\(stitcher.height))")
 
+        // Cabecera y pie fijos, como un navegador con una barra abajo.
+        func page(from start: Int) -> CGImage {
+            let width = 40, height = 200
+            let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+            for row in 0..<height {
+                let isChrome = row < 30 || row >= 170
+                let value = isChrome ? 7 + row : start + row
+                context.setFillColor(CGColor(red: CGFloat((value * 37) % 251) / 255, green: CGFloat((value * 91) % 241) / 255, blue: CGFloat((value * 17) % 239) / 255, alpha: 1))
+                context.fill(CGRect(x: 0, y: height - 1 - row, width: width, height: 1))
+            }
+            return context.makeImage()!
+        }
+        var chrome = ScrollStitcher()
+        chrome.add(page(from: 1000))
+        check(chrome.add(page(from: 1060)), "une tramos con cabecera y pie fijos")
+        check(chrome.composed()?.height == 260, "el pie fijo sale una sola vez (\(chrome.composed()?.height ?? 0))")
+        var jump = ScrollStitcher()
+        jump.add(page(from: 1000))
+        check(!jump.add(page(from: 3000)) && jump.lostTrack, "avisa cuando el contenido saltó demasiado")
+
         // Herramientas de imagen.
         let tall = demoImage(scale: 2, width: 300, height: 200)
         check(ImageTools.rotated(tall, clockwise: true)?.size == CGSize(width: 200, height: 300), "rotar intercambia ancho y alto")

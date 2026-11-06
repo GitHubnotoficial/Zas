@@ -321,20 +321,37 @@ if let size = pixelSize(repeated) {
 }
 wait(0.8)
 
-// Congelar la pantalla y capturar de esa imagen.
-moveMouse(to: CGPoint(x: 150, y: 120))
-let frozen = newFile("png", timeout: 6) {
-    hotKey(kVK_ANSI_2)
-    wait(0.6)
-    press(kVK_ANSI_F)
-    wait(1.2)
-    shot("e2e-03c-congelada")
-    drag(from: CGPoint(x: 160, y: 130), to: CGPoint(x: 360, y: 280))
-}
-if let size = pixelSize(frozen) {
-    check(size == (200 * scale, 150 * scale), "capturar con la pantalla congelada (\(size))")
-} else {
-    check(false, "capturar con la pantalla congelada")
+// Congelar: se esconde la Calculadora después de congelar, y debe seguir saliendo en la imagen.
+if let calculator {
+    let app = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.calculator").first
+    moveMouse(to: CGPoint(x: 150, y: 120))
+    let frozen = newFile("png", timeout: 6) {
+        hotKey(kVK_ANSI_2)
+        wait(0.6)
+        press(kVK_ANSI_F)
+        wait(1.2)
+        app?.hide()
+        wait(0.8)
+        shot("e2e-03c-congelada")
+        drag(
+            from: CGPoint(x: calculator.minX + 10, y: calculator.minY + 60),
+            to: CGPoint(x: calculator.maxX - 10, y: calculator.maxY - 10)
+        )
+    }
+    app?.unhide()
+    var bright = 0
+    if let frozen, pixelSize(frozen) != nil,
+       let rep = (try? Data(contentsOf: frozen)).flatMap({ NSBitmapImageRep(data: $0) }) {
+        for x in stride(from: 0, to: rep.pixelsWide, by: 4) {
+            for y in stride(from: 0, to: rep.pixelsHigh, by: 4) {
+                if (rep.colorAt(x: x, y: y)?.usingColorSpace(.sRGB)?.brightnessComponent ?? 0) > 0.2 {
+                    bright += 1
+                }
+            }
+        }
+    }
+    check(bright > 100, "congelar conserva lo que ya no está en pantalla (\(bright) puntos)")
+    wait(0.8)
 }
 wait(0.8)
 

@@ -6,6 +6,11 @@ struct ScrollStitcher {
     private(set) var pieces: [CGImage] = []
     private var lastRows: [UInt64] = []
     private let maximumHeight = 30_000
+    /// Filas fijas abajo, como una barra o un cuadro de texto: se añaden una sola vez al final.
+    private var footerRows = 0
+    private var lastImage: CGImage?
+    /// El contenido saltó más que un tramo completo: hay que volver un poco atrás.
+    private(set) var lostTrack = false
 
     var height: Int { pieces.reduce(0) { $0 + $1.height } }
     var width: Int { pieces.first?.width ?? 0 }
@@ -17,15 +22,49 @@ struct ScrollStitcher {
         guard !pieces.isEmpty else {
             pieces.append(image)
             lastRows = rows
+            lastImage = image
             return true
         }
-        guard image.width == width, height < maximumHeight,
-              let shift = Self.shift(from: lastRows, to: rows), shift > 0,
-              let slice = image.cropping(to: CGRect(x: 0, y: image.height - shift, width: image.width, height: shift))
-        else { return false }
+        guard image.width == width, height < maximumHeight, rows.count == lastRows.count else { return false }
+        if rows == lastRows { return false }
+
+        let (top, bottom) = Self.staticBands(lastRows, rows)
+        let previous = Array(lastRows[top..<(rows.count - bottom)])
+        let next = Array(rows[top..<(rows.count - bottom)])
+        guard let shift = Self.shift(from: previous, to: next), shift > 0 else {
+            lostTrack = true
+            return false
+        }
+        let cut = CGRect(x: 0, y: rows.count - bottom - shift, width: image.width, height: shift)
+        guard let slice = Self.copy(image, cut) else { return false }
+        lostTrack = false
+        footerRows = bottom
         pieces.append(slice)
         lastRows = rows
+        lastImage = image
         return true
+    }
+
+    /// Filas iguales arriba y abajo en dos tramos: no se mueven al desplazar.
+    static func staticBands(_ a: [UInt64], _ b: [UInt64]) -> (top: Int, bottom: Int) {
+        let limit = a.count / 2
+        var top = 0
+        while top < limit, a[top] == b[top] { top += 1 }
+        var bottom = 0
+        while bottom < limit, a[a.count - 1 - bottom] == b[b.count - 1 - bottom] { bottom += 1 }
+        return (top, bottom)
+    }
+
+    /// Copia independiente: un recorte normal retiene en memoria el tramo entero.
+    private static func copy(_ image: CGImage, _ rect: CGRect) -> CGImage? {
+        guard let crop = image.cropping(to: rect) else { return nil }
+        let space = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
+        let context = CGContext(
+            data: nil, width: crop.width, height: crop.height, bitsPerComponent: 8, bytesPerRow: 0,
+            space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )
+        context?.draw(crop, in: CGRect(x: 0, y: 0, width: crop.width, height: crop.height))
+        return context?.makeImage()
     }
 
     /// Cuántas filas subió el contenido. `nil` si los tramos no se parecen.
@@ -77,15 +116,25 @@ struct ScrollStitcher {
     }
 
     func composed() -> CGImage? {
-        guard !pieces.isEmpty else { return nil }
-        let total = height
+        guard let first = pieces.first else { return nil }
+        // El pie del primer tramo se quita: va una sola vez, al final de todo.
+        var parts = pieces
+        if footerRows > 0, pieces.count > 1,
+           let trimmed = first.cropping(to: CGRect(x: 0, y: 0, width: first.width, height: first.height - footerRows)) {
+            parts[0] = trimmed
+            if let last = lastImage,
+               let footer = last.cropping(to: CGRect(x: 0, y: last.height - footerRows, width: last.width, height: footerRows)) {
+                parts.append(footer)
+            }
+        }
+        let total = parts.reduce(0) { $0 + $1.height }
         let space = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
         guard let context = CGContext(
             data: nil, width: width, height: total, bitsPerComponent: 8, bytesPerRow: 0,
             space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
         ) else { return nil }
         var top = total
-        for piece in pieces {
+        for piece in parts {
             top -= piece.height
             context.draw(piece, in: CGRect(x: 0, y: top, width: piece.width, height: piece.height))
         }

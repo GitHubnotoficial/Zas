@@ -178,6 +178,7 @@ final class SelectionOverlay {
                 owner: self
             )
             panel.contentView = view
+            panel.makeFirstResponder(view)
             panels.append(panel)
 
             if screen == target {
@@ -312,6 +313,8 @@ private final class OverlayView: NSView {
 
     override var isFlipped: Bool { true }
 
+    override var acceptsFirstResponder: Bool { true }
+
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     private func buildLayers() {
@@ -386,7 +389,12 @@ private final class OverlayView: NSView {
     /// Doce puntos alrededor del cursor, ampliados, para acertar al píxel.
     private func refreshMagnifier() {
         guard frozenImage != nil, let mousePoint,
-              let piece = crop(CGRect(x: mousePoint.x - 6, y: mousePoint.y - 6, width: 12, height: 12))
+              let piece = crop(CGRect(
+                  x: min(max(mousePoint.x - 6, 0), bounds.width - 12),
+                  y: min(max(mousePoint.y - 6, 0), bounds.height - 12),
+                  width: 12,
+                  height: 12
+              ))
         else {
             magnifier.isHidden = true
             return
@@ -537,6 +545,7 @@ private final class OverlayView: NSView {
 
     override func mouseExited(with event: NSEvent) {
         hoveredWindow = nil
+        mousePoint = nil
         refresh()
     }
 
