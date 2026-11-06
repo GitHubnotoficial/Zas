@@ -135,6 +135,7 @@ jobs:
           wait $GRABADOR
           avconvert --preset Preset1280x720 --source build/demo.mov --output escenas/zas-demo.mp4 --replace
           ls -la escenas/zas-demo.mp4
+          ./build/ZasPruebas "$PWD/escenas" --resumen "$PWD/escenas/zas-demo.mp4" "$PWD/escenas/demo-resumen.png"
 
       - name: Empaquetar
         run: |

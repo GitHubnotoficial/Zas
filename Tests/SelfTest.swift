@@ -58,6 +58,15 @@ enum SelfTest {
         Settings.shared.saveFolder = folder
         Settings.shared.playSound = false
 
+        // Hoja de fotogramas de un video, para revisar el demo sin tener un Mac.
+        if let flag = CommandLine.arguments.firstIndex(of: "--resumen"), CommandLine.arguments.count > flag + 2 {
+            let video = URL(fileURLWithPath: CommandLine.arguments[flag + 1])
+            let sheet = URL(fileURLWithPath: CommandLine.arguments[flag + 2])
+            let moments = await VideoSheet.make(from: video, to: sheet)
+            check(moments > 0, "el video demo se puede leer (\(moments) momentos)")
+            return
+        }
+
         if CommandLine.arguments.contains("--pantallas") {
             await displayTests()
             return
