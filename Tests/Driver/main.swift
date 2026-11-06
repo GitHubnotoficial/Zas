@@ -285,11 +285,16 @@ if let calculator {
     }
     check(window != nil, "clic en una ventana la captura")
     if let size = pixelSize(window) {
-        check(size == (Int(calculator.width) * scale, Int(calculator.height) * scale), "la captura mide la ventana (\(size))")
+        // Con dos pantallas, la ventana puede estar en la que no es la principal.
+        let home = NSScreen.screens.first { $0.frame.minX <= calculator.midX && calculator.midX < $0.frame.maxX } ?? screen
+        let windowScale = Int(home.backingScaleFactor)
+        check(size == (Int(calculator.width) * windowScale, Int(calculator.height) * windowScale), "la captura mide la ventana (\(size))")
     }
 }
 
 // 6. Pantalla completa.
+moveMouse(to: CGPoint(x: 300, y: 300))
+wait(0.3)
 let full = newFile("png") {
     hotKey(kVK_ANSI_1)
 }

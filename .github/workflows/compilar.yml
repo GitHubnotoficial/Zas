@@ -103,7 +103,6 @@ jobs:
           ./build/ZasConductor "$PWD/escenas"
 
       - name: Usar la app de verdad en Retina
-        continue-on-error: true
         run: |
           pkill -x Calculator || true
           ./build/PantallaVirtual --principal > build/principal.log 2>&1 &
