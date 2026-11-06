@@ -184,16 +184,20 @@ func pinnedFrame() -> CGRect? {
 }
 
 /// El panel de guardar del sistema. Según la versión de macOS lo dibuja la app o un servicio aparte.
-func savePanelVisible() -> Bool {
+func savePanelVisible() -> Bool { savePanelFrame() != nil }
+
+func savePanelFrame() -> CGRect? {
     let owners: Set<String> = ["Zas", "Open and Save Panel Service"]
     let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]]
-    return (list ?? []).contains { info in
+    for info in list ?? [] {
         guard let owner = info[kCGWindowOwnerName as String] as? String, owners.contains(owner),
               let bounds = info[kCGWindowBounds as String] as? NSDictionary,
-              let rect = CGRect(dictionaryRepresentation: bounds)
-        else { return false }
-        return rect.width >= 400 && rect.height >= 120 && rect.height < 900
+              let rect = CGRect(dictionaryRepresentation: bounds),
+              rect.width >= 400, rect.height >= 120, rect.height < 900
+        else { continue }
+        return rect
     }
+    return nil
 }
 
 /// El icono de Zas en la barra de menú.
@@ -339,9 +343,15 @@ click(at: saveButton(in: firstCard))
 wait(1.2)
 shot("e2e-03b-guardar-como")
 check(savePanelVisible(), "el botón Guardar abre el panel de guardar")
-// El aviso de macOS puede salir aquí: si no se acepta, se queda con la tecla Esc.
-dismissSystemPrompt()
-wait(0.5)
+// El aviso de macOS puede salir aquí y se queda con el teclado: al aceptarlo, se vuelve al panel con un clic.
+if systemPromptFrame() != nil {
+    dismissSystemPrompt()
+    wait(0.5)
+    if let frame = savePanelFrame() {
+        click(at: CGPoint(x: frame.midX, y: frame.minY + 12))
+        wait(0.4)
+    }
+}
 press(kVK_Escape)
 wait(0.8)
 check(!savePanelVisible(), "Esc cierra el panel de guardar")

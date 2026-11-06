@@ -796,6 +796,7 @@ private final class ThumbnailView: NSView, NSDraggingSource {
                 self.onReleased?()
             }
         }
+        panel.makeKeyAndOrderFront(nil)
     }
 
     /// Escritura atómica: si falla, un archivo que ya existía queda intacto.
