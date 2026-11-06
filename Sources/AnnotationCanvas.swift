@@ -21,6 +21,8 @@ final class AnnotationCanvas: NSView {
     var onHistoryChanged: (() -> Void)?
     var onRequestClose: (() -> Void)?
     var onRequestCopy: (() -> Void)?
+    var onRequestSave: (() -> Void)?
+    var onRequestZoom: ((Int) -> Void)?
     var onToolShortcut: ((AnnotationTool) -> Void)?
 
     private let image: NSImage
@@ -55,6 +57,7 @@ final class AnnotationCanvas: NSView {
 
     var canUndo: Bool { !undoStack.isEmpty }
     var canRedo: Bool { !redoStack.isEmpty }
+    var historyCount: Int { undoStack.count }
 
     /// Parte de la imagen visible, en coordenadas de la imagen.
     private var contentRect: CGRect {
@@ -264,10 +267,11 @@ final class AnnotationCanvas: NSView {
         }
 
         guard var annotation = current, let first = annotation.points.first else { return }
-        if event.modifierFlags.contains(.shift), annotation.tool != .pencil {
+        let freehand = annotation.tool == .pencil || annotation.tool == .highlight || annotation.tool == .eraser
+        if event.modifierFlags.contains(.shift), !freehand {
             point = Self.constrained(point, from: first, tool: annotation.tool)
         }
-        annotation.points = annotation.tool == .pencil ? annotation.points + [point] : [first, point]
+        annotation.points = freehand ? annotation.points + [point] : [first, point]
         current = annotation
         needsDisplay = true
     }
@@ -300,7 +304,7 @@ final class AnnotationCanvas: NSView {
         current = nil
         let isMeaningful: Bool
         switch annotation.tool {
-        case .pencil:
+        case .pencil, .highlight, .eraser:
             isMeaningful = annotation.points.count > 1
         default:
             let rect = annotation.rect
@@ -328,6 +332,20 @@ final class AnnotationCanvas: NSView {
     }
 
     // MARK: - Teclado
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        guard event.modifierFlags.intersection([.command, .control, .option]) == .command,
+              window?.firstResponder === self
+        else { return super.performKeyEquivalent(with: event) }
+        switch event.charactersIgnoringModifiers {
+        case "s": onRequestSave?()
+        case "+", "=": onRequestZoom?(1)
+        case "-": onRequestZoom?(-1)
+        case "0": onRequestZoom?(0)
+        default: return super.performKeyEquivalent(with: event)
+        }
+        return true
+    }
 
     override func keyDown(with event: NSEvent) {
         let plain = event.modifierFlags.intersection([.command, .control, .option]).isEmpty
@@ -417,10 +435,7 @@ final class AnnotationCanvas: NSView {
         context.scaleBy(x: scale, y: scale)
         context.translateBy(x: -content.minX, y: -content.minY)
 
-        renderContents()
-        if let current {
-            AnnotationRenderer.draw(current, pixelated: pixelated, imageSize: image.size)
-        }
+        renderContents(including: current)
         if let selectedIndex, document.annotations.indices.contains(selectedIndex) {
             drawSelection(document.annotations[selectedIndex], scale: scale)
         }
@@ -430,11 +445,18 @@ final class AnnotationCanvas: NSView {
         NSGraphicsContext.restoreGraphicsState()
     }
 
-    private func renderContents() {
+    /// Las marcas van en una capa aparte: el borrador las quita sin tocar la captura.
+    private func renderContents(including draft: Annotation? = nil) {
         image.draw(in: CGRect(origin: .zero, size: image.size))
+        guard let context = NSGraphicsContext.current?.cgContext else { return }
+        context.beginTransparencyLayer(auxiliaryInfo: nil)
         for annotation in document.annotations {
             AnnotationRenderer.draw(annotation, pixelated: pixelated, imageSize: image.size)
         }
+        if let draft {
+            AnnotationRenderer.draw(draft, pixelated: pixelated, imageSize: image.size)
+        }
+        context.endTransparencyLayer()
     }
 
     private func drawSelection(_ annotation: Annotation, scale: CGFloat) {

@@ -5,7 +5,7 @@ set -euo pipefail
 APP_NAME="Zas"
 BUNDLE_ID="local.zas.app"
 MIN_MACOS="13.0"
-VERSION="0.7.0"
+VERSION="0.8.0"
 
 cd "$(dirname "$0")"
 

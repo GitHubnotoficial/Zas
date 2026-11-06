@@ -2,7 +2,7 @@ import AppKit
 import CoreImage
 
 enum AnnotationTool: Int, CaseIterable {
-    case select, arrow, rectangle, ellipse, highlight, pencil, text, counter, pixelate, crop
+    case select, arrow, rectangle, ellipse, highlight, pencil, text, counter, pixelate, crop, eraser
 
     var label: String {
         switch self {
@@ -16,6 +16,7 @@ enum AnnotationTool: Int, CaseIterable {
         case .counter: return "Número"
         case .pixelate: return "Pixelar"
         case .crop: return "Recortar"
+        case .eraser: return "Borrador"
         }
     }
 
@@ -31,6 +32,7 @@ enum AnnotationTool: Int, CaseIterable {
         case .counter: return "N"
         case .pixelate: return "X"
         case .crop: return "C"
+        case .eraser: return "E"
         }
     }
 
@@ -41,10 +43,11 @@ enum AnnotationTool: Int, CaseIterable {
         case .rectangle: return "rectangle"
         case .ellipse: return "circle"
         case .highlight: return "highlighter"
+        case .eraser: return "eraser"
         case .pencil: return "scribble"
         case .text: return "textformat"
         case .counter: return "1.circle"
-        case .pixelate: return "checkerboard.rectangle"
+        case .pixelate: return "square.grid.3x3.square"
         case .crop: return "crop"
         }
     }
@@ -97,7 +100,7 @@ struct Annotation {
                 width: counterRadius * 2,
                 height: counterRadius * 2
             )
-        case .pencil:
+        case .pencil, .highlight, .eraser:
             let xs = points.map(\.x)
             let ys = points.map(\.y)
             guard let minX = xs.min(), let maxX = xs.max(), let minY = ys.min(), let maxY = ys.max() else {
@@ -121,7 +124,9 @@ struct Annotation {
             // Hueco por dentro: se puede tocar lo que hay debajo.
             let inner = rect.insetBy(dx: slack + lineWidth, dy: slack + lineWidth)
             return inner.isEmpty || !inner.contains(point)
-        case .pencil:
+        case .eraser:
+            return false
+        case .pencil, .highlight:
             guard points.count > 1 else { return false }
             for index in 1..<points.count
             where Annotation.distance(from: point, toSegment: points[index - 1], points[index]) <= slack + lineWidth {
@@ -154,7 +159,9 @@ struct AnnotationDocument: Equatable {
 
     static func == (lhs: AnnotationDocument, rhs: AnnotationDocument) -> Bool {
         lhs.crop == rhs.crop && lhs.annotations.count == rhs.annotations.count
-            && zip(lhs.annotations, rhs.annotations).allSatisfy { $0.points == $1.points && $0.color == $1.color }
+            && zip(lhs.annotations, rhs.annotations).allSatisfy {
+                $0.points == $1.points && $0.color == $1.color && $0.lineWidth == $1.lineWidth
+            }
     }
 
     var nextCounter: Int {
@@ -182,11 +189,16 @@ enum AnnotationRenderer {
             path.lineWidth = annotation.lineWidth
             path.stroke()
         case .highlight:
-            // Multiplicar deja legible el texto de debajo, como un marcador real.
+            // Se traza entero de una vez: así los cruces no quedan más oscuros, como con un marcador.
+            annotation.color.withAlphaComponent(0.42).setStroke()
+            let marker = strokePath(annotation)
+            marker.lineCapStyle = .butt
+            marker.stroke()
+        case .eraser:
             NSGraphicsContext.saveGraphicsState()
-            NSGraphicsContext.current?.compositingOperation = .multiply
-            annotation.color.withAlphaComponent(0.55).setFill()
-            NSBezierPath(rect: annotation.rect).fill()
+            NSGraphicsContext.current?.compositingOperation = .clear
+            NSColor.black.setStroke()
+            strokePath(annotation).stroke()
             NSGraphicsContext.restoreGraphicsState()
         case .pencil:
             drawPencil(annotation)
@@ -240,6 +252,19 @@ enum AnnotationRenderer {
         head.lineWidth = 1
         head.fill()
         head.stroke()
+    }
+
+    private static func strokePath(_ annotation: Annotation) -> NSBezierPath {
+        let path = NSBezierPath()
+        path.lineWidth = annotation.lineWidth
+        path.lineCapStyle = .round
+        path.lineJoinStyle = .round
+        guard let first = annotation.points.first else { return path }
+        path.move(to: first)
+        for point in annotation.points.dropFirst() {
+            path.line(to: point)
+        }
+        return path
     }
 
     private static func drawPencil(_ annotation: Annotation) {

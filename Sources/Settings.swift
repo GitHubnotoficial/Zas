@@ -4,7 +4,7 @@ import SwiftUI
 
 /// Las acciones que se disparan con un atajo global.
 enum HotKeyAction: String, CaseIterable, Codable {
-    case region, fullScreen, timed, text, record
+    case region, fullScreen, timed, text, record, again
 
     var title: String {
         switch self {
@@ -13,6 +13,7 @@ enum HotKeyAction: String, CaseIterable, Codable {
         case .timed: return "Capturar en 3 segundos"
         case .text: return "Copiar texto de la pantalla"
         case .record: return "Grabar video"
+        case .again: return "Repetir la última captura"
         }
     }
 
@@ -23,6 +24,7 @@ enum HotKeyAction: String, CaseIterable, Codable {
         case .timed: return "timer"
         case .text: return "text.viewfinder"
         case .record: return "record.circle"
+        case .again: return "arrow.clockwise"
         }
     }
 
@@ -34,6 +36,7 @@ enum HotKeyAction: String, CaseIterable, Codable {
         case .timed: return Shortcut(keyCode: UInt32(kVK_ANSI_8), modifiers: modifiers)
         case .text: return Shortcut(keyCode: UInt32(kVK_ANSI_7), modifiers: modifiers)
         case .record: return Shortcut(keyCode: UInt32(kVK_ANSI_6), modifiers: modifiers)
+        case .again: return Shortcut(keyCode: UInt32(kVK_ANSI_9), modifiers: modifiers)
         }
     }
 }
@@ -111,6 +114,8 @@ final class Settings: ObservableObject {
         static let welcomed = "welcomed"
         static let saveCaptures = "saveCaptures"
         static let videoCopiesSummary = "videoCopiesSummary"
+        static let videoEvery = "videoEvery"
+        static let videoLimit = "videoLimit"
         static let loginItemConfigured = "loginItemConfigured"
     }
 
@@ -136,6 +141,16 @@ final class Settings: ObservableObject {
     /// Al terminar un video se copia una imagen con sus momentos clave, que Claude sí puede leer.
     @Published var videoCopiesSummary: Bool {
         didSet { defaults.set(videoCopiesSummary, forKey: Key.videoCopiesSummary) }
+    }
+
+    /// Cada cuántos segundos entra una imagen al resumen del video.
+    @Published var videoEvery: Double {
+        didSet { defaults.set(videoEvery, forKey: Key.videoEvery) }
+    }
+
+    /// Detiene la grabación sola a los segundos indicados. 0 es sin límite.
+    @Published var videoLimit: Double {
+        didSet { defaults.set(videoLimit, forKey: Key.videoLimit) }
     }
 
     @Published var saveFolder: URL {
@@ -171,13 +186,15 @@ final class Settings: ObservableObject {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        defaults.register(defaults: [Key.playSound: true, Key.thumbnailSeconds: 6.0, Key.saveCaptures: true, Key.videoCopiesSummary: true])
+        defaults.register(defaults: [Key.playSound: true, Key.thumbnailSeconds: 6.0, Key.saveCaptures: true, Key.videoCopiesSummary: true, Key.videoEvery: 2.0])
 
         playSound = defaults.bool(forKey: Key.playSound)
         thumbnailSeconds = defaults.double(forKey: Key.thumbnailSeconds)
         recordMicrophone = defaults.bool(forKey: Key.recordMicrophone)
         saveCaptures = defaults.bool(forKey: Key.saveCaptures)
         videoCopiesSummary = defaults.bool(forKey: Key.videoCopiesSummary)
+        videoEvery = defaults.double(forKey: Key.videoEvery)
+        videoLimit = defaults.double(forKey: Key.videoLimit)
 
         if let path = defaults.string(forKey: Key.saveFolder) {
             saveFolder = URL(fileURLWithPath: path, isDirectory: true)

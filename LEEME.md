@@ -31,6 +31,7 @@ La primera vez:
 | ⇧⌘8 | Elegir un área y capturarla 3 segundos después, para abrir antes un menú o un aviso |
 | ⇧⌘7 | Copiar el texto de un área |
 | ⇧⌘6 | Empezar o detener una grabación de video |
+| ⇧⌘9 | Repetir la última captura, en la misma área |
 | Esc, clic derecho o repetir el atajo | Cancelar |
 
 Puedes cambiarlos en **Ajustes**, desde el icono de Zas en la barra de menú.
@@ -61,6 +62,7 @@ Haz clic en una miniatura para abrirlo. Enter copia el resultado y cierra.
 
 | Tecla | Herramienta |
 | --- | --- |
+| E | Borrador |
 | V | Mover o borrar una marca |
 | A | Flecha |
 | R | Cuadro |
@@ -72,11 +74,11 @@ Haz clic en una miniatura para abrirlo. Enter copia el resultado y cierra.
 | X | Pixelar |
 | C | Recortar |
 
-⌘Z deshace y ⇧⌘Z rehace. Mayúsculas alinea las flechas y hace cuadros y círculos perfectos. Supr borra la marca seleccionada. Esc cierra el editor y, si dibujaste algo, pregunta antes de perderlo.
+El punto de color abre la mini paleta: color, cualquier otro color y tamaño. ⌘+ y ⌘- hacen zoom, y también se puede pellizcar el trackpad. ⌘C copia sin cerrar, ⌘S guarda una copia y el botón de guardar deja reemplazar el original o guardar como. El botón de texto copia todo el texto y deja seleccionarlo sobre la imagen. ⌘Z deshace y ⇧⌘Z rehace. Mayúsculas alinea las flechas y hace cuadros y círculos perfectos. Supr borra la marca seleccionada. Esc cierra el editor y, si dibujaste algo, pregunta antes de perderlo.
 
 ## Video
 
-Se graba en MP4. Al terminar queda copiado un resumen en imágenes para pegar en Claude. Para detenerlo, usa ⇧⌘6 o haz clic en el contador de la barra de menú. Para grabar tu voz, activa el micrófono en Ajustes; requiere macOS 15 o más nuevo.
+Se graba en MP4. Al terminar queda copiado un resumen en imágenes para pegar en Claude. Para detenerlo, usa ⇧⌘6 o haz clic en el contador de la barra de menú. En Ajustes eliges cada cuánto se toma una imagen y si la grabación debe detenerse sola. Para grabar tu voz, activa el micrófono; requiere macOS 15 o más nuevo.
 
 ## Desinstalar
 

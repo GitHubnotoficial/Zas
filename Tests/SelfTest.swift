@@ -192,7 +192,7 @@ enum SelfTest {
     }
 
     private static func sampleAnnotations(on canvas: AnnotationCanvas) {
-        canvas.add(Annotation(tool: .highlight, color: .systemYellow, lineWidth: 5, points: [CGPoint(x: 634, y: 228), CGPoint(x: 760, y: 256)]))
+        canvas.add(Annotation(tool: .highlight, color: NSColor(srgbRed: 1, green: 0.84, blue: 0.04, alpha: 1), lineWidth: 28, points: [CGPoint(x: 634, y: 242), CGPoint(x: 700, y: 243), CGPoint(x: 760, y: 242)]))
         canvas.add(Annotation(tool: .arrow, color: .systemRed, lineWidth: 5, points: [CGPoint(x: 560, y: 92), CGPoint(x: 660, y: 218)]))
         canvas.add(Annotation(tool: .rectangle, color: .systemRed, lineWidth: 5, points: [CGPoint(x: 230, y: 222), CGPoint(x: 340, y: 262)]))
         canvas.add(Annotation(tool: .ellipse, color: .systemBlue, lineWidth: 5, points: [CGPoint(x: 8, y: 478), CGPoint(x: 92, y: 518)]))
@@ -235,6 +235,25 @@ enum SelfTest {
         canvas.undo(nil)
         check(canvas.document.crop == nil, "deshacer quita el recorte")
 
+        // Borrador: quita lo dibujado y deja intacta la captura.
+        let eraseCanvas = AnnotationCanvas(frame: CGRect(x: 0, y: 0, width: 900, height: 560), image: image)
+        eraseCanvas.add(Annotation(tool: .rectangle, color: NSColor(srgbRed: 1, green: 0, blue: 0, alpha: 1), lineWidth: 10, points: [CGPoint(x: 100, y: 100), CGPoint(x: 300, y: 300)]))
+        eraseCanvas.add(Annotation(tool: .eraser, color: .black, lineWidth: 40, points: [CGPoint(x: 100, y: 180), CGPoint(x: 100, y: 220)]))
+        let erased = eraseCanvas.exportPNG().flatMap { NSBitmapImageRep(data: $0) }
+        let erasedEdge = erased?.colorAt(x: 200, y: 1120 - 400)?.usingColorSpace(.sRGB)
+        let originalEdge = plainRep?.colorAt(x: 200, y: 1120 - 400)?.usingColorSpace(.sRGB)
+        check(abs((erasedEdge?.redComponent ?? 9) - (originalEdge?.redComponent ?? 0)) < 0.05, "el borrador quita la marca y deja la captura")
+        let keptEdge = erased?.colorAt(x: 200, y: 1120 - 560)?.usingColorSpace(.sRGB)
+        check((keptEdge?.redComponent ?? 0) > 0.8 && (keptEdge?.greenComponent ?? 1) < 0.3, "el borrador respeta lo que no tocó")
+
+        // Resaltador: tiñe sin tapar.
+        let markerCanvas = AnnotationCanvas(frame: CGRect(x: 0, y: 0, width: 900, height: 560), image: image)
+        markerCanvas.add(Annotation(tool: .highlight, color: NSColor(srgbRed: 1, green: 0.84, blue: 0.04, alpha: 1), lineWidth: 30, points: [CGPoint(x: 240, y: 300), CGPoint(x: 420, y: 300)]))
+        let marked2 = markerCanvas.exportPNG().flatMap { NSBitmapImageRep(data: $0) }
+        let tint = marked2?.colorAt(x: 660, y: 1120 - 600)?.usingColorSpace(.sRGB)
+        let under = plainRep?.colorAt(x: 660, y: 1120 - 600)?.usingColorSpace(.sRGB)
+        check((tint?.blueComponent ?? 1) < (under?.blueComponent ?? 0) - 0.1 && (tint?.redComponent ?? 0) > 0.5, "el resaltador tiñe y deja ver lo de abajo")
+
         let pixelCanvas = AnnotationCanvas(frame: CGRect(x: 0, y: 0, width: 900, height: 560), image: image)
         pixelCanvas.add(Annotation(tool: .pixelate, color: .red, lineWidth: 5, points: [CGPoint(x: 220, y: 200), CGPoint(x: 400, y: 260)]))
         let pixelated = pixelCanvas.exportPNG()
@@ -260,7 +279,10 @@ enum SelfTest {
         // Resumen de video para Claude.
         check(VideoSheet.frameTimes(duration: 0) == [0], "un video vacío no rompe el resumen")
         check(VideoSheet.frameTimes(duration: 3).count == 2, "un video corto da dos momentos")
-        check(VideoSheet.frameTimes(duration: 600).count == 12, "un video largo no pasa de doce momentos")
+        check(VideoSheet.frameTimes(duration: 10, every: 1).count == 10, "se puede pedir una imagen por segundo")
+        check(VideoSheet.frameTimes(duration: 600, every: 60).count == 11, "se puede pedir una imagen por minuto")
+        check(VideoSheet.frameTimes(duration: 7200, every: 1).count == 120, "un video largo no pasa del tope")
+        check(VideoSheet.outputName(for: URL(fileURLWithPath: "/x/Zas 1.mp4"), page: 2) == "Zas 1 resumen 2.png", "nombre de la segunda hoja")
         check((VideoSheet.frameTimes(duration: 60).last ?? 99) < 60, "el último momento cae dentro del video")
         check(VideoSheet.timeLabel(83) == "1:23", "el minuto se escribe bien")
         check(VideoSheet.outputName(for: URL(fileURLWithPath: "/x/Zas 1.mp4")) == "Zas 1 resumen.png", "nombre del resumen")
@@ -656,6 +678,16 @@ enum SelfTest {
             await shoot("\(label)-06-editor")
             editor.testSelect(tool: .highlight)
             await shoot("\(label)-07-editor-resaltar")
+            editor.testOpenPalette()
+            await shoot("\(label)-07b-mini-paleta")
+            editor.testOpenPalette()
+            check(editor.testZoom() == 2, "el editor hace zoom")
+            await shoot("\(label)-07c-zoom")
+            editor.testResetZoom()
+            editor.testTextMode()
+            await wait(1.5)
+            await shoot("\(label)-07d-seleccion-texto")
+            editor.testTextMode()
             editor.testWindow.close()
 
             let small = AnnotationEditor(image: demoImage(scale: 2, width: 240, height: 90), file: pngFile(demoImage()))

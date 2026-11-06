@@ -11,6 +11,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var actionItems: [HotKeyAction: NSMenuItem] = [:]
     private let recentsStrip = RecentsStripView()
     private var lastCaptureRect: CGRect?
+    private var lastSelection: Selection?
     private var settingsObserver: AnyCancellable?
 
     private let overlay = SelectionOverlay()
@@ -45,6 +46,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         thumbnail.onPin = { [weak self] image in
             self?.pins.pin(image)
+        }
+        thumbnail.onSelectText = { [weak self] image, file in
+            self?.openEditor(image: image, file: file, selectingText: true)
         }
         thumbnail.onSummarize = { [weak self] video in
             self?.copySummary(of: video)
@@ -176,6 +180,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         addActionItem(.fullScreen, #selector(captureFullScreen))
         addActionItem(.text, #selector(captureText))
         addActionItem(.record, #selector(toggleRecording))
+        addActionItem(.again, #selector(captureAgain))
         menu.addItem(.separator())
         let recents = NSMenuItem()
         recents.view = recentsStrip
@@ -245,6 +250,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case .region: captureRegion()
         case .fullScreen: captureFullScreen()
         case .timed: captureTimed()
+        case .again: captureAgain()
         case .text: captureText()
         case .record: toggleRecording()
         }
@@ -304,6 +310,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     // MARK: - Capturas
+
+    /// Repite la última área sin volver a elegirla.
+    @objc private func captureAgain() {
+        guard canStartCapture(), ensurePermission() else { return }
+        guard let lastSelection else {
+            Toast.shared.show("Aún no hay una captura que repetir.")
+            return
+        }
+        thumbnail.suspend()
+        snap(lastSelection)
+    }
 
     @objc private func captureRegion() {
         beginSelection(.screenshot)
@@ -371,6 +388,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let pointSize = selection.imagePointSize
         // Una captura de pantalla completa no tiene de dónde "salir".
         lastCaptureRect = selection.isFullScreen ? nil : selection.appKitRect
+        lastSelection = selection
         // Pausa corta para que las ventanas de Zas ya no salgan en la imagen.
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 120_000_000)
@@ -435,7 +453,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
-    private func openEditor(image: NSImage, file: URL) {
+    private func openEditor(image: NSImage, file: URL, selectingText: Bool = false) {
         let editor = AnnotationEditor(image: image, file: file)
         editor.onFinish = { [weak self] newImage, newFile in
             Capture.playSound()
@@ -449,6 +467,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         editors.append(editor)
         editor.show()
+        if selectingText {
+            editor.openTextMode()
+        }
     }
 
     // MARK: - Video
@@ -533,14 +554,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// Crea la imagen con los momentos clave del video y la deja lista para pegar en Claude.
     private func copySummary(of video: URL) {
         Task { @MainActor in
-            let output = Capture.imageFolder.appendingPathComponent(VideoSheet.outputName(for: video))
-            let moments = await VideoSheet.make(from: video, to: output)
-            guard moments > 0, Capture.copyImage(at: output) != nil else {
+            let result = await VideoSheet.pages(from: video, folder: Capture.imageFolder, every: Settings.shared.videoEvery)
+            guard let last = result.files.last, Capture.copyImage(at: last) != nil else {
                 Toast.shared.show("No se pudo crear el resumen. El video sigue guardado.")
                 return
             }
             self.thumbnail.clipboardChanged()
-            Toast.shared.show("Resumen de \(moments) imágenes copiado. Pégalo en Claude.")
+            if result.files.count > 1 {
+                for file in result.files {
+                    if let image = NSImage(contentsOf: file) {
+                        self.thumbnail.show(image: image, file: file, kind: .screenshot, inClipboard: file == last)
+                    }
+                }
+            }
+            let pages = result.files.count > 1 ? " en \(result.files.count) hojas" : ""
+            Toast.shared.show("Resumen de \(result.moments) imágenes\(pages) copiado. Pégalo en Claude.")
         }
     }
 
@@ -616,6 +644,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func updateElapsedTime() {
         let seconds = Int(Date().timeIntervalSince(recordingStart))
         statusItem.button?.title = String(format: " %d:%02d", seconds / 60, seconds % 60)
+        let limit = Settings.shared.videoLimit
+        if limit > 0, Double(seconds) >= limit {
+            stopRecording()
+        }
     }
 
     private func showRecordingBorder(around rect: CGRect) {

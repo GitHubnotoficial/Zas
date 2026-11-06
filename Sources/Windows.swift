@@ -143,12 +143,15 @@ private struct SettingsView: View {
                 Text("30 segundos").tag(30.0)
             }
             Toggle("Guardar una copia de cada captura", isOn: $settings.saveCaptures)
-            LabeledContent("Guardar en") {
+            LabeledContent("Capturas y videos") {
                 HStack(spacing: 8) {
                     Text(displayPath)
                         .lineLimit(1)
                         .truncationMode(.middle)
                         .foregroundStyle(.secondary)
+                    Button("Ver") {
+                        NSWorkspace.shared.open(Capture.folder)
+                    }
                     Button("Cambiar…", action: chooseFolder)
                 }
             }
@@ -191,6 +194,21 @@ private struct SettingsView: View {
             Picker("Al terminar, copiar", selection: $settings.videoCopiesSummary) {
                 Text("Resumen en imágenes").tag(true)
                 Text("Archivo de video").tag(false)
+            }
+            Picker("Tomar una imagen cada", selection: $settings.videoEvery) {
+                Text("1 segundo").tag(1.0)
+                Text("2 segundos").tag(2.0)
+                Text("5 segundos").tag(5.0)
+                Text("10 segundos").tag(10.0)
+                Text("30 segundos").tag(30.0)
+                Text("1 minuto").tag(60.0)
+            }
+            Picker("Detener la grabación a los", selection: $settings.videoLimit) {
+                Text("Sin límite").tag(0.0)
+                Text("10 segundos").tag(10.0)
+                Text("30 segundos").tag(30.0)
+                Text("1 minuto").tag(60.0)
+                Text("5 minutos").tag(300.0)
             }
             Toggle("Grabar con micrófono", isOn: $settings.recordMicrophone)
                 .disabled(!ScreenRecorder.supportsMicrophone)

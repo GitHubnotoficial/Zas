@@ -26,6 +26,7 @@ final class ThumbnailController {
     var onAnnotate: ((NSImage, URL) -> Void)?
     var onPin: ((NSImage) -> Void)?
     var onSummarize: ((URL) -> Void)?
+    var onSelectText: ((NSImage, URL) -> Void)?
 
     private final class Item: @unchecked Sendable {
         let panel: CardPanel
@@ -103,6 +104,11 @@ final class ThumbnailController {
             guard let self, let item else { return }
             self.dismiss(item)
             self.onAnnotate?(image, file)
+        }
+        view.onSelectText = { [weak self, weak item] in
+            guard let self, let item else { return }
+            self.dismiss(item)
+            self.onSelectText?(image, file)
         }
         view.onPin = { [weak self, weak item] in
             guard let self, let item else { return }
@@ -365,6 +371,7 @@ private final class ThumbnailView: NSView, NSDraggingSource {
     var onClose: (() -> Void)?
     var onHoldChanged: ((Bool) -> Void)?
     var onAnnotate: (() -> Void)?
+    var onSelectText: (() -> Void)?
     var onPin: (() -> Void)?
     var onCopy: (() -> Void)?
     var onCopyPath: (() -> Void)?
@@ -528,6 +535,13 @@ private final class ThumbnailView: NSView, NSDraggingSource {
 
     override func menu(for event: NSEvent) -> NSMenu? {
         let menu = NSMenu()
+        if kind != .text {
+            let path = file.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")
+            let location = menu.addItem(withTitle: path, action: nil, keyEquivalent: "")
+            location.isEnabled = false
+            menu.addItem(.separator())
+            menu.addItem(withTitle: "Copiar la ruta", action: #selector(copyPath), keyEquivalent: "").target = self
+        }
         if kind != .text, !Capture.isScratch(file) {
             menu.addItem(withTitle: "Mostrar en Finder", action: #selector(reveal), keyEquivalent: "").target = self
         }
@@ -599,7 +613,7 @@ private final class ThumbnailView: NSView, NSDraggingSource {
         switch kind {
         case .screenshot: onAnnotate?()
         case .video: open()
-        case .text: onClose?()
+        case .text: onSelectText?()
         }
     }
 

@@ -309,6 +309,17 @@ check(canceled == nil, "Esc cancela sin capturar")
 wait(0.4)
 check(zasWindowCount(minimumWidth: screen.frame.width - 1) == 0, "tras cancelar no queda la pantalla oscurecida")
 
+// Repetir la última captura: la misma área, sin volver a elegirla.
+let repeated = newFile("png", timeout: 6) {
+    hotKey(kVK_ANSI_9)
+}
+if let size = pixelSize(repeated) {
+    check(size == (300 * scale, 250 * scale), "⇧⌘9 repite la última área (\(size))")
+} else {
+    check(false, "⇧⌘9 repite la última área")
+}
+wait(0.8)
+
 // Repetir el atajo también cancela.
 let toggled = newFile("png", timeout: 1) {
     hotKey(kVK_ANSI_2)

@@ -8,12 +8,20 @@ enum VideoSheet {
     private static let maximumSide: CGFloat = 1568
     private static let margin: CGFloat = 10
 
-    /// Un momento cada dos segundos, con un máximo de doce.
-    static func frameTimes(duration: Double) -> [Double] {
+    private static let perPage = 12
+    private static let maximumMoments = 120
+
+    /// Un momento cada `every` segundos, más el final del video.
+    static func frameTimes(duration: Double, every: Double = 2) -> [Double] {
         guard duration > 0.1 else { return [0] }
-        let count = min(max(Int(duration / 2) + 1, 2), 12)
         let last = max(duration - 0.1, 0)
-        return (0..<count).map { last * Double($0) / Double(count - 1) }
+        var times = Array(stride(from: 0, to: last, by: max(every, 0.5)))
+        if last - (times.last ?? 0) > 0.4 || times.count < 2 {
+            times.append(last)
+        }
+        guard times.count > maximumMoments else { return times }
+        // En videos muy largos se reparte para no pasar del tope.
+        return (0..<maximumMoments).map { last * Double($0) / Double(maximumMoments - 1) }
     }
 
     static func columns(for count: Int) -> Int {
@@ -25,8 +33,31 @@ enum VideoSheet {
         return String(format: "%d:%02d", whole / 60, whole % 60)
     }
 
-    static func outputName(for video: URL) -> String {
-        "\(video.deletingPathExtension().lastPathComponent) resumen.png"
+    static func outputName(for video: URL, page: Int = 1) -> String {
+        let suffix = page > 1 ? " \(page)" : ""
+        return "\(video.deletingPathExtension().lastPathComponent) resumen\(suffix).png"
+    }
+
+    /// Una hoja por cada doce momentos. Devuelve los archivos y cuántos momentos entraron.
+    static func pages(from video: URL, folder: URL, every: Double) async -> (files: [URL], moments: Int) {
+        let asset = AVURLAsset(url: video)
+        guard let duration = try? await asset.load(.duration).seconds, duration.isFinite else {
+            return ([], 0)
+        }
+        let times = frameTimes(duration: duration, every: every)
+        var files: [URL] = []
+        var moments = 0
+        var start = 0
+        while start < times.count {
+            let slice = Array(times[start..<min(start + perPage, times.count)])
+            let url = folder.appendingPathComponent(outputName(for: video, page: files.count + 1))
+            let count = await sheet(asset: asset, times: slice, to: url)
+            guard count > 0 else { break }
+            files.append(url)
+            moments += count
+            start += perPage
+        }
+        return (files, moments)
     }
 
     /// Devuelve cuántos momentos quedaron en la imagen, o 0 si no se pudo crear.
@@ -35,8 +66,11 @@ enum VideoSheet {
         guard let duration = try? await asset.load(.duration).seconds, duration.isFinite else {
             return 0
         }
-
         let times = frameTimes(duration: duration)
+        return await sheet(asset: asset, times: Array(times.prefix(perPage)), to: output)
+    }
+
+    private static func sheet(asset: AVURLAsset, times: [Double], to output: URL) async -> Int {
         let columnCount = columns(for: times.count)
         let cellWidth = ((maximumSide - margin * CGFloat(columnCount + 1)) / CGFloat(columnCount)).rounded(.down)
 
