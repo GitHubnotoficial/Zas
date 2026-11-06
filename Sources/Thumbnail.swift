@@ -1,4 +1,5 @@
 import AppKit
+import CoreImage
 import UniformTypeIdentifiers
 
 enum ThumbnailKind {
@@ -559,7 +560,7 @@ private final class ThumbnailView: NSView, NSDraggingSource {
     private(set) var isOutlined = false
 
     /// Oscurece y desenfoca la captura para que los controles se lean sobre cualquier imagen.
-    private let veil = GlassView(frame: .zero, radius: Design.cardRadius, material: .hudWindow, blending: .withinWindow)
+    private let veil = NSView()
     private let outline = NSView()
     private let badge = GlassView(frame: .zero, radius: 11, blending: .withinWindow)
     private let badgeLabel = NSTextField(labelWithString: "")
@@ -638,15 +639,26 @@ private final class ThumbnailView: NSView, NSDraggingSource {
     }
 
     private func buildVeil() {
-        veil.appearance = NSAppearance(named: .darkAqua)
-        veil.layer?.borderWidth = 0
+        veil.wantsLayer = true
+        veil.layer?.contentsGravity = .resizeAspectFill
         veil.alphaValue = 0
         let scrim = NSView(frame: veil.bounds)
         scrim.wantsLayer = true
-        scrim.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.28).cgColor
+        scrim.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.42).cgColor
         scrim.autoresizingMask = [.width, .height]
         veil.addSubview(scrim)
         addSubview(veil)
+    }
+
+    /// La propia captura difuminada: se ve en cualquier fondo y no depende de lo que haya detrás del panel.
+    private func paintVeil() {
+        guard veil.layer?.contents == nil,
+              let source = image.cgImage(forProposedRect: nil, context: nil, hints: nil)
+        else { return }
+        let scale = min(320 / max(CGFloat(source.width), 1), 1)
+        let small = CIImage(cgImage: source).transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+        let blurred = small.clampedToExtent().applyingGaussianBlur(sigma: 10).cropped(to: small.extent)
+        veil.layer?.contents = CIContext().createCGImage(blurred, from: small.extent)
     }
 
     private func makePill(_ title: String, label: String, action: Selector) -> CardControl {
@@ -876,6 +888,9 @@ private final class ThumbnailView: NSView, NSDraggingSource {
     func setHovering(_ value: Bool) {
         guard hovering != value else { return }
         hovering = value
+        if value {
+            paintVeil()
+        }
         fade([veil], to: value ? 1 : 0)
         fade(controls, to: value ? 1 : 0)
         refreshBadge()

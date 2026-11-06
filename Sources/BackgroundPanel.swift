@@ -130,6 +130,8 @@ final class BackgroundPanel: NSView {
         scroll.autoresizingMask = [.width, .height]
         scroll.drawsBackground = false
         scroll.hasVerticalScroller = true
+        scroll.scrollerStyle = .overlay
+        scroll.autohidesScrollers = true
         scroll.autohidesScrollers = true
         scroll.documentView = body
         addSubview(scroll)
