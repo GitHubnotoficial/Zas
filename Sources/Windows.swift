@@ -121,82 +121,87 @@ private struct SettingsView: View {
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
 
     var body: some View {
+        TabView {
+            general.tabItem { Label("General", systemImage: "gearshape") }
+            shortcuts.tabItem { Label("Atajos", systemImage: "command") }
+            video.tabItem { Label("Video", systemImage: "video") }
+        }
+        .frame(width: 480, height: 400)
+    }
+
+    private var general: some View {
         Form {
-            Section("General") {
-                Toggle("Abrir Zas al iniciar sesión", isOn: Binding(
-                    get: { launchAtLogin },
-                    set: { setLaunchAtLogin($0) }
-                ))
-                Toggle("Sonido al capturar", isOn: $settings.playSound)
-                Toggle("Guardar una copia de cada captura", isOn: $settings.saveCaptures)
-                LabeledContent("Guardar en") {
-                    HStack(spacing: 8) {
-                        Text(displayPath)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                            .foregroundStyle(.secondary)
-                        Button("Cambiar…", action: chooseFolder)
-                    }
-                }
-                Picker("Mostrar miniatura durante", selection: $settings.thumbnailSeconds) {
-                    Text("3 segundos").tag(3.0)
-                    Text("6 segundos").tag(6.0)
-                    Text("10 segundos").tag(10.0)
-                    Text("30 segundos").tag(30.0)
-                }
+            Toggle("Abrir Zas al iniciar sesión", isOn: Binding(
+                get: { launchAtLogin },
+                set: { setLaunchAtLogin($0) }
+            ))
+            Toggle("Sonido al capturar", isOn: $settings.playSound)
+            Picker("Mostrar miniatura durante", selection: $settings.thumbnailSeconds) {
+                Text("3 segundos").tag(3.0)
+                Text("6 segundos").tag(6.0)
+                Text("10 segundos").tag(10.0)
+                Text("30 segundos").tag(30.0)
             }
-
-            Section("Atajos") {
-                ForEach(HotKeyAction.allCases, id: \.self) { action in
-                    VStack(alignment: .leading, spacing: 4) {
-                        LabeledContent(action.title) {
-                            ShortcutField(action: action, settings: settings)
-                                .frame(width: 130, height: 24)
-                        }
-                        if settings.conflicts.contains(action) {
-                            Text("Este atajo ya lo usa otra app o acción. Elige otro.")
-                                .font(.footnote)
-                                .foregroundStyle(.orange)
-                        }
-                    }
-                }
-                HStack {
-                    Spacer()
-                    Button("Restablecer atajos") {
-                        settings.resetShortcuts()
-                    }
-                }
-            }
-
-            Section("Video") {
-                Picker("Al terminar, copiar", selection: $settings.videoCopiesSummary) {
-                    Text("Resumen en imágenes").tag(true)
-                    Text("Archivo de video").tag(false)
-                }
-                Toggle("Grabar con micrófono", isOn: $settings.recordMicrophone)
-                    .disabled(!ScreenRecorder.supportsMicrophone)
-                if !ScreenRecorder.supportsMicrophone {
-                    Text("Requiere macOS 15 o más nuevo.")
-                        .font(.footnote)
+            Toggle("Guardar una copia de cada captura", isOn: $settings.saveCaptures)
+            LabeledContent("Guardar en") {
+                HStack(spacing: 8) {
+                    Text(displayPath)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
                         .foregroundStyle(.secondary)
+                    Button("Cambiar…", action: chooseFolder)
                 }
             }
-
-            Section("Zas") {
-                LabeledContent("Versión", value: version)
-                LabeledContent("Actualizar") {
-                    Button("Copiar comando para Terminal") {
-                        Capture.copyText(Self.updateCommand)
-                    }
+            LabeledContent("Versión \(version)") {
+                Button("Copiar comando para actualizar") {
+                    Capture.copyText(Self.updateCommand)
                 }
             }
         }
         .formStyle(.grouped)
-        // En pantallas pequeñas el formulario se desplaza en vez de salirse por abajo.
-        .frame(width: 480, height: min(Self.idealHeight, NSScreen.underMouse.visibleFrame.height - 24))
     }
 
-    private static let idealHeight: CGFloat = 924
+    private var shortcuts: some View {
+        Form {
+            ForEach(HotKeyAction.allCases, id: \.self) { action in
+                VStack(alignment: .leading, spacing: 4) {
+                    LabeledContent(action.title) {
+                        ShortcutField(action: action, settings: settings)
+                            .frame(width: 130, height: 24)
+                    }
+                    if settings.conflicts.contains(action) {
+                        Text("Este atajo ya lo usa otra app o acción. Elige otro.")
+                            .font(.footnote)
+                            .foregroundStyle(.orange)
+                    }
+                }
+            }
+            HStack {
+                Spacer()
+                Button("Restablecer atajos") {
+                    settings.resetShortcuts()
+                }
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    private var video: some View {
+        Form {
+            Picker("Al terminar, copiar", selection: $settings.videoCopiesSummary) {
+                Text("Resumen en imágenes").tag(true)
+                Text("Archivo de video").tag(false)
+            }
+            Toggle("Grabar con micrófono", isOn: $settings.recordMicrophone)
+                .disabled(!ScreenRecorder.supportsMicrophone)
+            if !ScreenRecorder.supportsMicrophone {
+                Text("Requiere macOS 15 o más nuevo.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+    }
 
     private static let updateCommand =
         "curl -fsSL https://raw.githubusercontent.com/GitHubnotoficial/Zas/main/instalar-rapido.sh | bash"
@@ -235,6 +240,7 @@ private struct SettingsView: View {
     }
 }
 
+/// Primer contacto: una sola idea por pantalla.
 private struct WelcomeView: View {
     let hasPermission: Bool
     let openSettings: () -> Void
@@ -245,50 +251,31 @@ private struct WelcomeView: View {
         VStack(spacing: 0) {
             Image(nsImage: NSApp.applicationIconImage)
                 .resizable()
-                .frame(width: 76, height: 76)
-                .padding(.top, 28)
+                .frame(width: 84, height: 84)
+                .padding(.top, 36)
 
             Text(hasPermission ? "Zas está listo" : "Un permiso y listo")
-                .font(.system(size: 22, weight: .bold))
-                .padding(.top, 12)
+                .font(.system(size: 26, weight: .bold))
+                .padding(.top, 16)
 
             Text(hasPermission
-                ? "Vive en la barra de menú, arriba a la derecha."
-                : "macOS exige autorizar la Grabación de pantalla para poder capturar. Zas guarda todo en tu Mac y no envía nada a internet.")
-                .font(.system(size: 13))
+                ? "Vive en la barra de menú. Prueba tu primera captura con este atajo."
+                : "macOS pide autorizar la Grabación de pantalla. Todo se queda en tu Mac.")
+                .font(.system(size: 14))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
-                .padding(.top, 6)
-                .padding(.horizontal, 36)
+                .padding(.top, 8)
+                .padding(.horizontal, 44)
 
-            VStack(spacing: 0) {
-                ForEach(HotKeyAction.allCases, id: \.self) { action in
-                    HStack {
-                        Image(systemName: action.symbol)
-                            .frame(width: 22)
-                            .foregroundStyle(.secondary)
-                        Text(action.title)
-                            .font(.system(size: 13))
-                        Spacer()
-                        Text(Settings.shared.shortcut(for: action).displayString)
-                            .font(.system(size: 13, weight: .medium, design: .rounded))
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding(.vertical, 8)
-                    .padding(.horizontal, 12)
-                    if action != HotKeyAction.allCases.last {
-                        Divider()
-                    }
-                }
+            if hasPermission {
+                Text(Settings.shared.shortcut(for: .region).displayString)
+                    .font(.system(size: 30, weight: .semibold, design: .rounded))
+                    .padding(.vertical, 12)
+                    .padding(.horizontal, 28)
+                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .padding(.top, 22)
             }
-            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
-            .overlay(
-                RoundedRectangle(cornerRadius: 10)
-                    .strokeBorder(Color(nsColor: .separatorColor))
-            )
-            .padding(.horizontal, 28)
-            .padding(.top, 20)
 
             Group {
                 if hasPermission {
@@ -296,23 +283,22 @@ private struct WelcomeView: View {
                         .keyboardShortcut(.defaultAction)
                         .controlSize(.large)
                 } else {
-                    VStack(spacing: 8) {
+                    VStack(spacing: 10) {
                         Button(action: openSettings) {
                             Text("Abrir Ajustes").frame(maxWidth: .infinity)
                         }
                         .keyboardShortcut(.defaultAction)
                         .controlSize(.large)
 
-                        Button(action: relaunch) {
-                            Text("Ya lo activé, reiniciar Zas").frame(maxWidth: .infinity)
-                        }
-                        .controlSize(.large)
+                        Button("Ya lo activé, reiniciar Zas", action: relaunch)
+                            .buttonStyle(.link)
+                            .font(.system(size: 13))
                     }
-                    .padding(.horizontal, 28)
+                    .padding(.horizontal, 44)
                 }
             }
-            .padding(.top, 20)
-            .padding(.bottom, 24)
+            .padding(.top, 26)
+            .padding(.bottom, 30)
         }
         .frame(width: 400)
     }

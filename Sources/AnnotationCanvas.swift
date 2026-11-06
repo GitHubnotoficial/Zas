@@ -412,7 +412,7 @@ final class AnnotationCanvas: NSView {
         let scale = displayScale
 
         NSGraphicsContext.saveGraphicsState()
-        NSBezierPath(roundedRect: display, xRadius: 6, yRadius: 6).addClip()
+        NSBezierPath(roundedRect: display, xRadius: 10, yRadius: 10).addClip()
         context.translateBy(x: display.minX, y: display.minY)
         context.scaleBy(x: scale, y: scale)
         context.translateBy(x: -content.minX, y: -content.minY)

@@ -9,7 +9,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem!
     private var menu: NSMenu!
     private var actionItems: [HotKeyAction: NSMenuItem] = [:]
-    private let recentsMenu = NSMenu()
+    private let recentsStrip = RecentsStripView()
+    private var lastCaptureRect: CGRect?
     private var settingsObserver: AnyCancellable?
 
     private let overlay = SelectionOverlay()
@@ -173,16 +174,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu = NSMenu()
         addActionItem(.region, #selector(captureRegion))
         addActionItem(.fullScreen, #selector(captureFullScreen))
-        addActionItem(.timed, #selector(captureTimed))
         addActionItem(.text, #selector(captureText))
-        menu.addItem(.separator())
         addActionItem(.record, #selector(toggleRecording))
         menu.addItem(.separator())
-        let recents = addItem("Capturas recientes", symbol: "clock", #selector(openFolder))
-        recentsMenu.delegate = self
-        recents.submenu = recentsMenu
-        addItem("Abrir carpeta de capturas", symbol: "folder", #selector(openFolder))
-        let settings = addItem("Ajustes…", symbol: "gearshape", #selector(openSettings))
+        let recents = NSMenuItem()
+        recents.view = recentsStrip
+        recentsStrip.onPick = { [weak self] file in
+            self?.reopenRecent(file)
+        }
+        menu.addItem(recents)
+        menu.delegate = self
+        menu.addItem(.separator())
+        let settings = addItem("Ajustes…", symbol: nil, #selector(openSettings))
         settings.keyEquivalent = ","
         menu.addItem(.separator())
         let quit = addItem("Salir de Zas", symbol: nil, #selector(quit))
@@ -303,15 +306,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: - Capturas
 
     @objc private func captureRegion() {
+        beginSelection(.screenshot)
+    }
+
+    /// Todas las capturas pasan por aquí: la barra de vidrio puede cambiar el modo a medio camino.
+    private func beginSelection(_ mode: SelectionMode) {
         guard canStartCapture(), ensurePermission() else { return }
         thumbnail.suspend()
-        overlay.begin(mode: .screenshot) { [weak self] selection in
+        overlay.begin(mode: mode) { [weak self] selection in
             guard let self else { return }
             guard let selection else {
                 self.thumbnail.resume()
                 return
             }
-            self.snap(selection)
+            switch self.overlay.mode {
+            case .screenshot: self.snap(selection)
+            case .text: self.readText(selection)
+            case .recording: self.startRecording(selection)
+            case .timed: self.countDown(selection)
+            }
         }
     }
 
@@ -322,38 +335,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func captureText() {
-        guard canStartCapture(), ensurePermission() else { return }
-        thumbnail.suspend()
-        overlay.begin(mode: .text) { [weak self] selection in
-            guard let self else { return }
-            guard let selection else {
-                self.thumbnail.resume()
-                return
-            }
-            self.readText(selection)
-        }
+        beginSelection(.text)
     }
 
     /// Primero se elige el área y después corre el tiempo: da margen para abrir un menú o un aviso.
     @objc private func captureTimed() {
-        guard canStartCapture(), ensurePermission() else { return }
-        thumbnail.suspend()
-        overlay.begin(mode: .screenshot) { [weak self] selection in
-            guard let self else { return }
-            guard let selection else {
-                self.thumbnail.resume()
-                return
+        beginSelection(.timed)
+    }
+
+    private func countDown(_ selection: Selection) {
+        captureInFlight = true
+        Task { @MainActor in
+            for second in [3, 2, 1] {
+                Toast.shared.show("\(second)", seconds: 2)
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
             }
-            self.captureInFlight = true
-            Task { @MainActor in
-                for second in [3, 2, 1] {
-                    Toast.shared.show("\(second)", seconds: 2)
-                    try? await Task.sleep(nanoseconds: 1_000_000_000)
-                }
-                // El aviso no debe salir en la imagen.
-                Toast.shared.hide()
-                self.snap(selection)
-            }
+            // El aviso no debe salir en la imagen.
+            Toast.shared.hide()
+            self.snap(selection)
         }
     }
 
@@ -370,6 +369,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         captureInFlight = true
         let arguments = selection.captureArguments
         let pointSize = selection.imagePointSize
+        // Una captura de pantalla completa no tiene de dónde "salir".
+        lastCaptureRect = selection.isFullScreen ? nil : selection.appKitRect
         // Pausa corta para que las ventanas de Zas ya no salgan en la imagen.
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 120_000_000)
@@ -392,7 +393,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 return
             }
             Capture.playSound()
-            self.thumbnail.show(image: image, file: url, kind: .screenshot)
+            self.thumbnail.show(image: image, file: url, kind: .screenshot, from: self.lastCaptureRect)
         }
     }
 
@@ -457,16 +458,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             stopRecording()
             return
         }
-        guard canStartCapture(), ensurePermission() else { return }
-        thumbnail.suspend()
-        overlay.begin(mode: .recording) { [weak self] selection in
-            guard let self else { return }
-            guard let selection else {
-                self.thumbnail.resume()
-                return
-            }
-            self.startRecording(selection)
-        }
+        beginSelection(.recording)
     }
 
     private func startRecording(_ selection: Selection) {
@@ -655,25 +647,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: - Capturas recientes
 
-    func menuNeedsUpdate(_ menu: NSMenu) {
-        guard menu === recentsMenu else { return }
-        menu.removeAllItems()
-        let files = Recents.files()
-        guard !files.isEmpty else {
-            menu.addItem(withTitle: "Aún no hay capturas", action: nil, keyEquivalent: "")
-            return
-        }
-        for file in files {
-            let item = NSMenuItem(title: Recents.title(for: file), action: #selector(reopenRecent(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = file
-            item.image = NSImage(systemSymbolName: file.pathExtension == "mp4" ? "film" : "photo", accessibilityDescription: nil)
-            menu.addItem(item)
-        }
+    func menuWillOpen(_ menu: NSMenu) {
+        recentsStrip.reload(Recents.files(limit: 4))
     }
 
-    @objc private func reopenRecent(_ sender: NSMenuItem) {
-        guard let file = sender.representedObject as? URL else { return }
+    private func reopenRecent(_ file: URL) {
         if file.pathExtension == "mp4" {
             Capture.copyFile(at: file)
             Capture.playSound()

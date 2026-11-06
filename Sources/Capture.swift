@@ -1,4 +1,5 @@
 import AppKit
+import AudioToolbox
 
 /// Genera el TIFF solo si la app que pega lo pide: convertirlo siempre retrasaría cada captura
 /// y dejaría decenas de MB en el portapapeles. Casi todas las apps usan el PNG.
@@ -153,8 +154,16 @@ enum Capture {
         pasteboard.writeObjects([url as NSURL])
     }
 
+    /// El obturador del propio Mac: un sonido que la gente ya asocia con capturar.
+    private static let shutterSound: SystemSoundID = {
+        let path = "/System/Library/Components/CoreAudio.component/Contents/SharedSupport/SystemSounds/system/Screen Capture.aif"
+        var sound: SystemSoundID = 0
+        AudioServicesCreateSystemSoundID(URL(fileURLWithPath: path) as CFURL, &sound)
+        return sound
+    }()
+
     static func playSound() {
         guard Settings.shared.playSound else { return }
-        NSSound(named: NSSound.Name("Tink"))?.play()
+        AudioServicesPlaySystemSound(shutterSound)
     }
 }

@@ -50,8 +50,9 @@ Claude no suele poder ver un video. Por eso, al terminar una grabación Zas copi
 - La imagen queda copiada: pégala con ⌘V.
 - Aparece una miniatura en la esquina. Las capturas seguidas se apilan, hasta cuatro.
 - Arrastra una miniatura para soltar el archivo en otra app.
-- Si ya se cerró, búscala en **Capturas recientes**, en el menú de Zas.
-- Pasa el cursor por encima para copiarla otra vez, copiar su ruta, anotar, fijar en pantalla o verla en Finder. "Copiado" marca la que está en el portapapeles.
+- Desliza con dos dedos hacia el borde para descartarla.
+- Si ya se cerró, búscala en **Recientes**, en el menú de Zas.
+- Pasa el cursor por encima para copiarla otra vez, copiar su ruta, anotar o fijar en pantalla. Con clic derecho, verla en Finder. "Copiado" marca la que está en el portapapeles.
 - El archivo queda guardado en `Imágenes/Zas`, o en la carpeta que elijas en Ajustes. Si apagas **Guardar una copia de cada captura**, las imágenes se borran al cerrar Zas; los videos siempre se guardan.
 
 ## Editor

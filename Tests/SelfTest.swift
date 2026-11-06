@@ -248,6 +248,15 @@ enum SelfTest {
         check(AnnotationEditor.baseName(of: edited) == "Zas 2026", "editar dos veces no acumula \"anotada\" en el nombre")
         check(AnnotationEditor.baseName(of: URL(fileURLWithPath: "/x/Zas 2026.png")) == "Zas 2026", "el nombre original no cambia")
 
+        // Física de la interfaz.
+        check(abs(Spring.value(at: 2, response: 0.42, damping: 0.86) - 1) < 0.001, "el resorte se asienta en su destino")
+        let peak = stride(from: 0.0, to: 1.0, by: 0.01).map { Spring.value(at: $0, response: 0.42, damping: 0.86) }.max() ?? 0
+        check(peak > 1 && peak < 1.08, "el resorte se pasa apenas, como un objeto real (\(peak))")
+        check(CardSwipe.shouldClose(offset: 100, width: 224, velocity: 0), "deslizar pasado el 40 % cierra la tarjeta")
+        check(CardSwipe.shouldClose(offset: 20, width: 224, velocity: 900), "un toque rápido también la cierra")
+        check(!CardSwipe.shouldClose(offset: 40, width: 224, velocity: 100), "un gesto corto la devuelve a su sitio")
+        check(CardSwipe.resisted(-1000) > -24, "hacia dentro cede muy poco")
+
         // Resumen de video para Claude.
         check(VideoSheet.frameTimes(duration: 0) == [0], "un video vacío no rompe el resumen")
         check(VideoSheet.frameTimes(duration: 3).count == 2, "un video corto da dos momentos")
@@ -300,7 +309,7 @@ enum SelfTest {
         thumbs.show(image: demoImage(), file: file, kind: .screenshot)
         thumbs.show(image: demoImage(), file: file, kind: .screenshot)
         await wait(0.4)
-        check(thumbs.testActionCount(index: 0) == 5, "la miniatura ofrece copiar, ruta, anotar, fijar y Finder")
+        check(thumbs.testActionCount(index: 0) == 4, "la tarjeta muestra solo cuatro acciones")
         check(thumbs.testBadge(index: 0) == "Copiado", "la última miniatura dice Copiado")
         check(thumbs.testBadge(index: 1) == nil, "las anteriores no dicen Copiado, porque ya no lo están")
 
@@ -610,6 +619,9 @@ enum SelfTest {
             await shoot("\(label)-01-seleccion-ventana")
             overlay.simulateDrag(from: CGPoint(x: 310, y: 200), to: CGPoint(x: 760, y: 470))
             await shoot("\(label)-02-seleccion-area")
+            overlay.simulateHover(at: CGPoint(x: 400, y: 330))
+            overlay.testChoose(mode: .recording)
+            check(overlay.mode == .recording, "la barra de vidrio cambia el modo")
             overlay.cancel()
 
             let recording = SelectionOverlay()

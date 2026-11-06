@@ -1,46 +1,10 @@
 import AppKit
 
-/// Botón de herramienta de la barra del editor.
-private final class ToolButton: NSButton {
-    var isActive = false {
-        didSet { refresh() }
-    }
-
-    init(symbol: String, tooltip: String, target: AnyObject, action: Selector) {
-        super.init(frame: CGRect(x: 0, y: 0, width: 32, height: 32))
-        let configuration = NSImage.SymbolConfiguration(pointSize: 14, weight: .medium)
-        image = NSImage(systemSymbolName: symbol, accessibilityDescription: tooltip)?
-            .withSymbolConfiguration(configuration)
-        imagePosition = .imageOnly
-        isBordered = false
-        toolTip = tooltip
-        self.target = target
-        self.action = action
-        wantsLayer = true
-        layer?.cornerRadius = 7
-        refresh()
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) no se usa")
-    }
-
-    override func viewDidChangeEffectiveAppearance() {
-        super.viewDidChangeEffectiveAppearance()
-        refresh()
-    }
-
-    private func refresh() {
-        contentTintColor = isActive ? .white : .labelColor
-        effectiveAppearance.performAsCurrentDrawingAppearance {
-            layer?.backgroundColor = (isActive ? NSColor.controlAccentColor : NSColor.clear).cgColor
-        }
-    }
-}
-
 /// Punto de color o de grosor en la barra.
 private final class DotButton: NSButton {
-    private let dotColor: NSColor?
+    var dotColor: NSColor? {
+        didSet { needsDisplay = true }
+    }
     private let dotDiameter: CGFloat
 
     var isActive = false {
@@ -88,14 +52,6 @@ private final class DotButton: NSButton {
     }
 }
 
-/// Fondo del editor. Se dibuja aquí para que siga el modo claro u oscuro.
-private final class EditorBackgroundView: NSView {
-    override func draw(_ dirtyRect: NSRect) {
-        NSColor.underPageBackgroundColor.setFill()
-        dirtyRect.fill()
-    }
-}
-
 /// Ventana de anotación. "Copiar" reemplaza el portapapeles y guarda una copia aparte.
 @MainActor
 final class AnnotationEditor: NSObject, NSWindowDelegate {
@@ -123,18 +79,19 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
     private let previousApp = NSWorkspace.shared.frontmostApplication
     private let targetScreen: NSScreen
 
-    private var toolButtons: [AnnotationTool: ToolButton] = [:]
+    private var toolButtons: [AnnotationTool: GlassButton] = [:]
+    private var colorSwatch: DotButton?
+    private let colorPopover = NSPopover()
     private var colorButtons: [DotButton] = []
     private var widthButtons: [DotButton] = []
-    private var undoButton: ToolButton?
-    private var redoButton: ToolButton?
+    private var undoButton: GlassButton?
     private var colorBeforeHighlight: Int?
 
     init(image: NSImage, file: URL) {
         self.image = image
         self.file = file
 
-        let toolbarHeight: CGFloat = 52
+        let toolbarHeight: CGFloat = 62
         let padding: CGFloat = 24
         let minimumWidth: CGFloat = 860
         let minimumHeight: CGFloat = 320
@@ -178,7 +135,10 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
         window.delegate = self
         window.collectionBehavior = [.fullScreenAuxiliary, .moveToActiveSpace]
 
-        let content = EditorBackgroundView(frame: CGRect(origin: .zero, size: contentSize))
+        let content = NSVisualEffectView(frame: CGRect(origin: .zero, size: contentSize))
+        content.material = .underWindowBackground
+        content.blendingMode = .behindWindow
+        content.state = .followsWindowActiveState
         content.addSubview(canvas)
         buildToolbar(in: content, height: toolbarHeight)
         window.contentView = content
@@ -194,103 +154,91 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
         refreshHistoryButtons()
     }
 
+    /// Barra de vidrio flotante: ocho herramientas, color, deshacer y copiar.
+    /// V (mover) y H (resaltar) siguen en el teclado, sin ocupar sitio.
     private func buildToolbar(in content: NSView, height: CGFloat) {
-        let bar = NSVisualEffectView(frame: CGRect(
-            x: 0,
-            y: content.bounds.height - height,
-            width: content.bounds.width,
-            height: height
-        ))
-        bar.material = .titlebar
-        bar.blendingMode = .withinWindow
-        bar.autoresizingMask = [.width, .minYMargin]
-        content.addSubview(bar)
+        let tools: [AnnotationTool] = [.arrow, .rectangle, .ellipse, .pencil, .text, .counter, .pixelate, .crop]
+        let padding: CGFloat = 6
+        let barHeight = Design.actionSize + padding * 2
 
-        let separator = NSBox(frame: CGRect(x: 0, y: 0, width: bar.bounds.width, height: 1))
-        separator.boxType = .separator
-        separator.autoresizingMask = [.width]
-        bar.addSubview(separator)
-
-        let centerY = (height - 32) / 2
-        var x: CGFloat = 80
-
-        for tool in AnnotationTool.allCases {
-            let button = ToolButton(
+        let bar = GlassView(frame: .zero, radius: 14)
+        var x = padding
+        for tool in tools {
+            let button = GlassButton(
                 symbol: tool.symbol,
                 tooltip: "\(tool.label) (\(tool.key))",
                 target: self,
                 action: #selector(toolPressed(_:))
             )
             button.tag = tool.rawValue
-            button.frame.origin = CGPoint(x: x, y: centerY)
+            button.frame.origin = CGPoint(x: x, y: padding)
             bar.addSubview(button)
             toolButtons[tool] = button
-            x += 34
+            x += Design.actionSize + 2
         }
 
-        x += 12
-        for (index, entry) in Self.palette.enumerated() {
-            let button = DotButton(
-                color: entry.1,
-                diameter: 14,
-                tooltip: entry.0,
-                target: self,
-                action: #selector(colorPressed(_:))
-            )
-            button.tag = index
-            button.frame.origin = CGPoint(x: x, y: (height - 24) / 2)
-            bar.addSubview(button)
-            colorButtons.append(button)
-            x += 24
-        }
+        x += 8
+        let swatch = DotButton(color: Self.palette[0].1, diameter: 18, tooltip: "Color y grosor", target: self, action: #selector(swatchPressed(_:)))
+        swatch.frame = CGRect(x: x, y: (barHeight - 24) / 2, width: 24, height: 24)
+        bar.addSubview(swatch)
+        colorSwatch = swatch
+        x += 24 + 10
 
-        x += 12
-        for (index, entry) in Self.lineWidths.enumerated() {
-            let button = DotButton(
-                color: nil,
-                diameter: entry.2,
-                tooltip: entry.0,
-                target: self,
-                action: #selector(widthPressed(_:))
-            )
-            button.tag = index
-            button.frame.origin = CGPoint(x: x, y: (height - 24) / 2)
-            bar.addSubview(button)
-            widthButtons.append(button)
-            x += 24
-        }
+        let undo = GlassButton(symbol: "arrow.uturn.backward", tooltip: "Deshacer (⌘Z)", target: canvas, action: #selector(AnnotationCanvas.undo(_:)))
+        undo.frame.origin = CGPoint(x: x, y: padding)
+        bar.addSubview(undo)
+        undoButton = undo
+        x += Design.actionSize + 8
 
         let copy = NSButton(title: "Copiar", target: self, action: #selector(copyAndClose))
         copy.bezelStyle = .rounded
         copy.keyEquivalent = "\r"
-        copy.controlSize = .large
         copy.sizeToFit()
-        copy.frame.origin = CGPoint(
-            x: bar.bounds.maxX - copy.frame.width - 14,
-            y: ((height - copy.frame.height) / 2).rounded()
-        )
-        copy.autoresizingMask = [.minXMargin]
+        copy.frame.origin = CGPoint(x: x, y: ((barHeight - copy.frame.height) / 2).rounded())
         bar.addSubview(copy)
+        x += copy.frame.width + padding + 2
 
-        let redo = ToolButton(
-            symbol: "arrow.uturn.forward",
-            tooltip: "Rehacer (⇧⌘Z)",
-            target: canvas,
-            action: #selector(AnnotationCanvas.redo(_:))
+        bar.frame = CGRect(
+            x: ((content.bounds.width - x) / 2).rounded(),
+            y: content.bounds.height - barHeight - 10,
+            width: x,
+            height: barHeight
         )
-        redo.frame.origin = CGPoint(x: copy.frame.minX - 40, y: centerY)
-        bar.addSubview(redo)
-        redoButton = redo
+        bar.autoresizingMask = [.minXMargin, .maxXMargin, .minYMargin]
+        content.addSubview(bar)
 
-        let undo = ToolButton(
-            symbol: "arrow.uturn.backward",
-            tooltip: "Deshacer (⌘Z)",
-            target: canvas,
-            action: #selector(AnnotationCanvas.undo(_:))
-        )
-        undo.frame.origin = CGPoint(x: redo.frame.minX - 34, y: centerY)
-        bar.addSubview(undo)
-        undoButton = undo
+        buildColorPopover()
+    }
+
+    /// Color y grosor aparecen solo cuando se piden.
+    private func buildColorPopover() {
+        let view = NSView(frame: CGRect(x: 0, y: 0, width: 196, height: 76))
+        var x: CGFloat = 12
+        for (index, entry) in Self.palette.enumerated() {
+            let button = DotButton(color: entry.1, diameter: 16, tooltip: entry.0, target: self, action: #selector(colorPressed(_:)))
+            button.tag = index
+            button.frame = CGRect(x: x, y: 42, width: 24, height: 24)
+            view.addSubview(button)
+            colorButtons.append(button)
+            x += 29
+        }
+        x = 12
+        for (index, entry) in Self.lineWidths.enumerated() {
+            let button = DotButton(color: nil, diameter: entry.2, tooltip: entry.0, target: self, action: #selector(widthPressed(_:)))
+            button.tag = index
+            button.frame = CGRect(x: x, y: 10, width: 24, height: 24)
+            view.addSubview(button)
+            widthButtons.append(button)
+            x += 29
+        }
+        let controller = NSViewController()
+        controller.view = view
+        colorPopover.contentViewController = controller
+        colorPopover.behavior = .transient
+    }
+
+    @objc private func swatchPressed(_ sender: NSButton) {
+        colorPopover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .maxY)
     }
 
     func show() {
@@ -308,7 +256,6 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
 
     private func refreshHistoryButtons() {
         undoButton?.isEnabled = canvas.canUndo
-        redoButton?.isEnabled = canvas.canRedo
     }
 
     private func select(tool: AnnotationTool) {
@@ -334,6 +281,7 @@ final class AnnotationEditor: NSObject, NSWindowDelegate {
 
     private func selectColor(index: Int) {
         canvas.color = Self.palette[index].1
+        colorSwatch?.dotColor = Self.palette[index].1
         for (position, button) in colorButtons.enumerated() {
             button.isActive = position == index
         }

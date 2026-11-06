@@ -5,6 +5,7 @@ enum SelectionMode {
     case screenshot
     case recording
     case text
+    case timed
 }
 
 extension NSScreen {
@@ -135,11 +136,15 @@ final class SelectionOverlay {
     private var escapeHotKey: UInt32?
     private var completion: (@MainActor (Selection?) -> Void)?
 
+    /// Puede cambiar con la barra de vidrio mientras se elige.
+    private(set) var mode: SelectionMode = .screenshot
+
     var isActive: Bool { completion != nil }
 
     func begin(mode: SelectionMode, completion: @escaping @MainActor (Selection?) -> Void) {
         guard !isActive else { return }
         self.completion = completion
+        self.mode = mode
 
         let windows = WindowFinder.onScreenWindows()
         let target = NSScreen.underMouse
@@ -164,7 +169,6 @@ final class SelectionOverlay {
 
             let view = OverlayView(
                 frame: CGRect(origin: .zero, size: screen.frame.size),
-                mode: mode,
                 screen: screen,
                 windows: windows,
                 owner: self
@@ -189,6 +193,13 @@ final class SelectionOverlay {
 
     func cancel() {
         finish(nil)
+    }
+
+    fileprivate func choose(mode: SelectionMode) {
+        self.mode = mode
+        for panel in panels {
+            (panel.contentView as? OverlayView)?.refreshMode()
+        }
     }
 
     fileprivate func finish(_ selection: Selection?) {
@@ -218,27 +229,43 @@ final class SelectionOverlay {
             (panel.contentView as? OverlayView)?.simulateHover(at: point)
         }
     }
+
+    func testChoose(mode: SelectionMode) {
+        choose(mode: mode)
+    }
     #endif
 }
 
+/// Se dibuja con capas: redibujar una pantalla 5K en cada movimiento del ratón pierde cuadros.
 private final class OverlayView: NSView {
-    private let mode: SelectionMode
     private let screen: NSScreen
     private let windows: [WindowTarget]
     private weak var owner: SelectionOverlay?
 
     private var startPoint: NSPoint?
     private var currentPoint: NSPoint?
-    private var mousePoint: NSPoint?
     private var hoveredWindow: WindowTarget?
     private var trackingArea: NSTrackingArea?
 
-    init(frame: CGRect, mode: SelectionMode, screen: NSScreen, windows: [WindowTarget], owner: SelectionOverlay) {
-        self.mode = mode
+    private let dimLayer = CAShapeLayer()
+    private let frameLayer = CAShapeLayer()
+    private let handles = (0..<4).map { _ in CALayer() }
+    private let sizePill = GlassView(frame: .zero, radius: 13)
+    private let sizeLabel = NSTextField(labelWithString: "")
+    private var hud: GlassView?
+    private var modeButtons: [(SelectionMode, GlassButton)] = []
+
+    init(frame: CGRect, screen: NSScreen, windows: [WindowTarget], owner: SelectionOverlay) {
         self.screen = screen
         self.windows = windows
         self.owner = owner
         super.init(frame: frame)
+        wantsLayer = true
+        buildLayers()
+        buildPill()
+        buildHUD()
+        refreshMode()
+        refresh()
     }
 
     required init?(coder: NSCoder) {
@@ -248,6 +275,109 @@ private final class OverlayView: NSView {
     override var isFlipped: Bool { true }
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    private func buildLayers() {
+        guard let root = layer else { return }
+        dimLayer.frame = bounds
+        dimLayer.fillColor = NSColor.black.withAlphaComponent(0.3).cgColor
+        dimLayer.fillRule = .evenOdd
+        root.addSublayer(dimLayer)
+
+        frameLayer.frame = bounds
+        frameLayer.fillColor = nil
+        frameLayer.lineWidth = 1.5
+        root.addSublayer(frameLayer)
+
+        for handle in handles {
+            handle.bounds = CGRect(x: 0, y: 0, width: 9, height: 9)
+            handle.cornerRadius = 4.5
+            handle.backgroundColor = NSColor.white.cgColor
+            handle.shadowColor = NSColor.black.cgColor
+            handle.shadowOpacity = 0.35
+            handle.shadowRadius = 2
+            handle.shadowOffset = .zero
+            root.addSublayer(handle)
+        }
+    }
+
+    private func buildPill() {
+        sizeLabel.font = .monospacedDigitSystemFont(ofSize: 12, weight: .medium)
+        sizeLabel.textColor = .labelColor
+        sizePill.addSubview(sizeLabel)
+        sizePill.isHidden = true
+        addSubview(sizePill)
+    }
+
+    /// Barra de modos: lo demás no se muestra hasta que hace falta.
+    private func buildHUD() {
+        let entries: [(SelectionMode, String, String)] = [
+            (.screenshot, "viewfinder", "Capturar área o ventana"),
+            (.text, "text.viewfinder", "Copiar texto"),
+            (.timed, "timer", "Capturar en 3 segundos"),
+            (.recording, "record.circle", "Grabar video"),
+        ]
+        let hint = NSTextField(labelWithString: "Esc para salir")
+        hint.font = .systemFont(ofSize: 12)
+        hint.textColor = .secondaryLabelColor
+        hint.sizeToFit()
+
+        let padding: CGFloat = 6
+        let width = padding + CGFloat(entries.count + 1) * (Design.actionSize + 2) + 10 + hint.frame.width + 14
+        let height = Design.actionSize + padding * 2
+        let glass = GlassView(frame: CGRect(x: 0, y: 0, width: width, height: height), radius: 14)
+
+        var x = padding
+        for (mode, symbol, tooltip) in entries {
+            let button = GlassButton(symbol: symbol, tooltip: tooltip, target: self, action: #selector(modePressed(_:)))
+            button.frame.origin = CGPoint(x: x, y: padding)
+            glass.addSubview(button)
+            modeButtons.append((mode, button))
+            x += Design.actionSize + 2
+        }
+        let full = GlassButton(symbol: "macwindow", tooltip: "Capturar toda la pantalla", target: self, action: #selector(fullScreenPressed))
+        full.frame.origin = CGPoint(x: x, y: padding)
+        glass.addSubview(full)
+        x += Design.actionSize + 12
+
+        hint.frame.origin = CGPoint(x: x, y: ((height - hint.frame.height) / 2).rounded())
+        glass.addSubview(hint)
+
+        // Por encima del Dock, centrada en la zona visible.
+        let visible = screen.visibleFrame
+        let bottomInset = visible.minY - screen.frame.minY
+        glass.frame.origin = CGPoint(
+            x: ((bounds.width - width) / 2).rounded(),
+            y: (bounds.height - bottomInset - height - 22).rounded()
+        )
+        addSubview(glass)
+        hud = glass
+    }
+
+    @objc private func modePressed(_ sender: GlassButton) {
+        guard let entry = modeButtons.first(where: { $0.1 === sender }) else { return }
+        owner?.choose(mode: entry.0)
+    }
+
+    @objc private func fullScreenPressed() {
+        let selection = Selection.fullScreen(screen)
+        let owner = self.owner
+        Task { @MainActor in
+            owner?.finish(selection)
+        }
+    }
+
+    func refreshMode() {
+        let current = owner?.mode ?? .screenshot
+        for (mode, button) in modeButtons {
+            button.activeColor = mode == .recording ? .systemRed : .controlAccentColor
+            button.isActive = mode == current
+        }
+        refresh()
+    }
+
+    private var accent: NSColor {
+        owner?.mode == .recording ? .systemRed : .white
+    }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
@@ -274,13 +404,22 @@ private final class OverlayView: NSView {
         trackingArea = area
     }
 
+    private func setCursor(at point: NSPoint) {
+        if hud?.frame.contains(point) == true {
+            NSCursor.arrow.set()
+        } else {
+            NSCursor.crosshair.set()
+        }
+    }
+
     override func cursorUpdate(with event: NSEvent) {
-        NSCursor.crosshair.set()
+        setCursor(at: convert(event.locationInWindow, from: nil))
     }
 
     override func mouseMoved(with event: NSEvent) {
-        NSCursor.crosshair.set()
-        updateHover(at: convert(event.locationInWindow, from: nil))
+        let point = convert(event.locationInWindow, from: nil)
+        setCursor(at: point)
+        updateHover(at: point)
     }
 
     override func mouseEntered(with event: NSEvent) {
@@ -288,17 +427,15 @@ private final class OverlayView: NSView {
     }
 
     override func mouseExited(with event: NSEvent) {
-        mousePoint = nil
         hoveredWindow = nil
-        needsDisplay = true
+        refresh()
     }
 
     private func updateHover(at point: NSPoint) {
-        mousePoint = point
         let origin = screen.globalTopLeftOrigin
         let global = CGPoint(x: point.x + origin.x, y: point.y + origin.y)
-        hoveredWindow = windows.first { $0.frame.contains(global) }
-        needsDisplay = true
+        hoveredWindow = hud?.frame.contains(point) == true ? nil : windows.first { $0.frame.contains(global) }
+        refresh()
     }
 
     /// Marco de la ventana resaltada, recortado a esta pantalla.
@@ -313,14 +450,13 @@ private final class OverlayView: NSView {
         let point = clampedPoint(for: event)
         startPoint = point
         currentPoint = point
-        needsDisplay = true
+        refresh()
     }
 
     override func mouseDragged(with event: NSEvent) {
         currentPoint = clampedPoint(for: event)
-        mousePoint = currentPoint
         NSCursor.crosshair.set()
-        needsDisplay = true
+        refresh()
     }
 
     override func mouseUp(with event: NSEvent) {
@@ -384,107 +520,73 @@ private final class OverlayView: NSView {
         )
     }
 
-    private var accent: NSColor {
-        mode == .recording ? .systemRed : .white
-    }
+    /// Solo cambian las capas afectadas, y sin las animaciones implícitas de Core Animation.
+    private func refresh() {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
 
-    override func draw(_ dirtyRect: NSRect) {
-        NSColor.black.withAlphaComponent(0.32).setFill()
-        bounds.fill(using: .copy)
+        let dragging = selectionRect.map { $0.width > 0 && $0.height > 0 } ?? false
+        let isWindow = !dragging && hoveredRect != nil
+        let rect = dragging ? selectionRect : hoveredRect
+        let radius: CGFloat = isWindow ? 10 : 2
 
-        if let rect = selectionRect, rect.width > 0, rect.height > 0 {
-            drawCutout(rect, lineWidth: 1)
-            drawSizeLabel(for: rect)
+        let dim = CGMutablePath()
+        dim.addRect(bounds)
+        if let rect {
+            dim.addPath(CGPath(roundedRect: rect, cornerWidth: radius, cornerHeight: radius, transform: nil))
+        }
+        dimLayer.path = dim
+
+        hud?.isHidden = startPoint != nil
+        guard let rect else {
+            frameLayer.path = nil
+            handles.forEach { $0.isHidden = true }
+            sizePill.isHidden = true
             return
         }
 
-        if let rect = hoveredRect {
-            drawCutout(rect, lineWidth: 2)
-            drawSizeLabel(for: rect)
-        }
-        drawCrosshair()
-        drawHint()
-    }
-
-    private func drawCutout(_ rect: CGRect, lineWidth: CGFloat) {
-        NSColor.clear.setFill()
-        rect.fill(using: .copy)
-
-        accent.setStroke()
-        let border = NSBezierPath(rect: rect.insetBy(dx: lineWidth / 2, dy: lineWidth / 2))
-        border.lineWidth = lineWidth
-        border.stroke()
-    }
-
-    private func drawCrosshair() {
-        guard let mousePoint else { return }
-        let x = mousePoint.x.rounded() + 0.5
-        let y = mousePoint.y.rounded() + 0.5
-
-        let path = NSBezierPath()
-        path.lineWidth = 1
-        path.move(to: NSPoint(x: x, y: bounds.minY))
-        path.line(to: NSPoint(x: x, y: bounds.maxY))
-        path.move(to: NSPoint(x: bounds.minX, y: y))
-        path.line(to: NSPoint(x: bounds.maxX, y: y))
-        NSColor.white.withAlphaComponent(0.45).setStroke()
-        path.stroke()
-    }
-
-    private func drawSizeLabel(for rect: CGRect) {
-        let scale = screen.backingScaleFactor
-        let label = "\(Int(rect.width * scale)) × \(Int(rect.height * scale))"
-        let size = pillSize(for: label)
-
-        var y = rect.maxY + 8
-        if y + size.height > bounds.maxY - 8 {
-            y = rect.maxY - size.height - 8
-        }
-        let x = max(8, min(rect.minX, bounds.maxX - size.width - 8))
-        drawPill(label, at: NSPoint(x: x, y: y))
-    }
-
-    private func drawHint() {
-        let hint: String
-        switch mode {
-        case .screenshot:
-            hint = "Arrastra para elegir un área  ·  Clic para una ventana  ·  Esc para cancelar"
-        case .recording:
-            hint = "Arrastra para grabar un área  ·  Clic para una ventana  ·  Esc para cancelar"
-        case .text:
-            hint = "Arrastra sobre el texto que quieres copiar  ·  Esc para cancelar"
-        }
-        let size = pillSize(for: hint)
-        drawPill(hint, at: NSPoint(x: bounds.midX - size.width / 2, y: 56))
-    }
-
-    private var pillAttributes: [NSAttributedString.Key: Any] {
-        [
-            .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium),
-            .foregroundColor: NSColor.white,
-        ]
-    }
-
-    private func pillSize(for text: String) -> CGSize {
-        let size = (text as NSString).size(withAttributes: pillAttributes)
-        return CGSize(width: size.width + 20, height: size.height + 10)
-    }
-
-    private func drawPill(_ text: String, at origin: NSPoint) {
-        let rect = CGRect(origin: origin, size: pillSize(for: text))
-        NSColor.black.withAlphaComponent(0.8).setFill()
-        NSBezierPath(roundedRect: rect, xRadius: rect.height / 2, yRadius: rect.height / 2).fill()
-        (text as NSString).draw(
-            at: NSPoint(x: origin.x + 10, y: origin.y + 5),
-            withAttributes: pillAttributes
+        let inset = frameLayer.lineWidth / 2
+        frameLayer.path = CGPath(
+            roundedRect: rect.insetBy(dx: inset, dy: inset),
+            cornerWidth: radius,
+            cornerHeight: radius,
+            transform: nil
         )
+        frameLayer.strokeColor = accent.cgColor
+
+        let corners = [
+            CGPoint(x: rect.minX, y: rect.minY), CGPoint(x: rect.maxX, y: rect.minY),
+            CGPoint(x: rect.minX, y: rect.maxY), CGPoint(x: rect.maxX, y: rect.maxY),
+        ]
+        for (handle, corner) in zip(handles, corners) {
+            handle.isHidden = !dragging
+            handle.position = corner
+        }
+
+        let scale = screen.backingScaleFactor
+        sizeLabel.stringValue = "\(Int(rect.width * scale)) × \(Int(rect.height * scale))"
+        sizeLabel.sizeToFit()
+        let pill = CGSize(width: sizeLabel.frame.width + 24, height: 26)
+        var y = rect.maxY + 10
+        if y + pill.height > bounds.maxY - 8 {
+            y = rect.maxY - pill.height - 10
+        }
+        sizePill.frame = CGRect(
+            x: max(8, min(rect.minX, bounds.maxX - pill.width - 8)),
+            y: y,
+            width: pill.width,
+            height: pill.height
+        )
+        sizeLabel.frame.origin = CGPoint(x: 12, y: ((pill.height - sizeLabel.frame.height) / 2).rounded())
+        sizePill.isHidden = false
     }
 
     #if ZAS_TEST
     func simulateDrag(from start: CGPoint, to end: CGPoint) {
         startPoint = start
         currentPoint = end
-        needsDisplay = true
+        refresh()
     }
 
     func simulateHover(at point: CGPoint) {

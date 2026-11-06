@@ -15,15 +15,15 @@ final class Toast {
 
         let label = NSTextField(labelWithString: text)
         label.font = .systemFont(ofSize: 13, weight: .medium)
-        label.textColor = .white
+        label.textColor = .labelColor
         label.alignment = .center
         label.sizeToFit()
 
-        let size = CGSize(width: ceil(label.frame.width) + 36, height: ceil(label.frame.height) + 20)
+        let size = CGSize(width: ceil(label.frame.width) + 36, height: 38)
         let visible = NSScreen.underMouse.visibleFrame
         let frame = CGRect(
             x: (visible.midX - size.width / 2).rounded(),
-            y: visible.minY + 56,
+            y: visible.minY + 76,
             width: size.width,
             height: size.height
         )
@@ -44,18 +44,22 @@ final class Toast {
         panel.animationBehavior = .none
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
 
-        let background = NSView(frame: CGRect(origin: .zero, size: size))
-        background.wantsLayer = true
-        background.layer?.backgroundColor = NSColor(white: 0.1, alpha: 0.92).cgColor
-        background.layer?.cornerRadius = size.height / 2
+        let background = GlassView(frame: CGRect(origin: .zero, size: size), radius: size.height / 2)
         label.frame.origin = CGPoint(x: 18, y: ((size.height - label.frame.height) / 2).rounded())
         background.addSubview(label)
         panel.contentView = background
 
+        // Sube un poco desde abajo, con el mismo resorte que el resto de la app.
+        let target = frame
+        let start = frame.offsetBy(dx: 0, dy: -14)
         panel.alphaValue = 0
+        panel.setFrame(start, display: false)
         panel.orderFrontRegardless()
         panel.invalidateShadow()
-        fade(panel, to: 1, duration: 0.15)
+        fade(panel, to: 1, duration: 0.14)
+        Spring.run(response: 0.32, damping: 0.8, step: { progress in
+            panel.setFrame(start.moved(to: target, by: progress), display: true)
+        })
         self.panel = panel
 
         hideTask = Task { @MainActor [weak self] in

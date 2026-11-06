@@ -141,6 +141,19 @@ func zasWindowCount(minimumWidth: CGFloat) -> Int {
     }.count
 }
 
+/// El icono de Zas en la barra de menú.
+func menuBarItem() -> CGRect? {
+    let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]]
+    for info in list ?? [] where (info[kCGWindowOwnerName as String] as? String) == "Zas" {
+        guard let bounds = info[kCGWindowBounds as String] as? NSDictionary,
+              let rect = CGRect(dictionaryRepresentation: bounds),
+              rect.minY < 30, rect.height < 40, rect.width < 80
+        else { continue }
+        return rect
+    }
+    return nil
+}
+
 /// Ventana del aviso del sistema, sea cual sea el sitio donde aparezca.
 func systemPromptFrame() -> CGRect? {
     let ignored: Set<String> = ["Zas", "Calculator", "Dock", "Window Server", "Control Center", "SystemUIServer", "Finder"]
@@ -213,13 +226,22 @@ reader.waitUntilExit()
 check(pasted.count > 1000, "otro proceso lee la captura como PNG (\(pasted.count) bytes)")
 shot("e2e-02-miniatura")
 
+// El menú de la barra, con sus recientes.
+if let item = menuBarItem() {
+    click(at: CGPoint(x: item.midX, y: item.midY))
+    wait(0.7)
+    shot("e2e-02b-menu")
+    press(kVK_Escape)
+    wait(0.4)
+}
+
 // 2. Miniatura: pasar el cursor y abrir el editor.
 let visible = screen.visibleFrame
 let thumbnailPoint = CGPoint(x: visible.maxX - 16 - 112, y: screen.frame.height - visible.minY - 16 - 40)
 moveMouse(to: thumbnailPoint)
 wait(0.5)
 shot("e2e-03-miniatura-hover")
-click(at: CGPoint(x: thumbnailPoint.x - 70, y: thumbnailPoint.y + 30))
+click(at: CGPoint(x: thumbnailPoint.x - 70, y: thumbnailPoint.y - 30))
 wait(1.2)
 check(zasWindowCount(minimumWidth: 700) >= 1, "clic en la miniatura abre el editor")
 shot("e2e-04-editor")
