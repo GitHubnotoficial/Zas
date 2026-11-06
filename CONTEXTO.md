@@ -40,6 +40,7 @@ Corren en cada push: `Tests/SelfTest.swift` (lógica, editor, captura, video), e
 Trampas conocidas:
 - `screencapture` escribe primero un archivo oculto `.Zas…` y luego lo renombra. Ignóralo.
 - macOS 15 muestra un aviso propio en la primera captura. El conductor pulsa Allow.
+- Ese aviso puede tardar. Por eso el conductor usa tarjetas de 30 segundos y apaga el clic en el fondo de macOS, que esconde las ventanas.
 - Con el panel oculto del navegador, `requestAnimationFrame` se detiene.
 - Al aplicar parches con Node, un fallo a medias deja archivos cambiados: haz `git checkout -- .` y vuelve a aplicar.
 - Antes de enviar un HTML, cárgalo de verdad. `node --check` no basta si no lo ejecutas.

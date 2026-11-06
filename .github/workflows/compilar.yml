@@ -98,6 +98,10 @@ jobs:
           done
           sudo sqlite3 "$USERDB" "INSERT OR REPLACE INTO access (service,client,client_type,auth_value,auth_reason,auth_version,flags,last_modified) VALUES ('kTCCServicePostEvent','$PWD/build/ZasConductor',1,2,4,1,0,$NOW);" || true
           defaults write local.zas.app welcomed -bool true
+          # El aviso de macOS puede tardar: la tarjeta no debe vencer antes de usarla.
+          defaults write local.zas.app thumbnailSeconds -float 30
+          # Sin esto, un clic en el fondo esconde todas las ventanas.
+          defaults write com.apple.WindowManager EnableStandardClickToShowDesktop -bool false
           open /Applications/Zas.app
           sleep 4
           ./build/ZasConductor "$PWD/escenas"
