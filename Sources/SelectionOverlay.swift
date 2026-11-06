@@ -22,7 +22,11 @@ extension NSScreen {
     /// (con origen arriba a la izquierda de la pantalla principal).
     var globalTopLeftOrigin: CGPoint {
         let primaryHeight = NSScreen.screens.first?.frame.height ?? frame.height
-        return CGPoint(x: frame.minX, y: primaryHeight - frame.maxY)
+        return NSScreen.topLeftOrigin(of: frame, primaryHeight: primaryHeight)
+    }
+
+    static func topLeftOrigin(of frame: CGRect, primaryHeight: CGFloat) -> CGPoint {
+        CGPoint(x: frame.minX, y: primaryHeight - frame.maxY)
     }
 }
 

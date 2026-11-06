@@ -66,6 +66,22 @@ jobs:
           sleep 6
           pgrep -xl Zas
           screencapture -x escenas/app-en-marcha.png
+          pkill -x Zas
+
+      - name: Usar la app de verdad
+        run: |
+          xcrun swiftc -swift-version 5 -sdk "$(xcrun --show-sdk-path)" -o build/ZasConductor Tests/Driver/main.swift
+          DB="/Library/Application Support/com.apple.TCC/TCC.db"
+          USERDB="$HOME/Library/Application Support/com.apple.TCC/TCC.db"
+          NOW="$(date +%s)"
+          for SERVICE in kTCCServiceAccessibility kTCCServicePostEvent; do
+            sudo sqlite3 "$DB" "INSERT OR REPLACE INTO access (service,client,client_type,auth_value,auth_reason,auth_version,flags,last_modified) VALUES ('$SERVICE','$PWD/build/ZasConductor',1,2,4,1,0,$NOW);"
+          done
+          sudo sqlite3 "$USERDB" "INSERT OR REPLACE INTO access (service,client,client_type,auth_value,auth_reason,auth_version,flags,last_modified) VALUES ('kTCCServicePostEvent','$PWD/build/ZasConductor',1,2,4,1,0,$NOW);" || true
+          defaults write local.zas.app welcomed -bool true
+          open /Applications/Zas.app
+          sleep 4
+          ./build/ZasConductor "$PWD/escenas"
 
       - name: Empaquetar
         run: |

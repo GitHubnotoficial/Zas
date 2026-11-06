@@ -13,7 +13,7 @@ final class ThumbnailController {
     var onAnnotate: ((NSImage, URL) -> Void)?
     var onPin: ((NSImage) -> Void)?
 
-    private final class Item {
+    private final class Item: @unchecked Sendable {
         let panel: NSPanel
         let view: ThumbnailView
         var timer: Timer?

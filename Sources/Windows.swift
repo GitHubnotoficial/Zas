@@ -90,10 +90,10 @@ private struct SettingsView: View {
     var body: some View {
         Form {
             Section("General") {
-                Toggle("Abrir Zas al iniciar sesión", isOn: $launchAtLogin)
-                    .onChange(of: launchAtLogin) { enabled in
-                        setLaunchAtLogin(enabled)
-                    }
+                Toggle("Abrir Zas al iniciar sesión", isOn: Binding(
+                    get: { launchAtLogin },
+                    set: { setLaunchAtLogin($0) }
+                ))
                 Toggle("Sonido al capturar", isOn: $settings.playSound)
                 LabeledContent("Guardar en") {
                     HStack(spacing: 8) {
@@ -154,8 +154,9 @@ private struct SettingsView: View {
                 try SMAppService.mainApp.unregister()
             }
         } catch {
-            launchAtLogin = SMAppService.mainApp.status == .enabled
+            NSLog("Zas: no se pudo cambiar el inicio de sesión: %@", error.localizedDescription)
         }
+        launchAtLogin = SMAppService.mainApp.status == .enabled
     }
 
     private func chooseFolder() {
@@ -267,6 +268,8 @@ final class WindowCoordinator: NSObject, NSWindowDelegate {
             window.title = "Ajustes de Zas"
             window.styleMask = [.titled, .closable]
             window.isReleasedWhenClosed = false
+            // SwiftUI calcula el tamaño tarde: hay que pedirlo antes de centrar.
+            window.setContentSize(host.view.fittingSize)
             window.center()
             settingsWindow = window
         }
@@ -291,6 +294,9 @@ final class WindowCoordinator: NSObject, NSWindowDelegate {
         window.titlebarAppearsTransparent = true
         window.isMovableByWindowBackground = true
         window.isReleasedWhenClosed = false
+        window.standardWindowButton(.miniaturizeButton)?.isHidden = true
+        window.standardWindowButton(.zoomButton)?.isHidden = true
+        window.setContentSize(host.view.fittingSize)
         window.center()
         welcomeWindow = window
 

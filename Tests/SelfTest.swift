@@ -87,6 +87,12 @@ enum SelfTest {
         let selection = Selection(screen: screen, rect: CGRect(x: 40, y: 30, width: 100, height: 80))
         check(selection.globalTopLeftRect == CGRect(x: 40, y: 30, width: 100, height: 80), "coordenadas globales en la pantalla principal")
         check(selection.appKitRect.minY == screen.frame.maxY - 110, "coordenadas de AppKit")
+
+        // Segunda pantalla a la izquierda y más arriba que la principal de 1080 de alto.
+        let secondary = CGRect(x: -1920, y: 300, width: 1920, height: 1200)
+        check(NSScreen.topLeftOrigin(of: secondary, primaryHeight: 1080) == CGPoint(x: -1920, y: -420), "origen de una pantalla secundaria arriba a la izquierda")
+        let below = CGRect(x: 200, y: -900, width: 1600, height: 900)
+        check(NSScreen.topLeftOrigin(of: below, primaryHeight: 1080) == CGPoint(x: 200, y: 1080), "origen de una pantalla secundaria debajo")
         check(Selection.fullScreen(screen).isFullScreen, "selección de pantalla completa")
         check(!Selection(screen: screen, rect: selection.rect, windowID: 3).isFullScreen, "una ventana no es pantalla completa")
         check(Selection(screen: screen, rect: selection.rect, windowID: 7).captureArguments == ["-x", "-o", "-l7"], "argumentos de captura de ventana")
@@ -171,11 +177,11 @@ enum SelfTest {
     }
 
     private static func sampleAnnotations(on canvas: AnnotationCanvas) {
-        canvas.add(Annotation(tool: .highlight, color: .systemYellow, lineWidth: 5, points: [CGPoint(x: 630, y: 214), CGPoint(x: 780, y: 244)]))
-        canvas.add(Annotation(tool: .arrow, color: .systemRed, lineWidth: 5, points: [CGPoint(x: 520, y: 92), CGPoint(x: 628, y: 208)]))
-        canvas.add(Annotation(tool: .rectangle, color: .systemRed, lineWidth: 5, points: [CGPoint(x: 226, y: 200), CGPoint(x: 370, y: 256)]))
-        canvas.add(Annotation(tool: .ellipse, color: .systemBlue, lineWidth: 5, points: [CGPoint(x: 18, y: 480), CGPoint(x: 106, y: 516)]))
-        canvas.add(Annotation(tool: .pixelate, color: .systemRed, lineWidth: 5, points: [CGPoint(x: 396, y: 268), CGPoint(x: 500, y: 300)]))
+        canvas.add(Annotation(tool: .highlight, color: .systemYellow, lineWidth: 5, points: [CGPoint(x: 634, y: 228), CGPoint(x: 760, y: 256)]))
+        canvas.add(Annotation(tool: .arrow, color: .systemRed, lineWidth: 5, points: [CGPoint(x: 560, y: 92), CGPoint(x: 660, y: 218)]))
+        canvas.add(Annotation(tool: .rectangle, color: .systemRed, lineWidth: 5, points: [CGPoint(x: 230, y: 222), CGPoint(x: 340, y: 262)]))
+        canvas.add(Annotation(tool: .ellipse, color: .systemBlue, lineWidth: 5, points: [CGPoint(x: 8, y: 478), CGPoint(x: 92, y: 518)]))
+        canvas.add(Annotation(tool: .pixelate, color: .systemRed, lineWidth: 5, points: [CGPoint(x: 396, y: 424), CGPoint(x: 510, y: 454)]))
         canvas.add(Annotation(tool: .counter, color: .systemRed, lineWidth: 5, points: [CGPoint(x: 800, y: 400)], number: 1))
         canvas.add(Annotation(tool: .counter, color: .systemRed, lineWidth: 5, points: [CGPoint(x: 800, y: 330)], number: 2))
         canvas.add(Annotation(tool: .text, color: .systemRed, lineWidth: 5, points: [CGPoint(x: 400, y: 60)], text: "Esto debería guardar"))
@@ -355,9 +361,11 @@ enum SelfTest {
             let back = backdrop()
             await wait(0.4)
 
+            // El cursor real va sobre la ventana: así el resaltado es el de verdad.
+            CGWarpMouseCursorPosition(CGPoint(x: 400, y: 330))
+            await wait(0.2)
             let overlay = SelectionOverlay()
             overlay.begin(mode: .screenshot) { _ in }
-            overlay.simulateHover(at: CGPoint(x: 400, y: 330))
             await shoot("\(label)-01-seleccion-ventana")
             overlay.simulateDrag(from: CGPoint(x: 310, y: 200), to: CGPoint(x: 760, y: 470))
             await shoot("\(label)-02-seleccion-area")
@@ -402,6 +410,7 @@ enum SelfTest {
             await shoot("\(label)-08-editor-pequena")
             small.testWindow.close()
 
+            Settings.shared.thumbnailSeconds = 6
             let windows = WindowCoordinator()
             keepAlive.append(windows)
             windows.showSettings()

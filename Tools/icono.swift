@@ -16,16 +16,6 @@ func render(size pixels: Int) -> Data {
     let body = CGRect(x: 100, y: 100, width: 824, height: 824)
     let shape = NSBezierPath(roundedRect: body, xRadius: 186, yRadius: 186)
 
-    NSGraphicsContext.saveGraphicsState()
-    let shadow = NSShadow()
-    shadow.shadowColor = NSColor.black.withAlphaComponent(0.35)
-    shadow.shadowOffset = NSSize(width: 0, height: -12)
-    shadow.shadowBlurRadius = 28
-    shadow.set()
-    NSColor(srgbRed: 0.09, green: 0.09, blue: 0.12, alpha: 1).setFill()
-    shape.fill()
-    NSGraphicsContext.restoreGraphicsState()
-
     NSGradient(
         starting: NSColor(srgbRed: 0.19, green: 0.19, blue: 0.25, alpha: 1),
         ending: NSColor(srgbRed: 0.07, green: 0.07, blue: 0.10, alpha: 1)
