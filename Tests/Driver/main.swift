@@ -668,15 +668,19 @@ if !recognized.isEmpty {
     if let editor = windowFrame(owner: "Zas") {
         // Centro del lienzo: entre la barra de 52 y la de 36. La tira mide 380 × 22, sin agrandarse.
         let middle = editor.midY + 8
-        // El arrastre debe nacer sobre una palabra, como haría una persona; las tarjetas quedan a la izquierda.
-        let start = max(editor.midX - 150, visible.minX + 18 + 224 + 20)
-        drag(from: CGPoint(x: start, y: middle), to: CGPoint(x: editor.midX + 140, y: middle))
-        wait(0.5)
-        shot("e2e-09d-texto-seleccionado")
-        NSPasteboard.general.clearContents()
-        press(kVK_ANSI_C, .maskCommand)
-        wait(0.6)
-        let selected = NSPasteboard.general.string(forType: .string) ?? ""
+        // El arrastre debe nacer sobre una palabra, como haría una persona. Cuál palabra cae dónde
+        // cambia con la escala de la pantalla: si un intento cae entre dos, se prueba un poco más allá.
+        var selected = ""
+        for offset: CGFloat in [-150, -110, -70, -30, 10, 50] where selected.isEmpty {
+            let start = max(editor.midX + offset, visible.minX + 18 + 224 + 20)
+            drag(from: CGPoint(x: start, y: middle), to: CGPoint(x: editor.midX + 140, y: middle))
+            wait(0.5)
+            shot("e2e-09d-texto-seleccionado")
+            NSPasteboard.general.clearContents()
+            press(kVK_ANSI_C, .maskCommand)
+            wait(0.6)
+            selected = NSPasteboard.general.string(forType: .string) ?? ""
+        }
         print("texto seleccionado con el ratón: [\(selected.replacingOccurrences(of: "\n", with: " | "))]")
         check(!selected.isEmpty, "arrastrar sobre la imagen selecciona texto y ⌘C lo copia")
     }
