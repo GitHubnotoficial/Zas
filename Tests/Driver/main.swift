@@ -668,9 +668,9 @@ if !recognized.isEmpty {
     if let editor = windowFrame(owner: "Zas") {
         // Centro del lienzo: entre la barra de 52 y la de 36. La tira mide 380 × 22, sin agrandarse.
         let middle = editor.midY + 8
-        // Las tarjetas que queden flotan sobre el editor: el arrastre empieza a su derecha.
-        let start = max(editor.midX - 180, visible.minX + 18 + 224 + 20)
-        drag(from: CGPoint(x: start, y: middle), to: CGPoint(x: editor.midX + 180, y: middle))
+        // El arrastre debe nacer sobre una palabra, como haría una persona; las tarjetas quedan a la izquierda.
+        let start = max(editor.midX - 150, visible.minX + 18 + 224 + 20)
+        drag(from: CGPoint(x: start, y: middle), to: CGPoint(x: editor.midX + 140, y: middle))
         wait(0.5)
         shot("e2e-09d-texto-seleccionado")
         NSPasteboard.general.clearContents()

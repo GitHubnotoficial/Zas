@@ -141,7 +141,8 @@ private final class LiveTextPane: NSView {
     /// Qué ve de verdad la capa de Apple: si tiene análisis, su rectángulo y si hay texto en `point`.
     func testOverlayReport(at point: CGPoint) -> String {
         let local = convert(point, to: overlay)
-        return "análisis (overlay.analysis != nil), contenido (overlay.contentsRect), capa (overlay.frame), texto en punto (overlay.hasInteractiveItem(at: local))"
+        let found = overlay.analysis?.hasResults(for: .text) ?? false
+        return "análisis \(overlay.analysis != nil), con texto \(found), contenido \(overlay.contentsRect), capa \(overlay.frame), en la ventana \(overlay.window != nil), interacción \(overlay.interactionTypes), oculta \(overlay.isHidden), texto en punto \(overlay.hasInteractiveItem(at: local))"
     }
     #endif
 }
