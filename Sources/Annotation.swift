@@ -450,17 +450,20 @@ enum AnnotationRenderer {
 
     /// Versión de toda la imagen en bloques, de la que se recorta cada zona pixelada.
     static func makePixelated(_ image: NSImage, block: CGFloat = 14, smooth: Bool = false) -> NSImage? {
-        guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
-            return nil
-        }
+        guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil),
+              let result = pixelated(cgImage, pointWidth: image.size.width, block: block, smooth: smooth)
+        else { return nil }
+        return NSImage(cgImage: result, size: image.size)
+    }
+
+    /// El cálculo en sí. No toca la interfaz: el lienzo lo corre aparte para no trabarse.
+    nonisolated static func pixelated(_ cgImage: CGImage, pointWidth: CGFloat, block: CGFloat, smooth: Bool) -> CGImage? {
         let source = CIImage(cgImage: cgImage)
-        let blockSize = max(CGFloat(cgImage.width) / max(image.size.width, 1), 1) * block
+        let blockSize = max(CGFloat(cgImage.width) / max(pointWidth, 1), 1) * block
         let filter = smooth
             ? CIFilter(name: "CIGaussianBlur", parameters: [kCIInputImageKey: source.clampedToExtent(), kCIInputRadiusKey: blockSize * 0.6])
             : CIFilter(name: "CIPixellate", parameters: [kCIInputImageKey: source, kCIInputScaleKey: blockSize])
-        guard let output = filter?.outputImage?.cropped(to: source.extent),
-            let result = CIContext().createCGImage(output, from: source.extent)
-        else { return nil }
-        return NSImage(cgImage: result, size: image.size)
+        guard let output = filter?.outputImage?.cropped(to: source.extent) else { return nil }
+        return ImageContext.shared.createCGImage(output, from: source.extent)
     }
 }

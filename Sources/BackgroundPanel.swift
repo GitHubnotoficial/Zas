@@ -18,7 +18,7 @@ private final class FlippedView: NSView {
 
 /// Muestra del panel: un degradado, una imagen o un color. La elegida lleva un anillo azul separado por un hueco.
 /// El marco guarda sitio para el anillo: la muestra visible queda en el centro.
-private final class SwatchButton: NSButton {
+private final class SwatchButton: ReactiveButton {
     var paint: ((CGRect, CGContext) -> Void)? {
         didSet { needsDisplay = true }
     }
@@ -62,8 +62,6 @@ private final class SwatchButton: NSButton {
         frame.origin = CGPoint(x: point.x - room, y: point.y - room)
     }
 
-    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-
     override func drawFocusRingMask() {
         NSBezierPath(roundedRect: area, xRadius: radius, yRadius: radius).fill()
     }
@@ -81,6 +79,14 @@ private final class SwatchButton: NSButton {
         paint?(area, context)
         NSGraphicsContext.restoreGraphicsState()
 
+        if isPressed {
+            Palette.pressed.setFill()
+            shape.fill()
+        } else if isHovering, isEnabled {
+            Palette.hover.setFill()
+            shape.fill()
+        }
+
         // Contorno suave: si no, las muestras claras se pierden en el panel.
         Palette.hairline.setStroke()
         shape.lineWidth = 0.5
@@ -97,7 +103,7 @@ private final class SwatchButton: NSButton {
 }
 
 /// Casilla propia: su dibujo es de Zas, su papel y su estado siguen siendo los de una casilla del sistema.
-private final class PanelCheckbox: NSButton {
+private final class PanelCheckbox: ReactiveButton {
     private let label: String
 
     override var isFlipped: Bool { false }
@@ -145,6 +151,13 @@ private final class PanelCheckbox: NSButton {
         let isOn = state == .on
         (isOn ? Palette.accent : Palette.pill).setFill()
         box.fill()
+        if isPressed {
+            Palette.pressed.setFill()
+            box.fill()
+        } else if isHovering, isEnabled {
+            Palette.hover.setFill()
+            box.fill()
+        }
         Palette.softEdge.setStroke()
         box.lineWidth = 0.5
         box.stroke()
@@ -223,10 +236,11 @@ final class BackgroundPanel: NSView {
     private var cornersSlider: NSSlider?
     private var balanceBox: PanelCheckbox?
     private var marginValue: ValueChip?
+    /// Se construye al abrirlo: cuarenta muestras no deben retrasar cada editor que se abre.
+    private var isBuilt = false
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        lastPicture = UserDefaults.standard.data(forKey: Self.lastPictureKey)
         setAccessibilityElement(true)
         setAccessibilityRole(.group)
         setAccessibilityLabel("Fondo")
@@ -239,8 +253,6 @@ final class BackgroundPanel: NSView {
         scroll.hasHorizontalScroller = false
         scroll.documentView = body
         addSubview(scroll)
-        build()
-        refresh()
     }
 
     required init?(coder: NSCoder) {
@@ -464,23 +476,40 @@ final class BackgroundPanel: NSView {
 
     /// Refleja el fondo del lienzo: al abrir, al deshacer o al cargar un proyecto.
     func reload(_ backdrop: Backdrop?, capture image: NSImage) {
+        if !isBuilt {
+            isBuilt = true
+            lastPicture = UserDefaults.standard.data(forKey: Self.lastPictureKey)
+            build()
+        }
         self.backdrop = backdrop
         if let backdrop {
             lastStyle = backdrop
         }
         if capture !== image {
             capture = image
-            captureBlur = ImageTools.blurredBackdrop(of: image)
-            let blur = captureBlur
-            blurButton?.paint = { rect, context in
-                if let blur {
-                    BackdropArt.drawCover(blur, in: rect)
-                } else {
-                    BackdropArt.drawSoft(white: false, in: rect, context: context)
-                }
-            }
+            paintBlurSwatch(from: image)
         }
         refresh()
+    }
+
+    /// La muestra se calcula aparte: mientras tanto, gris suave.
+    private func paintBlurSwatch(from image: NSImage) {
+        blurButton?.paint = { rect, context in
+            BackdropArt.drawSoft(white: false, in: rect, context: context)
+        }
+        guard let source = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return }
+        let box = Unchecked(value: source)
+        Task { @MainActor [weak self] in
+            let result = await Task.detached(priority: .userInitiated) {
+                Unchecked(value: ImageTools.blurred(box.value))
+            }.value
+            guard let self, self.capture === image, let blurred = result.value else { return }
+            let blur = NSImage(cgImage: blurred, size: CGSize(width: blurred.width, height: blurred.height))
+            self.captureBlur = blur
+            self.blurButton?.paint = { rect, _ in
+                BackdropArt.drawCover(blur, in: rect)
+            }
+        }
     }
 
     private func refresh() {
@@ -766,4 +795,25 @@ final class BackgroundPanel: NSView {
             }
         }
     }
+
+    #if ZAS_TEST
+    var testIsBuilt: Bool { isBuilt }
+    var testChosenGradient: Int? { gradientButtons.firstIndex { $0.isChosen } }
+    var testHasBlurSwatch: Bool { captureBlur != nil }
+
+    func testSetMargin(_ value: Double) {
+        guard let marginSlider else { return }
+        marginSlider.doubleValue = value
+        sliderChanged(marginSlider)
+    }
+
+    func testChooseNone() { nonePressed() }
+    func testChooseTransparent() { clearPressed() }
+
+    func testChooseBlur() {
+        if let blurButton {
+            softPressed(blurButton)
+        }
+    }
+    #endif
 }

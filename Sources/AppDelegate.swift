@@ -44,6 +44,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Capture.clearScratch()
+        Sounds.prepare()
         buildMainMenu()
         buildStatusMenu()
         registerHotKeys()
@@ -468,8 +469,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Con la pantalla congelada, la imagen ya existe.
         if let frozen = selection.frozen {
             let url = Capture.newFileURL(extension: "png")
-            let saved = Capture.writePNG(frozen, to: url, pointSize: pointSize)
-            finishCapture(url: url, succeeded: saved, pointSize: pointSize)
+            Task { @MainActor in
+                let saved = await Capture.writePNGInBackground(frozen, to: url, pointSize: pointSize)
+                self.finishCapture(url: url, succeeded: saved, pointSize: pointSize)
+            }
             return
         }
         // Pausa corta para que las ventanas de Zas ya no salgan en la imagen.
@@ -487,19 +490,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func finishCapture(url: URL, succeeded: Bool, pointSize: CGSize) {
-        captureInFlight = false
-        thumbnail.resume()
-        do {
-            guard succeeded else {
-                showError("No se pudo capturar", "macOS no entregó la imagen. Inténtalo de nuevo.")
+        guard succeeded else {
+            captureInFlight = false
+            thumbnail.resume()
+            showError("No se pudo capturar", "macOS no entregó la imagen. Inténtalo de nuevo.")
+            return
+        }
+        // Suena al quedar la imagen, no al terminar de prepararla.
+        Sounds.play(.shutter)
+        Task { @MainActor in
+            let prepared = await Capture.prepare(at: url, pointSize: pointSize)
+            self.captureInFlight = false
+            self.thumbnail.resume()
+            guard let prepared else {
+                self.showError("No se pudo copiar", "macOS entregó un archivo que no se puede leer. Inténtalo de nuevo.")
                 return
             }
-            guard let image = Capture.copyImage(at: url, pointSize: pointSize) else {
-                showError("No se pudo copiar", "macOS entregó un archivo que no se puede leer. Inténtalo de nuevo.")
-                return
-            }
-            Capture.playSound()
-            thumbnail.show(image: image, file: url, kind: .screenshot, from: lastCaptureRect)
+            Capture.publish(prepared.data)
+            self.thumbnail.show(image: prepared.image, file: url, kind: .screenshot, from: self.lastCaptureRect, preview: prepared.preview)
         }
     }
 
@@ -544,21 +552,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard scrollStitcher != nil, let selection = scrollSelection else { return }
         let url = Capture.temporaryFileURL()
         Capture.run(arguments: ["-x", Capture.regionArgument(selection.globalTopLeftRect)], to: url) { [weak self] _ in
-            guard let self else { return }
-            if let image = Capture.image(at: url) {
-                if self.scrollStitcher?.add(image) == true,
-                   let preview = self.scrollStitcher?.tailPreview(
-                       width: ScrollCaptureHUD.previewPixelWidth,
-                       maxHeight: ScrollCaptureHUD.previewPixelHeight
-                   ) {
+            Task { @MainActor in
+                guard let self, let stitcher = self.scrollStitcher else {
+                    try? FileManager.default.removeItem(at: url)
+                    return
+                }
+                let step = await ScrollStitcher.advanced(
+                    stitcher,
+                    adding: url,
+                    previewWidth: ScrollCaptureHUD.previewPixelWidth,
+                    previewHeight: ScrollCaptureHUD.previewPixelHeight
+                )
+                try? FileManager.default.removeItem(at: url)
+                // Si terminó mientras tanto, este tramo ya no cuenta: el último se toma al terminar.
+                guard self.scrollStitcher != nil else { return }
+                self.scrollStitcher = step.stitcher
+                if let preview = step.preview {
                     self.scrollHUD?.update(preview: preview)
                 }
-                if self.scrollStitcher?.lostTrack == true {
+                if step.stitcher.lostTrack {
                     Toast.shared.show("Muy rápido. Sube un poco.", seconds: 1.5)
                 }
-            }
-            try? FileManager.default.removeItem(at: url)
-            Task { @MainActor in
                 try? await Task.sleep(nanoseconds: 180_000_000)
                 self.takeScrollPiece()
             }
@@ -566,7 +580,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func finishScroll(save: Bool) {
-        guard var stitcher = scrollStitcher, let selection = scrollSelection else { return }
+        guard let stitcher = scrollStitcher, let selection = scrollSelection else { return }
         scrollStitcher = nil
         scrollSelection = nil
         scrollHotKeys.forEach { HotKeys.shared.unregister($0) }
@@ -585,26 +599,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Un último tramo, para no perder lo que se desplazó justo antes de Enter.
         let url = Capture.temporaryFileURL()
         Capture.run(arguments: ["-x", Capture.regionArgument(selection.globalTopLeftRect)], to: url) { [weak self] _ in
-            if let image = Capture.image(at: url) {
-                stitcher.add(image)
+            Task { @MainActor in
+                let step = await ScrollStitcher.advanced(stitcher, adding: url, previewWidth: 0, previewHeight: 0)
+                try? FileManager.default.removeItem(at: url)
+                self?.saveScroll(step.stitcher, selection: selection)
             }
-            try? FileManager.default.removeItem(at: url)
-            self?.saveScroll(stitcher, selection: selection)
         }
     }
 
     private func saveScroll(_ stitcher: ScrollStitcher, selection: Selection) {
-        guard let image = stitcher.composed() else {
-            captureInFlight = false
-            thumbnail.resume()
-            Toast.shared.show("No se pudo unir la captura.")
-            return
-        }
         let scale = CGFloat(stitcher.width) / max(selection.rect.width, 1)
-        let size = CGSize(width: CGFloat(image.width) / scale, height: CGFloat(image.height) / scale)
         let url = Capture.newFileURL(extension: "png")
-        lastCaptureRect = nil
-        finishCapture(url: url, succeeded: Capture.writePNG(image, to: url, pointSize: size), pointSize: size)
+        Task { @MainActor in
+            guard let size = await ScrollStitcher.save(stitcher, to: url, scale: scale) else {
+                self.captureInFlight = false
+                self.thumbnail.resume()
+                Toast.shared.show("No se pudo unir la captura.")
+                return
+            }
+            self.lastCaptureRect = nil
+            self.finishCapture(url: url, succeeded: true, pointSize: size)
+        }
     }
 
     // MARK: - Herramientas de video
@@ -631,7 +646,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let output = Capture.uniqueURL(in: video.deletingLastPathComponent(), name: name)
             if await GifExporter.export(video: video, to: output) {
                 Capture.copyFile(at: output)
-                Capture.playSound()
+                Sounds.play(.copy)
                 Toast.shared.show("GIF copiado")
             } else {
                 Toast.shared.show("No se pudo crear el GIF.")
@@ -673,9 +688,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         captureInFlight = true
         let arguments = selection.captureArguments
         let url = Capture.temporaryFileURL()
-        if let frozen = selection.frozen, Capture.writePNG(frozen, to: url, pointSize: selection.imagePointSize) {
-            TextReader.scan(from: url) { [weak self] scan in
-                self?.finishText(scan, imageURL: url)
+        if let frozen = selection.frozen {
+            // La imagen ya existe: se lee sin pasar por el disco ni por `screencapture`.
+            Task { @MainActor in
+                _ = await Capture.writePNGInBackground(frozen, to: url, pointSize: selection.imagePointSize)
+                TextReader.scan(image: frozen) { [weak self] scan in
+                    self?.finishText(scan, imageURL: url)
+                }
             }
             return
         }
@@ -702,14 +721,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let image = NSImage(contentsOf: imageURL)
         try? FileManager.default.removeItem(at: imageURL)
 
-        // Un código QR manda sobre el texto que lo rodea: es lo que se quería leer.
-        let text = scan.code ?? scan.text
+        let text = scan.clipboardText
         guard !text.isEmpty else {
             Toast.shared.show("No hay texto en esa área")
             return
         }
         Capture.copyText(text)
-        Capture.playSound()
+        Sounds.play(.copy)
         if let image {
             thumbnail.show(image: image, file: imageURL, kind: .text, text: text)
         }
@@ -724,7 +742,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             editor.canvas.load(document)
         }
         editor.onFinish = { [weak self] newImage, newFile in
-            Capture.playSound()
+            Sounds.play(.copy)
             self?.thumbnail.show(image: newImage, file: newFile, kind: .screenshot)
         }
         // Se suelta después de cerrar, para que el editor siga vivo mientras termina.
@@ -772,6 +790,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         Task { @MainActor in
             await overlayEffects.start(clicks: settings.videoClicks, keys: settings.videoKeys, showsCamera: settings.videoCamera)
+            // Suena y termina antes de arrancar: así no entra en el video, ni por el micrófono.
+            if Sounds.play(.recordStart) {
+                try? await Task.sleep(nanoseconds: UInt64(SoundEffect.recordStart.maximumDuration * 1_000_000_000))
+            }
+            Sounds.isMuted = true
             do {
                 try await newRecorder.start(
                     displayID: displayID,
@@ -787,6 +810,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 )
                 self.showRecordingUI(selection)
             } catch {
+                Sounds.isMuted = false
                 overlayEffects.stop()
                 self.effects = nil
                 self.recorder = nil
@@ -806,6 +830,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self.recorder = nil
             self.isStopping = false
             self.thumbnail.resume()
+            // Ya no se graba nada: el aviso de fin no puede entrar en el video.
+            Sounds.isMuted = false
+            Sounds.play(.recordStop)
             if let url {
                 self.finishVideo(url)
                 if recorder.microphoneDenied {
@@ -822,7 +849,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func finishVideo(_ url: URL) {
         Capture.copyFile(at: url)
-        Capture.playSound()
         let copiesSummary = Settings.shared.videoCopiesSummary
         showVideoThumbnail(url, inClipboard: !copiesSummary)
         if copiesSummary {
@@ -968,7 +994,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func reopenRecent(_ file: URL) {
         if file.pathExtension == "mp4" {
             Capture.copyFile(at: file)
-            Capture.playSound()
+            Sounds.play(.copy)
             showVideoThumbnail(file, inClipboard: true)
         } else if HistoryFilter.gifs.includes(file) {
             // Se copia el archivo: como imagen, el GIF perdería el movimiento.
@@ -977,10 +1003,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 return
             }
             Capture.copyFile(at: file)
-            Capture.playSound()
+            Sounds.play(.copy)
             Toast.shared.show("GIF copiado")
         } else if let image = Capture.copyImage(at: file) {
-            Capture.playSound()
+            Sounds.play(.copy)
             thumbnail.show(image: image, file: file, kind: .screenshot)
         } else {
             Toast.shared.show("Ese archivo ya no existe.")
@@ -1058,4 +1084,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSApp.activate(ignoringOtherApps: true)
         alert.runModal()
     }
+
+    #if ZAS_TEST
+    func testReopen(_ file: URL) { reopenRecent(file) }
+
+    func testOpenProject(_ url: URL) -> AnnotationEditor? {
+        openProject(url)
+        return editors.last
+    }
+
+    var testCardCount: Int { thumbnail.visibleCount }
+    func testDismissCards() { thumbnail.dismissAll() }
+    #endif
 }

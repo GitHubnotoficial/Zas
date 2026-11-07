@@ -1,5 +1,17 @@
 import AppKit
-import AudioToolbox
+
+/// Caja para pasar entre hilos algo que ya no va a cambiar.
+struct Unchecked<Value>: @unchecked Sendable {
+    let value: Value
+}
+
+/// Una captura lista para usar: leída, con su densidad corregida y con una copia pequeña
+/// para la tarjeta. Se prepara fuera del hilo principal.
+struct PreparedCapture: @unchecked Sendable {
+    let data: Data
+    let image: NSImage
+    let preview: NSImage?
+}
 
 /// Genera el TIFF solo si la app que pega lo pide: convertirlo siempre retrasaría cada captura
 /// y dejaría decenas de MB en el portapapeles. Casi todas las apps usan el PNG.
@@ -90,14 +102,29 @@ enum Capture {
     }
 
     /// Guarda una imagen ya compuesta con su tamaño real en puntos.
-    static func writePNG(_ image: CGImage, to url: URL, pointSize: CGSize) -> Bool {
+    nonisolated static func writePNG(_ image: CGImage, to url: URL, pointSize: CGSize) -> Bool {
         let rep = NSBitmapImageRep(cgImage: image)
         rep.size = pointSize
         guard let data = rep.representation(using: .png, properties: [:]) else { return false }
         return (try? data.write(to: url)) != nil
     }
 
-    static func image(at url: URL) -> CGImage? {
+    /// Lo mismo, sin frenar la interfaz: codificar una pantalla 5K tarda casi un segundo.
+    nonisolated static func writePNGInBackground(_ image: CGImage, to url: URL, pointSize: CGSize) async -> Bool {
+        let box = Unchecked(value: image)
+        return await Task.detached(priority: .userInitiated) {
+            writePNG(box.value, to: url, pointSize: pointSize)
+        }.value
+    }
+
+    nonisolated static func encodePNG(_ bitmap: NSBitmapImageRep) async -> Data? {
+        let box = Unchecked(value: bitmap)
+        return await Task.detached(priority: .userInitiated) {
+            box.value.representation(using: .png, properties: [:])
+        }.value
+    }
+
+    nonisolated static func image(at url: URL) -> CGImage? {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
         // Se decodifica ya: el archivo puede borrarse enseguida.
         return CGImageSourceCreateImageAtIndex(source, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary)
@@ -141,10 +168,9 @@ enum Capture {
         }
     }
 
-    /// Copia la imagen como PNG, y como TIFF para las apps que lo piden.
-    /// Con `pointSize`, corrige la densidad del archivo si no coincide:
+    /// Lee el archivo. Con `pointSize`, corrige la densidad si no coincide:
     /// de lo contrario una captura Retina se vería al doble de su tamaño.
-    static func copyImage(at url: URL, pointSize: CGSize? = nil) -> NSImage? {
+    private nonisolated static func readFixingDensity(at url: URL, pointSize: CGSize?) -> Data? {
         guard var data = try? Data(contentsOf: url) else { return nil }
         if let pointSize, let rep = NSBitmapImageRep(data: data),
            abs(rep.size.width - pointSize.width) > 0.5 || abs(rep.size.height - pointSize.height) > 0.5 {
@@ -154,7 +180,44 @@ enum Capture {
                 try? data.write(to: url)
             }
         }
-        guard let image = NSImage(data: data) else { return nil }
+        return data
+    }
+
+    /// Copia reducida al doble del tamaño de la tarjeta: redibujar la captura entera en cada
+    /// cuadro del resorte perdería cuadros. Una imagen muy alta se recorta, y pide más pixeles.
+    private nonisolated static func cardPreview(of data: Data, size: CGSize) -> NSImage? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+        let ratio = min(max(448 / max(size.width, 1), 336 / max(size.height, 1)), 1)
+        let side = min(max(size.width, size.height) * ratio, 4096)
+        guard let preview = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: Int(max(side, 1)),
+        ] as CFDictionary) else { return nil }
+        return NSImage(cgImage: preview, size: size)
+    }
+
+    /// Todo lo lento de terminar una captura, fuera del hilo principal.
+    nonisolated static func prepare(at url: URL, pointSize: CGSize? = nil) async -> PreparedCapture? {
+        await Task.detached(priority: .userInitiated) { () -> PreparedCapture? in
+            guard let data = readFixingDensity(at: url, pointSize: pointSize),
+                  let image = NSImage(data: data)
+            else { return nil }
+            return PreparedCapture(data: data, image: image, preview: cardPreview(of: data, size: image.size))
+        }.value
+    }
+
+    /// Copia la imagen como PNG, y como TIFF para las apps que lo piden.
+    static func copyImage(at url: URL, pointSize: CGSize? = nil) -> NSImage? {
+        guard let data = readFixingDensity(at: url, pointSize: pointSize),
+              let image = NSImage(data: data)
+        else { return nil }
+        publish(data)
+        return image
+    }
+
+    /// Deja un PNG en el portapapeles.
+    static func publish(_ data: Data) {
         let item = NSPasteboardItem()
         item.setData(data, forType: .png)
         let provider = TIFFProvider(png: data)
@@ -164,7 +227,6 @@ enum Capture {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.writeObjects([item])
-        return image
     }
 
     static func copyText(_ text: String) {
@@ -178,18 +240,5 @@ enum Capture {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.writeObjects([url as NSURL])
-    }
-
-    /// El obturador del propio Mac: un sonido que la gente ya asocia con capturar.
-    private static let shutterSound: SystemSoundID = {
-        let path = "/System/Library/Components/CoreAudio.component/Contents/SharedSupport/SystemSounds/system/Screen Capture.aif"
-        var sound: SystemSoundID = 0
-        AudioServicesCreateSystemSoundID(URL(fileURLWithPath: path) as CFURL, &sound)
-        return sound
-    }()
-
-    static func playSound() {
-        guard Settings.shared.playSound else { return }
-        AudioServicesPlaySystemSound(shutterSound)
     }
 }

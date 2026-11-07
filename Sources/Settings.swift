@@ -109,7 +109,8 @@ final class Settings: ObservableObject {
     static let shared = Settings()
 
     private enum Key {
-        static let playSound = "playSound"
+        // La clave no cambia: quien apagó el sonido lo sigue teniendo apagado.
+        static let soundEffects = "playSound"
         static let thumbnailSeconds = "thumbnailSeconds"
         static let thumbnailsOnLeft = "thumbnailsOnLeft"
         static let recordMicrophone = "recordMicrophone"
@@ -131,8 +132,9 @@ final class Settings: ObservableObject {
 
     private let defaults: UserDefaults
 
-    @Published var playSound: Bool {
-        didSet { defaults.set(playSound, forKey: Key.playSound) }
+    /// Los cuatro sonidos propios de Zas: obturador, copiar, inicio y fin de grabación.
+    @Published var soundEffects: Bool {
+        didSet { defaults.set(soundEffects, forKey: Key.soundEffects) }
     }
 
     @Published var thumbnailSeconds: Double {
@@ -228,9 +230,9 @@ final class Settings: ObservableObject {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        defaults.register(defaults: [Key.playSound: true, Key.thumbnailSeconds: 6.0, Key.thumbnailsOnLeft: true, Key.saveCaptures: true, Key.videoCopiesSummary: true, Key.videoEvery: 2.0, Key.videoFPS: 30, Key.videoCursor: true])
+        defaults.register(defaults: [Key.soundEffects: true, Key.thumbnailSeconds: 6.0, Key.thumbnailsOnLeft: true, Key.saveCaptures: true, Key.videoCopiesSummary: true, Key.videoEvery: 2.0, Key.videoFPS: 30, Key.videoCursor: true])
 
-        playSound = defaults.bool(forKey: Key.playSound)
+        soundEffects = defaults.bool(forKey: Key.soundEffects)
         thumbnailSeconds = defaults.double(forKey: Key.thumbnailSeconds)
         thumbnailsOnLeft = defaults.bool(forKey: Key.thumbnailsOnLeft)
         recordMicrophone = defaults.bool(forKey: Key.recordMicrophone)

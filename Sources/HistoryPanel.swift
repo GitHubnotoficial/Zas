@@ -2,6 +2,24 @@ import AppKit
 import Carbon
 import SwiftUI
 
+/// Botón plano de SwiftUI con los mismos dos estados inmediatos que los de AppKit.
+struct ReactiveButtonStyle: ButtonStyle {
+    private struct ReactiveLabel: View {
+        let configuration: ButtonStyleConfiguration
+        @State private var hovering = false
+
+        var body: some View {
+            configuration.label
+                .brightness(configuration.isPressed ? -0.12 : (hovering ? 0.08 : 0))
+                .onHover { hovering = $0 }
+        }
+    }
+
+    func makeBody(configuration: Configuration) -> some View {
+        ReactiveLabel(configuration: configuration)
+    }
+}
+
 /// Qué enseña el historial. Se decide por la extensión del archivo.
 enum HistoryFilter: String, CaseIterable {
     case all = "Todo"
@@ -90,9 +108,9 @@ private struct HistoryView: View {
     }
 
     private var motion: Animation? {
-        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        Design.reduceMotion
             ? nil
-            : .spring(response: 0.42, dampingFraction: 0.86)
+            : .spring(response: Design.springResponse, dampingFraction: Design.springDamping)
     }
 
     /// Solo existen las tarjetas que caben: con quinientas capturas no se dibujan quinientas.
@@ -138,7 +156,7 @@ private struct HistoryView: View {
                         .background(model.filter == item ? Color.accentColor : Color.white.opacity(0.16), in: Capsule())
                         .contentShape(Capsule())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(ReactiveButtonStyle())
                 .accessibilityLabel(item.rawValue)
                 .accessibilityAddTraits(model.filter == item ? .isSelected : [])
             }
@@ -199,7 +217,7 @@ private struct HistoryView: View {
             .background(Color.accentColor, in: Capsule())
             .contentShape(Capsule())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(ReactiveButtonStyle())
         .accessibilityLabel("Abrir")
         .accessibilityHint("Abre lo que está enfocado")
     }
@@ -237,7 +255,7 @@ private struct HistoryTile: View {
         Button(action: onPress) {
             artwork
         }
-        .buttonStyle(.plain)
+        .buttonStyle(ReactiveButtonStyle())
         .help(dateText)
         .accessibilityLabel("\(kindName) del \(dateText)")
         .accessibilityHint(isFocused ? "Abre este archivo" : "Lleva este archivo al centro")
@@ -403,8 +421,9 @@ final class HistoryController {
         panel.animator().alphaValue = 1
         NSAnimationContext.endGrouping()
         // Amortiguado del todo: un rebote despegaría la franja del borde inferior.
+        // Solo viaja: mover el marco sin volver a dibujar toda la franja en cada cuadro.
         spring = Spring.run(damping: 1, step: { progress in
-            panel.setFrame(start.moved(to: frame, by: progress), display: true)
+            panel.setFrameOrigin(start.moved(to: frame, by: progress).origin)
         })
     }
 

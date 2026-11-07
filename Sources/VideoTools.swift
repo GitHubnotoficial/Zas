@@ -95,6 +95,7 @@ final class VideoTrimWindow: NSObject, NSWindowDelegate {
         )
         super.init()
         window.title = "Recortar video"
+        window.minSize = CGSize(width: 520, height: 320)
         window.isReleasedWhenClosed = false
         window.delegate = self
         playerView.player = player

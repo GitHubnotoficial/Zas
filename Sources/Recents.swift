@@ -87,6 +87,8 @@ final class RecentsStripView: NSView {
 
     private let label = NSTextField(labelWithString: "Recientes")
     private var tiles: [Tile] = []
+    /// Sube con cada apertura del menú: una carátula tardía no debe pisar a una más nueva.
+    private var generation = 0
 
     init() {
         super.init(frame: CGRect(x: 0, y: 0, width: 280, height: 86))
@@ -123,20 +125,33 @@ final class RecentsStripView: NSView {
         fatalError("init(coder:) no se usa")
     }
 
+    /// Las carátulas se leen aparte: la de un video tarda, y el menú debe abrir al instante.
     func reload(_ files: [URL]) {
+        generation += 1
+        let current = generation
         label.stringValue = files.isEmpty ? "Aún no hay capturas" : "Recientes"
         label.sizeToFit()
         for (index, tile) in tiles.enumerated() {
             let file = index < files.count ? files[index] : nil
+            if tile.file != file {
+                tile.image = nil
+            }
             tile.file = file
             tile.isHidden = file == nil
             tile.layer?.backgroundColor = NSColor.quaternaryLabelColor.cgColor
             guard let file else { continue }
-            tile.image = Recents.preview(of: file)
-                ?? NSImage(systemSymbolName: "film", accessibilityDescription: "Video")
             tile.toolTip = Recents.title(for: file)
+            Task { @MainActor [weak self, weak tile] in
+                let preview = await Recents.previewInBackground(of: file).image
+                guard let self, let tile, self.generation == current else { return }
+                tile.image = preview ?? NSImage(systemSymbolName: "film", accessibilityDescription: "Video")
+            }
         }
     }
+
+    #if ZAS_TEST
+    var testTileImages: Int { tiles.filter { !$0.isHidden && $0.image != nil }.count }
+    #endif
 
     @objc private func tilePressed(_ sender: Tile) {
         guard let file = sender.file else { return }

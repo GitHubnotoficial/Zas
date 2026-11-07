@@ -68,7 +68,7 @@ final class Toast {
         panel.orderFrontRegardless()
         panel.invalidateShadow()
         fade(panel, to: 1, duration: 0.14)
-        Spring.run(response: 0.32, damping: 0.8, step: { progress in
+        Spring.run(step: { progress in
             panel.setFrame(start.moved(to: target, by: progress), display: true)
         })
         self.panel = panel

@@ -1,6 +1,7 @@
 import AVFoundation
 import AppKit
 import CoreImage.CIFilterBuiltins
+import VisionKit
 
 /// Pruebas que corren en un Mac real: lógica, captura, video e imágenes de cada pantalla.
 /// Solo se compilan con -D ZAS_TEST; no forman parte de la app que se instala.
@@ -61,7 +62,7 @@ enum SelfTest {
     private static func runAll() async {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("zas-pruebas-\(UUID().uuidString)")
         Settings.shared.saveFolder = folder
-        Settings.shared.playSound = false
+        Settings.shared.soundEffects = false
 
         // Hoja de fotogramas de un video, para revisar el demo sin tener un Mac.
         if let flag = CommandLine.arguments.firstIndex(of: "--resumen"), CommandLine.arguments.count > flag + 2 {
@@ -78,12 +79,17 @@ enum SelfTest {
         }
 
         logic()
+        soundTests()
+        textLayoutTests()
         await canvasTests()
         await polishTests()
         await systemTests()
         await recorderTest()
         await historyTests()
         await desktopCoverTests()
+        await textBattery()
+        await functionalTests()
+        await responsivenessTests()
         await scenes()
     }
 
@@ -889,13 +895,13 @@ enum SelfTest {
     }
 
     /// Un código QR nítido sobre blanco, con el margen que pide el formato.
-    private static func qrFile(_ message: String) -> URL? {
+    private static func qrFile(_ message: String, pixels: CGFloat = 10) -> URL? {
         let filter = CIFilter.qrCodeGenerator()
         filter.message = Data(message.utf8)
         filter.correctionLevel = "M"
         guard let code = filter.outputImage?
             .samplingNearest()
-            .transformed(by: CGAffineTransform(scaleX: 10, y: 10))
+            .transformed(by: CGAffineTransform(scaleX: pixels, y: pixels))
         else { return nil }
         let extent = code.extent
         guard let cgCode = CIContext().createCGImage(code, from: extent) else { return nil }
@@ -1278,6 +1284,1145 @@ enum SelfTest {
 
             back.orderOut(nil)
             await wait(0.3)
+        }
+    }
+}
+
+// MARK: - Apoyo de las pruebas nuevas
+
+/// Números pseudoaleatorios propios (SplitMix64): la misma semilla da las mismas imágenes en cualquier Mac.
+private struct SeededNumbers {
+    var state: UInt64
+
+    mutating func next() -> UInt64 {
+        state &+= 0x9E37_79B9_7F4A_7C15
+        var mixed = state
+        mixed = (mixed ^ (mixed >> 30)) &* 0xBF58_476D_1CE4_E5B9
+        mixed = (mixed ^ (mixed >> 27)) &* 0x94D0_49BB_1331_11EB
+        return mixed ^ (mixed >> 31)
+    }
+
+    mutating func unit() -> CGFloat {
+        CGFloat(next() >> 11) / CGFloat(UInt64(1) << 53)
+    }
+
+    mutating func below(_ limit: Int) -> Int {
+        Int(next() % UInt64(limit))
+    }
+
+    mutating func pick<Item>(_ items: [Item]) -> Item {
+        items[below(items.count)]
+    }
+}
+
+/// Una imagen de la batería. Un tabulador separa columnas: Vision las entrega como trozos sueltos.
+private struct TextCase {
+    enum Surface {
+        case plain(NSColor)
+        case gradient(NSColor, NSColor, CGFloat)
+        case noise(NSColor, CGFloat)
+    }
+
+    let category: String
+    let surface: Surface
+    let ink: NSColor
+    let lines: [(text: String, font: NSFont)]
+    let scale: Int
+    let angle: CGFloat
+    let margin: CGFloat
+
+    var expected: String {
+        lines.map { $0.text.replacingOccurrences(of: "\t", with: " ") }.joined(separator: "\n")
+    }
+
+    var name: String {
+        "\(category) \(lines.first?.font.fontName ?? "") \(scale)x"
+    }
+}
+
+private struct TextResult {
+    let item: TextCase
+    let image: NSImage
+    let copied: Double
+    let live: Double
+    let copiedText: String
+    let liveText: String
+
+    var worst: Double { min(copied, live) }
+}
+
+/// Mide cuánto tiempo seguido estuvo ocupado el hilo principal: eso es lo que se siente como un tirón.
+@MainActor
+private final class StallProbe {
+    private var timer: Timer?
+    private var last = Date()
+    private var worst = 0.0
+
+    func start() {
+        last = Date()
+        worst = 0
+        let ticking = Timer(timeInterval: 0.004, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.tick()
+            }
+        }
+        RunLoop.main.add(ticking, forMode: .common)
+        timer = ticking
+    }
+
+    private func tick() {
+        let now = Date()
+        worst = max(worst, now.timeIntervalSince(last) * 1000)
+        last = now
+    }
+
+    /// El tirón más largo, en milisegundos.
+    func stop() -> Double {
+        tick()
+        timer?.invalidate()
+        timer = nil
+        return worst
+    }
+}
+
+private final class ValueBox<Value> {
+    var value: Value
+
+    init(_ value: Value) {
+        self.value = value
+    }
+}
+
+// MARK: - Sonidos
+
+@MainActor
+extension SelfTest {
+    private static func soundTests() {
+        for effect in SoundEffect.allCases {
+            let samples = SoundSynth.samples(for: effect)
+            let seconds = Double(samples.count) / SoundSynth.sampleRate
+            let peak = samples.map { abs($0) }.max() ?? 1
+            check(seconds > 0.03 && seconds <= effect.maximumDuration, "\(effect): dura lo debido (\(Int(seconds * 1000)) ms)")
+            check(peak > 0.05 && peak < 0.5, "\(effect): suena suave, con pico bajo 0,5 (\(peak))")
+            check(abs(samples.first ?? 1) < 0.001 && abs(samples.last ?? 1) < 0.001, "\(effect): empieza y acaba en cero")
+            // Un clic es un salto brusco en los extremos.
+            let edge = Int(SoundSynth.sampleRate * 0.0006)
+            let jumps = zip(samples.prefix(edge), samples.dropFirst().prefix(edge)).map { abs($0 - $1) }
+            let tailJumps = zip(samples.suffix(edge), samples.suffix(edge).dropFirst()).map { abs($0 - $1) }
+            check((jumps + tailJumps).allSatisfy { $0 < 0.08 }, "\(effect): el fundido evita el clic")
+            check(SoundSynth.samples(for: effect) == samples, "\(effect): siempre suena igual")
+
+            let data = SoundSynth.wav(samples)
+            check(data.count == 44 + samples.count * 2 && data.prefix(4) == Data("RIFF".utf8), "\(effect): es un WAV válido")
+            let sound = NSSound(data: data)
+            check(sound != nil && abs((sound?.duration ?? 0) - seconds) < 0.02, "\(effect): NSSound lo abre (\(sound?.duration ?? 0) s)")
+        }
+
+        let suite = "zas-pruebas-\(UUID().uuidString)"
+        if let defaults = UserDefaults(suiteName: suite) {
+            check(Settings(defaults: defaults).soundEffects, "los efectos de sonido vienen encendidos")
+            Settings(defaults: defaults).soundEffects = false
+            check(!Settings(defaults: defaults).soundEffects, "el ajuste de sonidos se recuerda")
+            // Quien ya había apagado "Sonido al capturar" lo conserva.
+            check(defaults.object(forKey: "playSound") as? Bool == false, "el ajuste usa la clave de antes")
+            defaults.removePersistentDomain(forName: suite)
+        }
+
+        let saved = Settings.shared.soundEffects
+        Settings.shared.soundEffects = true
+        check(Sounds.canPlay, "con el ajuste encendido, Zas puede sonar")
+        Sounds.isMuted = true
+        check(!Sounds.canPlay && !Sounds.play(.copy), "durante una grabación no suena nada")
+        Sounds.isMuted = false
+        Settings.shared.soundEffects = false
+        check(!Sounds.canPlay && !Sounds.play(.shutter), "con el ajuste apagado no suena nada")
+        Settings.shared.soundEffects = saved
+    }
+
+    // MARK: - Orden del texto
+
+    private static func textLayoutTests() {
+        func piece(_ text: String, _ x: CGFloat, _ y: CGFloat, _ width: CGFloat = 0.3, _ height: CGFloat = 0.05) -> TextPiece {
+            TextPiece(text: text, box: CGRect(x: x, y: y, width: width, height: height))
+        }
+        check(
+            TextLayout.ordered([piece("primera", 0.1, 0.8), piece("segunda", 0.1, 0.7)]) == "primera\nsegunda",
+            "dos líneas en orden siguen igual"
+        )
+        check(
+            TextLayout.ordered([piece("segunda", 0.1, 0.7), piece("primera", 0.1, 0.8)]) == "primera\nsegunda",
+            "una línea que llega después de la de abajo vuelve a su sitio"
+        )
+        check(
+            TextLayout.ordered([piece("precio", 0.6, 0.5), piece("nombre", 0.1, 0.5)]) == "nombre precio",
+            "una fila partida se une de izquierda a derecha"
+        )
+        check(
+            TextLayout.ordered([
+                piece("a1", 0.05, 0.8), piece("a2", 0.05, 0.7), piece("b1", 0.55, 0.85), piece("b2", 0.55, 0.75),
+            ]) == "a1\na2\nb1\nb2",
+            "dos columnas no se mezclan"
+        )
+        check(TextLayout.ordered([]).isEmpty, "sin texto no sale nada")
+
+        check(TextReader.enlargement(width: 1600, height: 900) == 2, "una captura mediana se duplica para leerla")
+        check(TextReader.enlargement(width: 5120, height: 2880) == 1, "una pantalla 5K se lee tal cual")
+        check(TextReader.enlargement(width: 380, height: 22) == 4, "una tira de una línea se amplía más")
+        check(TextReader.enlargement(width: 5000, height: 20) == 1, "ampliar nunca pasa del tamaño máximo")
+    }
+
+    // MARK: - Selección de texto con imágenes aleatorias
+
+    private static func color(_ value: UInt32) -> NSColor { NSColor.hex(value) }
+
+    private static func textFonts() -> [(CGFloat) -> NSFont] {
+        func named(_ name: String) -> (CGFloat) -> NSFont {
+            { size in NSFont(name: name, size: size) ?? .systemFont(ofSize: size) }
+        }
+        return [
+            { .systemFont(ofSize: $0) },
+            named("Times New Roman"),
+            { .monospacedSystemFont(ofSize: $0, weight: .regular) },
+            named("Helvetica Neue"),
+            named("Georgia"),
+            named("Menlo"),
+            { .systemFont(ofSize: $0, weight: .semibold) },
+            named("Palatino"),
+            named("Courier New"),
+            named("Arial"),
+            named("Baskerville"),
+            named("Avenir Next"),
+        ]
+    }
+
+    /// Sesenta imágenes, cuatro por categoría, siempre las mismas: la semilla es fija.
+    private static func textCases() -> [TextCase] {
+        let spanish = [
+            "El pingüino comió piñas en el muelle",
+            "Mañana habrá reunión a las ocho",
+            "La canción del niño sonó así",
+            "Añade más azúcar al café de Begoña",
+            "Último aviso: revisión técnica pendiente",
+            "¿Dónde está la cámara de fotos?",
+            "¡Qué día tan útil para programar!",
+            "El señor Núñez pagó la factura en enero",
+        ]
+        let english = [
+            "The quick brown fox jumps over the lazy dog",
+            "Please review the pull request before lunch",
+            "Build failed on line 42 of main.swift",
+            "Could not connect to the server",
+            "Saved to the shared folder at noon",
+            "Open the settings and turn it on",
+        ]
+        let numbers = [
+            "Factura 2026-1187 total 4.530,75",
+            "Teléfono 300 555 0142",
+            "12:45 08/11/2026 turno 7731",
+            "3.14159 2.71828 1.41421",
+            "$ 128.000 + 19 % = $ 152.320",
+            "Pedido 90210 caja 16 lote 305",
+        ]
+        let short = ["Hola mundo", "Guardar cambios", "Zas copia texto", "Abrir archivo", "Reunión mañana", "Copiar ruta", "Open file", "Año nuevo"]
+        let table = [
+            "Pedido 1042\tMaría Pérez\t$ 128.000",
+            "Pedido 1043\tCarlos Rojas\t$ 54.500",
+            "Pedido 1044\tAna Gómez\t$ 312.900",
+            "Pedido 1045\tLuis Torres\t$ 87.250",
+        ]
+        func palette(_ values: [UInt32]) -> [NSColor] { values.map { NSColor.hex($0) } }
+        let light = palette([0xFFFFFF, 0xF5F5F7, 0xFBF7EC, 0xEAF2FB, 0xE9E9EC])
+        let dark = palette([0x000000, 0x1B1B1D, 0x10223F, 0x23172E, 0x2B2B2D])
+        let darkInks = palette([0x000000, 0x1C1C1E, 0x2B2B33, 0x20304F])
+        let lightInks = palette([0xFFFFFF, 0xF2F2F4, 0xE8EEF7, 0xFFF6DF])
+        // Parejas con contraste de al menos 4,5 a 1: lo que se pide a una interfaz legible.
+        let inkPairs: [(NSColor, NSColor)] = [
+            (color(0xB3261E), color(0xFFF4F2)),
+            (color(0x0B57D0), color(0xEEF3FE)),
+            (color(0x0B6B3A), color(0xEAF7EF)),
+            (color(0x6B21A8), color(0xF5EEFC)),
+            (color(0xFFD60A), color(0x1C1C1E)),
+            (color(0x7CF2D6), color(0x0F2B46)),
+        ]
+
+        var dice = SeededNumbers(state: 0x5A41_5320_5445_5854)
+        var cases: [TextCase] = []
+        var turn = 0
+        let fonts = textFonts()
+
+        func add(
+            _ category: String,
+            _ lines: [(text: String, size: CGFloat)],
+            surface: TextCase.Surface,
+            ink: NSColor,
+            angle: CGFloat = 0,
+            margin: CGFloat = 28
+        ) {
+            let font = fonts[turn % fonts.count]
+            cases.append(TextCase(
+                category: category,
+                surface: surface,
+                ink: ink,
+                lines: lines.map { (text: $0.text, font: font($0.size)) },
+                scale: turn % 2 == 0 ? 2 : 1,
+                angle: angle,
+                margin: margin
+            ))
+            turn += 1
+        }
+        func sized(_ size: CGFloat, _ texts: String...) -> [(text: String, size: CGFloat)] {
+            texts.map { (text: $0, size: size) }
+        }
+
+        for _ in 0..<4 {
+            let phrase = dice.pick(spanish + english)
+            let size = CGFloat(14 + dice.below(15))
+            add("oscuro sobre claro", sized(size, phrase), surface: .plain(dice.pick(light)), ink: dice.pick(darkInks))
+        }
+        for _ in 0..<4 {
+            let phrase = dice.pick(spanish + english)
+            let size = CGFloat(14 + dice.below(15))
+            add("claro sobre oscuro", sized(size, phrase), surface: .plain(dice.pick(dark)), ink: dice.pick(lightInks))
+        }
+        for _ in 0..<4 {
+            let pair = dice.pick(inkPairs)
+            let size = CGFloat(15 + dice.below(14))
+            add("colores", sized(size, dice.pick(spanish + english)), surface: .plain(pair.1), ink: pair.0)
+        }
+        for index in 0..<4 {
+            let isLight = index % 2 == 0
+            let surface = TextCase.Surface.gradient(
+                isLight ? color(0xFFFFFF) : color(0x0F2B46),
+                isLight ? color(0xBFD7F5) : color(0x3A1F5C),
+                dice.unit() * 180
+            )
+            add("degradado", sized(CGFloat(16 + dice.below(16)), dice.pick(spanish + english)), surface: surface, ink: isLight ? color(0x111114) : color(0xFFFFFF))
+        }
+        for index in 0..<4 {
+            let isLight = index % 2 == 0
+            let amount = 0.06 + dice.unit() * 0.08
+            let surface = TextCase.Surface.noise(isLight ? color(0xEDEDED) : color(0x202024), amount)
+            add("ruido", sized(CGFloat(16 + dice.below(16)), dice.pick(spanish + english)), surface: surface, ink: isLight ? color(0x000000) : color(0xFFFFFF))
+        }
+        for index in 0..<4 {
+            let size = CGFloat(14 + dice.below(10))
+            let lines = (0..<(3 + index % 2)).map { step in (text: spanish[(step + index * 3) % spanish.count], size: size) }
+            add("varias líneas", lines, surface: .plain(dice.pick(light)), ink: dice.pick(darkInks))
+        }
+        for index in 0..<4 {
+            add("español", sized(CGFloat(16 + dice.below(12)), spanish[(index * 2 + 1) % spanish.count]), surface: .plain(dice.pick(light)), ink: dice.pick(darkInks))
+        }
+        for index in 0..<4 {
+            add("inglés", sized(CGFloat(16 + dice.below(12)), english[index]), surface: .plain(dice.pick(light)), ink: dice.pick(darkInks))
+        }
+        for index in 0..<4 {
+            add("números", sized(CGFloat(16 + dice.below(12)), numbers[index]), surface: .plain(dice.pick(light)), ink: dice.pick(darkInks))
+        }
+        for index in 0..<4 {
+            let lines: [(text: String, size: CGFloat)] = [
+                (short[index], 34), (spanish[index], 16), (english[index], 12),
+            ]
+            add("tamaños mezclados", lines, surface: .plain(dice.pick(light)), ink: dice.pick(darkInks))
+        }
+        for index in 0..<4 {
+            let degrees = (1.5 + dice.unit() * 3) * (index % 2 == 0 ? 1 : -1)
+            add("girado", sized(CGFloat(18 + dice.below(10)), dice.pick(spanish + english)), surface: .plain(dice.pick(light)), ink: dice.pick(darkInks), angle: degrees * .pi / 180)
+        }
+        for index in 0..<4 {
+            let phrase = index % 2 == 0 ? spanish[index + 1] : english[index + 1]
+            add("pequeño", sized(index < 2 ? 12 : 13, phrase), surface: .plain(dice.pick(light)), ink: dice.pick(darkInks))
+        }
+        for index in 0..<4 {
+            add("grande", sized(index < 2 ? 64 : 56, short[index + 4]), surface: .plain(dice.pick(light)), ink: dice.pick(darkInks))
+        }
+        for index in 0..<4 {
+            add("recorte justo", sized(CGFloat(13 + index), short[index]), surface: .plain(dice.pick(light)), ink: dice.pick(darkInks), margin: 2)
+        }
+        for index in 0..<4 {
+            let rows = table.map { (text: $0, size: CGFloat(14 + index * 2)) }
+            add("tabla", rows, surface: .plain(dice.pick(light)), ink: dice.pick(darkInks))
+        }
+        return cases
+    }
+
+    private static func render(_ item: TextCase, dice: inout SeededNumbers) -> NSImage? {
+        func parts(of line: (text: String, font: NSFont)) -> [NSAttributedString] {
+            line.text.components(separatedBy: "\t").map {
+                NSAttributedString(string: $0, attributes: [.font: line.font, .foregroundColor: item.ink])
+            }
+        }
+        let rows = item.lines.map { parts(of: $0) }
+        let column = (rows.flatMap { $0 }.map { $0.size().width }.max() ?? 0) + 36
+        let widths = rows.map { row in row.count > 1 ? column * CGFloat(row.count) : (row.first?.size().width ?? 0) }
+        let gaps = item.lines.map { $0.font.pointSize * 0.45 }
+        let heights = rows.map { row in row.map { $0.size().height }.max() ?? 0 }
+        let contentWidth = widths.max() ?? 0
+        let contentHeight = heights.reduce(0, +) + gaps.dropLast().reduce(0, +)
+        let turn = abs(sin(item.angle))
+        let room = item.margin + (turn * (contentWidth + contentHeight) / 2).rounded(.up)
+        let width = Int((contentWidth + room * 2).rounded(.up))
+        let height = Int((contentHeight + room * 2).rounded(.up))
+
+        guard let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: width * item.scale, pixelsHigh: height * item.scale, bitsPerSample: 8,
+            samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
+            bytesPerRow: 0, bitsPerPixel: 0
+        ), let context = NSGraphicsContext(bitmapImageRep: rep) else { return nil }
+
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = context
+        let scale = CGFloat(item.scale)
+        context.cgContext.scaleBy(x: scale, y: scale)
+        let bounds = CGRect(x: 0, y: 0, width: width, height: height)
+        switch item.surface {
+        case .plain(let fill):
+            fill.setFill()
+            bounds.fill()
+        case .gradient(let start, let end, let angle):
+            NSGradient(starting: start, ending: end)?.draw(in: bounds, angle: angle)
+        case .noise(let fill, let amount):
+            fill.setFill()
+            bounds.fill()
+            context.flushGraphics()
+            addNoise(to: rep, amount: amount, dice: &dice)
+        }
+
+        let cg = context.cgContext
+        cg.saveGState()
+        cg.translateBy(x: bounds.midX, y: bounds.midY)
+        cg.rotate(by: item.angle)
+        cg.translateBy(x: -bounds.midX, y: -bounds.midY)
+        var top = bounds.midY + contentHeight / 2
+        for (index, row) in rows.enumerated() {
+            top -= heights[index]
+            let left = bounds.midX - contentWidth / 2
+            for (place, part) in row.enumerated() {
+                part.draw(at: CGPoint(x: left + CGFloat(place) * column, y: top))
+            }
+            top -= gaps[index]
+        }
+        cg.restoreGState()
+        context.flushGraphics()
+        NSGraphicsContext.restoreGraphicsState()
+
+        rep.size = NSSize(width: width, height: height)
+        let image = NSImage(size: rep.size)
+        image.addRepresentation(rep)
+        return image
+    }
+
+    private static func addNoise(to rep: NSBitmapImageRep, amount: CGFloat, dice: inout SeededNumbers) {
+        guard let pixels = rep.bitmapData else { return }
+        var table = [Int](repeating: 0, count: 8192)
+        for index in table.indices {
+            table[index] = Int((dice.unit() * 2 - 1) * amount * 255)
+        }
+        for y in 0..<rep.pixelsHigh {
+            var index = dice.below(table.count)
+            let row = pixels + y * rep.bytesPerRow
+            for x in 0..<rep.pixelsWide {
+                let change = table[index]
+                index = (index + 1) & 8191
+                for channel in 0..<3 {
+                    let value = Int(row[x * 4 + channel]) + change
+                    row[x * 4 + channel] = UInt8(max(min(value, 255), 0))
+                }
+            }
+        }
+    }
+
+    /// Los espacios y saltos de línea no cuentan como error: sí el orden, las letras y las tildes.
+    private static func normalized(_ text: String) -> [Character] {
+        Array(text.split(whereSeparator: \.isWhitespace).joined(separator: " "))
+    }
+
+    /// 1 si son iguales. Es la distancia de edición dividida por el largo del texto más largo.
+    static func similarity(_ first: String, _ second: String) -> Double {
+        let a = normalized(first)
+        let b = normalized(second)
+        guard !a.isEmpty || !b.isEmpty else { return 1 }
+        var previous = Array(0...b.count)
+        var current = [Int](repeating: 0, count: b.count + 1)
+        for row in 0..<a.count {
+            current[0] = row + 1
+            for column in 0..<b.count {
+                let swap = previous[column] + (a[row] == b[column] ? 0 : 1)
+                current[column + 1] = min(swap, previous[column + 1] + 1, current[column] + 1)
+            }
+            (previous, current) = (current, previous)
+        }
+        return 1 - Double(previous[b.count]) / Double(max(a.count, b.count))
+    }
+
+    private static func scan(image: CGImage) async -> TextScan {
+        await withCheckedContinuation { (continuation: CheckedContinuation<TextScan, Never>) in
+            TextReader.scan(image: image) { continuation.resume(returning: $0) }
+        }
+    }
+
+    private static func percent(_ value: Double) -> String {
+        String(format: "%.1f %%", value * 100)
+    }
+
+    private static func mean(_ values: [Double]) -> Double {
+        values.isEmpty ? 0 : values.reduce(0, +) / Double(values.count)
+    }
+
+    /// Cada imagen pasa por el camino real: el lienzo la exporta y de ahí salen el texto que se copia
+    /// y el análisis de Live Text que permite seleccionarlo.
+    private static func textBattery() async {
+        // Mínimo de acierto medio por categoría. Si una categoría no llega, primero se mira la imagen
+        // `texto-peor-*`: un fallo de Zas se corrige en la app, una limitación de Vision se documenta
+        // en CONTEXTO.md con el dato medido. El umbral no se baja para que la prueba pase.
+        let thresholds: [(category: String, minimum: Double)] = [
+            ("oscuro sobre claro", 0.95), ("claro sobre oscuro", 0.93), ("colores", 0.92),
+            ("degradado", 0.90), ("ruido", 0.85), ("varias líneas", 0.92), ("español", 0.93),
+            ("inglés", 0.95), ("números", 0.90), ("tamaños mezclados", 0.88), ("girado", 0.85),
+            ("pequeño", 0.85), ("grande", 0.93), ("recorte justo", 0.85), ("tabla", 0.88),
+        ]
+        var dice = SeededNumbers(state: 0x5A41_5320_4E4F_4953)
+        let cases = textCases()
+        check(cases.count >= 40, "la batería tiene al menos 40 imágenes distintas (\(cases.count))")
+
+        var results: [TextResult] = []
+        for (index, item) in cases.enumerated() {
+            guard let image = render(item, dice: &dice) else {
+                check(false, "se puede dibujar la imagen \(item.name)")
+                continue
+            }
+            let canvas = AnnotationCanvas(frame: CGRect(origin: .zero, size: image.size), image: image)
+            guard let snapshot = canvas.textSnapshot() else {
+                check(false, "el lienzo exporta la imagen \(item.name)")
+                continue
+            }
+            let copied = await scan(image: snapshot.pixels)
+            let live = await LiveText.analysis(of: snapshot.image)?.transcript ?? ""
+            // ⇧⌘7 lee un archivo: cada cuatro imágenes se comprueba que da lo mismo.
+            if index % 4 == 0 {
+                let file = await scan(pngFile(snapshot.image, pixels: snapshot.pixels))
+                check(file.text == copied.text, "leer desde archivo da lo mismo: \(item.name)")
+            }
+            let result = TextResult(
+                item: item,
+                image: snapshot.image,
+                copied: similarity(item.expected, copied.text),
+                live: similarity(item.expected, live),
+                copiedText: copied.text,
+                liveText: live
+            )
+            results.append(result)
+            print(String(format: "texto %2d %3.0f %% copiar, %3.0f %% Live Text: %@", index, result.copied * 100, result.live * 100, item.name))
+        }
+
+        var report: [String] = []
+        func say(_ line: String) {
+            print(line)
+            report.append(line)
+        }
+        let copiedScores = results.map(\.copied)
+        let liveScores = results.map(\.live)
+        say("Selección de texto: \(results.count) imágenes")
+        say("Acierto medio: copiar \(percent(mean(copiedScores))), Live Text \(percent(mean(liveScores)))")
+        say("Peor caso: copiar \(percent(copiedScores.min() ?? 0)), Live Text \(percent(liveScores.min() ?? 0))")
+        for scale in [1, 2] {
+            let group = results.filter { $0.item.scale == scale }
+            say("\(scale)x: copiar \(percent(mean(group.map(\.copied)))), Live Text \(percent(mean(group.map(\.live))))")
+        }
+
+        for entry in thresholds {
+            let group = results.filter { $0.item.category == entry.category }
+            let copiedMean = mean(group.map(\.copied))
+            let liveMean = mean(group.map(\.live))
+            let worst = group.map(\.worst).min() ?? 0
+            say("\(entry.category): copiar \(percent(copiedMean)), Live Text \(percent(liveMean)), peor \(percent(worst)), mínimo \(percent(entry.minimum))")
+            check(!group.isEmpty && copiedMean >= entry.minimum, "copiar texto, \(entry.category): \(percent(copiedMean))")
+            // Live Text usa otro modelo y parte las líneas a su manera: se le dan cinco puntos de margen.
+            check(!group.isEmpty && liveMean >= entry.minimum - 0.05, "Live Text, \(entry.category): \(percent(liveMean))")
+        }
+        check(mean(copiedScores) >= 0.92, "acierto medio al copiar texto (\(percent(mean(copiedScores))))")
+        check((copiedScores.min() ?? 0) >= 0.6, "ninguna imagen se lee mal del todo (\(percent(copiedScores.min() ?? 0)))")
+        for scale in [1, 2] {
+            let group = results.filter { $0.item.scale == scale }.map(\.copied)
+            check(mean(group) >= 0.9, "acierto medio en capturas \(scale)x (\(percent(mean(group))))")
+        }
+
+        // Las tildes y la eñe son lo primero que se pierde.
+        let marks = Set("áéíóúüñÁÉÍÓÚÜÑ¿¡")
+        var expectedMarks = 0
+        var foundMarks = 0
+        for result in results where result.item.category == "español" || result.item.category == "varias líneas" {
+            let wanted = Array(result.item.expected).filter { marks.contains($0) }
+            var read = Array(result.copiedText).filter { marks.contains($0) }
+            expectedMarks += wanted.count
+            for mark in wanted {
+                if let place = read.firstIndex(of: mark) {
+                    read.remove(at: place)
+                    foundMarks += 1
+                }
+            }
+        }
+        let keptMarks = Double(foundMarks) / Double(max(expectedMarks, 1))
+        say("Tildes y eñes conservadas: \(percent(keptMarks)) de \(expectedMarks)")
+        check(keptMarks >= 0.85, "se conservan las tildes y la eñe (\(percent(keptMarks)))")
+
+        let worst = results.sorted { $0.worst < $1.worst }.prefix(3)
+        for (index, result) in worst.enumerated() {
+            say("Peor \(index + 1): \(result.item.name), \(percent(result.worst))")
+            say("  esperado: \(result.item.expected.replacingOccurrences(of: "\n", with: " | "))")
+            say("  copiado: \(result.copiedText.replacingOccurrences(of: "\n", with: " | "))")
+            say("  Live Text: \(result.liveText.replacingOccurrences(of: "\n", with: " | "))")
+            if let rep = result.image.representations.compactMap({ $0 as? NSBitmapImageRep }).first {
+                try? rep.representation(using: .png, properties: [:])?
+                    .write(to: output.appendingPathComponent("texto-peor-\(index + 1).png"))
+            }
+        }
+        try? report.joined(separator: "\n").write(to: output.appendingPathComponent("texto-resumen.txt"), atomically: true, encoding: .utf8)
+    }
+
+    private static func pngFile(_ image: NSImage, pixels: CGImage) -> URL {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("texto-\(UUID().uuidString).png")
+        _ = Capture.writePNG(pixels, to: url, pointSize: image.size)
+        return url
+    }
+
+    // MARK: - Repaso de funciones
+
+    private static func until(_ seconds: Double = 4, _ condition: () -> Bool) async -> Bool {
+        let limit = Date().addingTimeInterval(seconds)
+        while !condition() {
+            guard Date() < limit else { return false }
+            await wait(0.02)
+        }
+        return true
+    }
+
+    private static func isRed(_ color: NSColor?) -> Bool {
+        let rgb = color?.usingColorSpace(.sRGB)
+        return (rgb?.redComponent ?? 0) > 0.8 && (rgb?.greenComponent ?? 1) < 0.3
+    }
+
+    private static func representation(of url: URL?) -> NSBitmapImageRep? {
+        url.flatMap { try? Data(contentsOf: $0) }.flatMap { NSBitmapImageRep(data: $0) }
+    }
+
+    /// Un editor de 600 × 400 a escala 2 con una flecha roja que pasa por (80, 70).
+    private static func markedEditor() -> AnnotationEditor {
+        let editor = AnnotationEditor(image: demoImage(width: 600, height: 400), file: pngFile(demoImage(width: 600, height: 400)))
+        let red = NSColor(srgbRed: 1, green: 0, blue: 0, alpha: 1)
+        editor.canvas.add(Annotation(tool: .arrow, color: red, lineWidth: 6, points: [CGPoint(x: 40, y: 50), CGPoint(x: 120, y: 90)]))
+        return editor
+    }
+
+    private static func hasMark(_ rep: NSBitmapImageRep?) -> Bool {
+        guard let rep else { return false }
+        return isRed(rep.colorAt(x: 160, y: rep.pixelsHigh - 140))
+    }
+
+    /// El panel Fondo de principio a fin: se elige, se exporta, se guarda el proyecto y se vuelve a abrir.
+    private static func backgroundFlowTests(_ app: AppDelegate) async {
+        let editor = markedEditor()
+        editor.show()
+        check(!editor.testPanel.testIsBuilt, "el panel Fondo no se construye hasta abrirlo")
+        editor.testOpenBackgroundPanel(gradient: 3)
+        await wait(0.9)
+        check(editor.testPanel.testChosenGradient == 3, "el panel marca el degradado elegido")
+        check(editor.canvas.document.backdrop?.kind == .gradient, "elegir un degradado lo aplica al lienzo")
+        check(await until { editor.testPanel.testHasBlurSwatch }, "la muestra difuminada llega sin frenar el panel")
+
+        let exported = editor.canvas.exportPNG().flatMap { NSBitmapImageRep(data: $0) }
+        check(exported?.pixelsWide == 1456 && exported?.pixelsHigh == 1056, "con fondo, la exportación crece su margen (\(exported?.pixelsWide ?? 0)×\(exported?.pixelsHigh ?? 0))")
+        check(isRed(exported?.colorAt(x: 288, y: 1056 - 268)), "la marca sale en su sitio sobre el fondo exportado")
+        let corner = exported?.colorAt(x: 4, y: 4)?.usingColorSpace(.sRGB)
+        check((corner?.alphaComponent ?? 0) > 0.99, "el degradado llena la esquina exportada")
+
+        let steps = editor.canvas.historyCount
+        editor.testPanel.testSetMargin(120)
+        check(editor.canvas.document.backdrop?.margin == 120 && editor.canvas.historyCount == steps + 1, "el deslizador de margen aplica el cambio en un paso")
+        check(editor.canvas.exportPNG().flatMap { NSBitmapImageRep(data: $0) }?.pixelsWide == 1680, "el margen nuevo sale en la exportación")
+
+        let project = FileManager.default.temporaryDirectory.appendingPathComponent("fondo-\(UUID().uuidString).zas")
+        try? editor.canvas.projectData()?.write(to: project)
+        if let reopened = app.testOpenProject(project) {
+            check(reopened.canvas.document.backdrop == editor.canvas.document.backdrop, "el proyecto reabierto conserva el fondo")
+            check(reopened.canvas.document.annotations.count == 1, "el proyecto reabierto conserva la marca")
+            let again = reopened.canvas.exportPNG().flatMap { NSBitmapImageRep(data: $0) }
+            check(again?.pixelsWide == 1680 && again?.pixelsHigh == 1280, "el proyecto reabierto exporta igual")
+            reopened.testShowBackgroundPanel()
+            check(reopened.testPanel.testChosenGradient == 3, "al reabrir, el panel muestra el degradado guardado")
+            await wait(0.2)
+            reopened.testCloseEditor()
+        } else {
+            check(false, "se reabre el proyecto con fondo")
+        }
+
+        editor.testPanel.testChooseBlur()
+        check(editor.canvas.document.backdrop?.kind == .ownBlur, "se puede elegir la captura difuminada")
+        check(editor.canvas.exportPNG() != nil, "el fondo difuminado se exporta")
+        editor.testPanel.testChooseTransparent()
+        let clear = editor.canvas.exportPNG().flatMap { NSBitmapImageRep(data: $0) }
+        check((clear?.colorAt(x: 2, y: 2)?.alphaComponent ?? 1) < 0.01, "el fondo transparente sale transparente")
+        editor.testPanel.testChooseNone()
+        check(editor.canvas.document.backdrop == nil, "Ninguno quita el fondo")
+        check(editor.canvas.exportPNG().flatMap { NSBitmapImageRep(data: $0) }?.pixelsWide == 1200, "sin fondo, la exportación vuelve a su tamaño")
+        check(editor.canvas.document.annotations.count == 1, "cambiar de fondo nunca toca la marca")
+        await wait(0.2)
+        editor.testCloseEditor()
+    }
+
+    /// Cada salida del editor debe llevar las marcas: copiar, ruta, fijar, Arrástrame, Compartir, guardar y Listo.
+    private static func editorOutputTests() async {
+        let pasteboard = NSPasteboard.general
+        let editor = markedEditor()
+        editor.show()
+        await wait(0.2)
+
+        pasteboard.clearContents()
+        editor.testQuickCopy()
+        check(await until { pasteboard.data(forType: .png) != nil }, "Copiar sin cerrar llena el portapapeles")
+        check(hasMark(pasteboard.data(forType: .png).flatMap { NSBitmapImageRep(data: $0) }), "lo copiado lleva las marcas")
+        check(pasteboard.types?.contains(.tiff) == true, "lo copiado también se ofrece como TIFF")
+
+        editor.testCopyPath()
+        let path = pasteboard.string(forType: .string) ?? ""
+        check(path.contains("anotada") && hasMark(representation(of: URL(fileURLWithPath: path))), "la ruta copiada es de una copia con las marcas")
+        editor.testCopyPath()
+        check(pasteboard.string(forType: .string) == path, "sin cambios, la ruta no crea otra copia")
+
+        let pinned = AnnotationEditor.testPinCount()
+        editor.testPin()
+        check(AnnotationEditor.testPinCount() == pinned + 1, "Fijar deja la imagen en pantalla")
+        AnnotationEditor.testClosePins()
+
+        // El arrastre real pide un ratón: aquí se prueba lo que recibe la otra app.
+        let dragged = editor.testDragFile()
+        check(dragged?.lastPathComponent.contains("anotada") == true && hasMark(representation(of: dragged)), "Arrástrame entrega el archivo con las marcas")
+        let writable = (dragged as NSURL?)?.writableTypes(for: .general) ?? []
+        check(writable.contains(.fileURL), "Arrástrame se puede soltar como archivo")
+
+        // El selector abre un menú del sistema que detendría la prueba: se revisa lo que recibiría.
+        let items = editor.testShareItems() ?? []
+        check((items.first as? URL).map { hasMark(representation(of: $0)) } == true, "Compartir recibe el archivo con las marcas")
+        check(items.count == 1, "Compartir recibe una sola imagen")
+        _ = NSSharingServicePicker(items: items)
+
+        let saved = Set(Recents.files(limit: 500))
+        editor.testSaveCopy()
+        let newFile = Set(Recents.files(limit: 500)).subtracting(saved).first
+        check(newFile?.lastPathComponent.contains("anotada") == true && hasMark(representation(of: newFile)), "⌘S guarda una copia con las marcas")
+
+        let finished = ValueBox(0)
+        let finalFile = ValueBox<URL?>(nil)
+        editor.onFinish = { _, file in
+            finished.value += 1
+            finalFile.value = file
+        }
+        pasteboard.clearContents()
+        // Enter pulsado dos veces: una sola imagen.
+        editor.testFinish()
+        editor.testFinish()
+        check(await until { finished.value > 0 }, "Listo termina")
+        await wait(0.2)
+        check(finished.value == 1, "Listo pulsado dos veces guarda una sola vez")
+        check(hasMark(representation(of: finalFile.value)), "Listo guarda el resultado con las marcas")
+        check(pasteboard.data(forType: .png) != nil, "Listo deja la imagen copiada")
+        check(!editor.testWindow.isVisible, "Listo cierra el editor")
+    }
+
+    private static func editorControlTests() async {
+        let editor = markedEditor()
+        editor.show()
+        await wait(0.3)
+
+        for tool in AnnotationTool.allCases where !tool.key.isEmpty {
+            editor.testKeyDown(tool.key.lowercased())
+            check(editor.canvas.tool == tool, "la tecla \(tool.key) elige \(tool.label)")
+        }
+        let chosen = editor.canvas.tool
+        editor.testKeyDown("")
+        check(editor.canvas.tool == chosen, "una tecla muerta no elige la herramienta Imagen")
+        editor.testKeyDown("a")
+
+        Design.testReduceMotion = true
+        editor.testZoomPreset(200)
+        check(editor.testZoomLabel == "200%", "el zoom del menú cuenta sobre el tamaño real (\(editor.testZoomLabel ?? "nada"))")
+        editor.testZoomPreset(100)
+        check(editor.testZoomLabel == "100%", "el zoom vuelve al 100 %")
+        Design.testReduceMotion = nil
+
+        // Ventana al mínimo: nada se pisa y el lienzo sigue dentro.
+        let window = editor.testWindow
+        window.setContentSize(window.minSize)
+        await wait(0.2)
+        check(editor.testBarOverlaps == 0, "con el ancho mínimo, los controles no se pisan (\(editor.testBarOverlaps))")
+        check(editor.testCanvasArea.height == (window.contentView?.bounds.height ?? 0) - Design.editorBar - Design.editorBottomBar, "con el alto mínimo, el lienzo llena su sitio")
+        editor.testShowBackgroundPanel()
+        await wait(0.9)
+        check(editor.testCanvasArea.width == window.minSize.width - BackgroundPanel.width, "con el panel abierto y la ventana mínima, el lienzo se adapta")
+        editor.testCloseBackgroundPanel()
+        await wait(0.9)
+
+        editor.testTextMode()
+        check(editor.testTextPaneScaling == .scaleProportionallyDown, "seleccionar texto no agranda una captura pequeña")
+        editor.testTextMode()
+        await wait(0.2)
+        editor.testCloseEditor()
+
+        let wide = demoImage(scale: 1, width: 120, height: 80)
+        let flipped = ImageTools.flipped(wide, horizontally: true)
+        let flippedRep = flipped?.cgImage(forProposedRect: nil, context: nil, hints: nil).map { NSBitmapImageRep(cgImage: $0) }
+        let original = wide.representations.compactMap { $0 as? NSBitmapImageRep }.first
+        let left = original?.colorAt(x: 2, y: 40)?.usingColorSpace(.sRGB)
+        let right = flippedRep?.colorAt(x: 117, y: 40)?.usingColorSpace(.sRGB)
+        check(abs((left?.redComponent ?? 9) - (right?.redComponent ?? 0)) < 0.05, "voltear pasa la izquierda a la derecha")
+    }
+
+    private static func reopenTests(_ app: AppDelegate) async {
+        let pasteboard = NSPasteboard.general
+        let samples = historySamples()
+        defer { samples.forEach { try? FileManager.default.removeItem(at: $0) } }
+
+        Settings.shared.thumbnailSeconds = 60
+        pasteboard.clearContents()
+        app.testReopen(samples[0])
+        check(pasteboard.data(forType: .png) != nil, "abrir una captura del historial la copia")
+        check(app.testCardCount == 1, "abrir una captura del historial saca su tarjeta")
+
+        if let gif = samples.last {
+            app.testReopen(gif)
+            let urls = pasteboard.readObjects(forClasses: [NSURL.self]) as? [URL]
+            check(urls?.first?.lastPathComponent == gif.lastPathComponent, "abrir un GIF copia el archivo, con su movimiento")
+        }
+        let cards = app.testCardCount
+        app.testReopen(URL(fileURLWithPath: "/tmp/zas-no-existe-\(UUID().uuidString).png"))
+        check(app.testCardCount == cards, "un archivo borrado solo avisa")
+        Toast.shared.hide()
+
+        if let video = Recents.files(limit: 500).first(where: { HistoryFilter.videos.includes($0) }) {
+            app.testReopen(video)
+            check(await until { app.testCardCount == cards + 1 }, "abrir un video del historial saca su tarjeta")
+        } else {
+            check(false, "hay un video para abrir desde el historial")
+        }
+        app.testDismissCards()
+        Settings.shared.thumbnailSeconds = 6
+
+        let history = HistoryController { _ in }
+        history.reload()
+        // Se compara por nombre: la carpeta temporal puede llegar como /var o como /private/var.
+        let trashed = samples[0]
+        check(history.model.visible.contains { $0.lastPathComponent == trashed.lastPathComponent }, "el historial lista el archivo")
+        try? FileManager.default.removeItem(at: trashed)
+        history.reload()
+        check(!history.model.visible.contains { $0.lastPathComponent == trashed.lastPathComponent }, "lo que se borra sale del historial")
+
+        let strip = RecentsStripView()
+        strip.reload(Array(samples.dropFirst().prefix(4)))
+        check(await until { strip.testTileImages == 4 }, "el menú llena sus cuatro recientes sin esperar en el hilo principal")
+    }
+
+    private static func qrFlowTests() async {
+        let payload = "https://ejemplo.test/zas?pedido=1045"
+        guard let tiny = qrFile(payload, pixels: 3) else {
+            check(false, "genera un código QR pequeño")
+            return
+        }
+        let small = await scan(tiny)
+        check(small.code == payload, "lee un código QR pequeño (\(small.code ?? "nada"))")
+
+        // Un QR dentro de una pantalla con texto: es lo que pasa de verdad.
+        guard let qr = qrFile(payload), let code = NSImage(contentsOf: qr) else {
+            check(false, "genera un código QR de prueba")
+            return
+        }
+        let image = demoImage(scale: 2, width: 900, height: 560)
+        let combined = NSImage(size: image.size)
+        combined.lockFocus()
+        image.draw(in: CGRect(origin: .zero, size: image.size))
+        code.draw(in: CGRect(x: 600, y: 20, width: 280, height: 280))
+        combined.unlockFocus()
+        let tiff = combined.tiffRepresentation.flatMap { NSBitmapImageRep(data: $0) }
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("qr-texto-\(UUID().uuidString).png")
+        try? tiff?.representation(using: .png, properties: [:])?.write(to: url)
+        let both = await scan(url)
+        check(both.code == payload, "encuentra el QR entre el texto")
+        check(both.text.contains("Pedidos de hoy"), "también lee el texto de alrededor")
+        check(both.clipboardText == payload, "el QR manda sobre el texto que lo rodea")
+        check(TextScan(text: "hola", code: nil).clipboardText == "hola", "sin QR se copia el texto")
+    }
+
+    /// Un cuadro al nivel de los iconos hace de icono: con la cubierta encendida no debe salir en la captura.
+    private static func desktopIconTests() async {
+        let screen = NSScreen.screens[0]
+        let selection = Selection(screen: screen, rect: CGRect(x: 40, y: 200, width: 120, height: 80))
+        let icon = colorPanel(selection.appKitRect, NSColor(srgbRed: 1, green: 0, blue: 1, alpha: 1))
+        icon.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.desktopIconWindow)))
+        icon.orderFrontRegardless()
+        await wait(0.4)
+
+        func iconIsVisible() async -> Bool {
+            let url = Capture.temporaryFileURL()
+            _ = await capture(selection.captureArguments, to: url)
+            let rep = representation(of: url)
+            let center = rep?.colorAt(x: (rep?.pixelsWide ?? 0) / 2, y: (rep?.pixelsHigh ?? 0) / 2)?.usingColorSpace(.sRGB)
+            try? FileManager.default.removeItem(at: url)
+            return (center?.redComponent ?? 0) > 0.8 && (center?.greenComponent ?? 1) < 0.3 && (center?.blueComponent ?? 0) > 0.8
+        }
+
+        if await iconIsVisible() {
+            let cover = DesktopCover()
+            cover.setOn(true)
+            check(await until { !cover.testWindows.isEmpty }, "la cubierta aparece")
+            await wait(0.4)
+            let hidden = await iconIsVisible()
+            check(!hidden, "con Ocultar iconos, lo que está al nivel de los iconos no sale en la captura")
+            cover.setOn(false)
+            await wait(0.3)
+            let back = await iconIsVisible()
+            check(back, "al apagarlo, los iconos vuelven")
+        } else {
+            // Una ventana del sistema tapa esa esquina del escritorio virtual.
+            print("sin comprobar: algo tapa el escritorio en esta máquina")
+        }
+        icon.orderOut(nil)
+    }
+
+    private static func picture(of view: NSView) -> Data? {
+        guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return nil }
+        view.cacheDisplay(in: view.bounds, to: rep)
+        return rep.tiffRepresentation
+    }
+
+    private static func interactionTests() async {
+        let pill = PillControl(content: .text("Hola"), width: 80, tooltip: "Prueba", target: nil, action: nil)
+        let resting = picture(of: pill)
+        pill.testSetHovering(true)
+        let hovered = picture(of: pill)
+        pill.testSetPressed(true)
+        let pressed = picture(of: pill)
+        pill.testSetPressed(false)
+        pill.testSetHovering(false)
+        check(resting != nil && hovered != resting && pressed != hovered, "la píldora cambia al pasar el cursor y al pulsarla")
+
+        let glass = GlassButton(symbol: "pause", tooltip: "Prueba", target: nil, action: nil)
+        let glassResting = glass.testFill
+        glass.testSetHovering(true)
+        let glassHovered = glass.testFill
+        glass.testSetPressed(true)
+        let glassPressed = glass.testFill
+        check(glassHovered != glassResting && glassPressed != glassHovered, "el botón de vidrio cambia al pasar el cursor y al pulsarlo")
+
+        // Un solo resorte, con la duración prometida.
+        check(Design.springResponse == 0.42 && Design.springDamping == 0.86, "el resorte de Design es el decidido")
+        let steps = ValueBox<[CGFloat]>([])
+        Design.testReduceMotion = true
+        Spring.run(step: { steps.value.append($0) })
+        check(steps.value == [1], "con Reducir movimiento se llega al destino sin viaje")
+        Design.testReduceMotion = false
+
+        let started = Date()
+        let ended = ValueBox<Date?>(nil)
+        Spring.run(step: { steps.value.append($0) }, completion: { ended.value = Date() })
+        check(await until(2) { ended.value != nil }, "el resorte termina")
+        let length = ended.value?.timeIntervalSince(started) ?? 0
+        check(length > 0.6 && length < 0.95, "el resorte dura lo debido (\(String(format: "%.2f", length)) s)")
+        check(steps.value.count > 10 && steps.value.last == 1, "el resorte pasa por cuadros intermedios y acaba en su destino")
+        Design.testReduceMotion = nil
+
+        // Ajustes se adapta a una pantalla baja.
+        let windows = WindowCoordinator()
+        keepAlive.append(windows)
+        windows.showSettings()
+        await wait(0.3)
+        if let window = windows.testSettingsWindow {
+            check(window.styleMask.contains(.resizable), "Ajustes se puede cambiar de tamaño")
+            window.setContentSize(window.minSize)
+            await wait(0.3)
+            check(window.frame.width == window.minSize.width && window.frame.height < Design.SettingsWindow.size.height, "Ajustes llega a su tamaño mínimo")
+            check(window.contentView?.subviews.first?.frame.size == window.contentView?.bounds.size, "el contenido de Ajustes sigue a la ventana")
+        } else {
+            check(false, "se abre Ajustes")
+        }
+        windows.closeAll()
+    }
+
+    private static func functionalTests() async {
+        let app = AppDelegate()
+        keepAlive.append(app)
+        await backgroundFlowTests(app)
+        await editorOutputTests()
+        await editorControlTests()
+        await reopenTests(app)
+        await qrFlowTests()
+        await desktopIconTests()
+        await interactionTests()
+    }
+
+    // MARK: - Responsividad
+
+    private static func milliseconds(since start: Date) -> Double {
+        Date().timeIntervalSince(start) * 1000
+    }
+
+    private static func middle(_ values: [Double]) -> Double {
+        let sorted = values.sorted()
+        return sorted.isEmpty ? 0 : sorted[sorted.count / 2]
+    }
+
+    private static func ninetyFifth(_ values: [Double]) -> Double {
+        let sorted = values.sorted()
+        return sorted.isEmpty ? 0 : sorted[min(sorted.count * 95 / 100, sorted.count - 1)]
+    }
+
+    private static func timing(_ value: Double) -> String {
+        String(format: "%.0f ms", value)
+    }
+
+    /// PNG de una pantalla Retina con la densidad mal anotada, como a veces lo deja `screencapture`:
+    /// es el peor caso, porque obliga a volver a codificarlo.
+    private static func heavyCaptureFile() -> URL? {
+        guard let rep = demoImage(scale: 2, width: 1440, height: 900).representations.compactMap({ $0 as? NSBitmapImageRep }).first else {
+            return nil
+        }
+        rep.size = NSSize(width: rep.pixelsWide, height: rep.pixelsHigh)
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("pesada-\(UUID().uuidString).png")
+        return (try? rep.representation(using: .png, properties: [:])?.write(to: url)) != nil ? url : nil
+    }
+
+    /// Los topes son para la máquina virtual de GitHub, sin GPU y con tres núcleos: un Mac real va varias veces más rápido.
+    private static func responsivenessTests() async {
+        CGWarpMouseCursorPosition(CGPoint(x: 300, y: 300))
+        await wait(0.2)
+
+        // Atajo a selección visible.
+        var selectionTimes: [Double] = []
+        for _ in 0..<5 {
+            let overlay = SelectionOverlay()
+            let start = Date()
+            overlay.begin(mode: .screenshot) { _ in }
+            CATransaction.flush()
+            _ = await until(1) { overlay.testIsShowing }
+            selectionTimes.append(milliseconds(since: start))
+            overlay.cancel()
+            await wait(0.15)
+        }
+        print("tiempo: atajo a selección \(timing(middle(selectionTimes))), peor \(timing(selectionTimes.max() ?? 0))")
+        check(middle(selectionTimes) <= 150, "del atajo a la selección visible (\(timing(middle(selectionTimes))))")
+
+        // Captura a tarjeta.
+        Settings.shared.thumbnailSeconds = 60
+        let thumbs = ThumbnailController()
+        let probe = StallProbe()
+        var cardTimes: [Double] = []
+        var cardStalls: [Double] = []
+        var springStalls: [Double] = []
+        if let heavy = heavyCaptureFile() {
+            let pointSize = CGSize(width: 1440, height: 900)
+            for _ in 0..<5 {
+                let url = FileManager.default.temporaryDirectory.appendingPathComponent("tarjeta-\(UUID().uuidString).png")
+                try? FileManager.default.copyItem(at: heavy, to: url)
+                probe.start()
+                let start = Date()
+                guard let prepared = await Capture.prepare(at: url, pointSize: pointSize) else {
+                    check(false, "se prepara la captura")
+                    break
+                }
+                Capture.publish(prepared.data)
+                thumbs.show(image: prepared.image, file: url, kind: .screenshot, from: CGRect(x: 200, y: 200, width: 720, height: 450), preview: prepared.preview)
+                cardTimes.append(milliseconds(since: start))
+                cardStalls.append(probe.stop())
+                // La tarjeta encoge desde la selección: ahí es donde redibujar la imagen entera perdía cuadros.
+                probe.start()
+                await wait(0.7)
+                springStalls.append(probe.stop())
+            }
+            check(thumbs.testDrawnPixels(index: 0) <= 900, "la tarjeta pinta una copia pequeña, no la captura entera (\(thumbs.testDrawnPixels(index: 0)) px)")
+            check(await until { thumbs.testHasVeil(index: 0) }, "el velo de la tarjeta ya está listo antes de pasar el cursor")
+            thumbs.dismissAll()
+            print("tiempo: captura a tarjeta \(timing(middle(cardTimes))), tirón \(timing(cardStalls.max() ?? 0)), resorte \(timing(springStalls.max() ?? 0))")
+            check(middle(cardTimes) <= 400, "de la captura a la tarjeta (\(timing(middle(cardTimes))))")
+            check(middle(cardStalls) <= 120, "terminar una captura no traba la interfaz (\(timing(middle(cardStalls))))")
+            check(middle(springStalls) <= 120, "el resorte de la tarjeta no pierde cuadros (\(timing(middle(springStalls))))")
+        } else {
+            check(false, "se crea la captura pesada")
+        }
+        Settings.shared.thumbnailSeconds = 6
+
+        // Clic a editor abierto.
+        let image = demoImage(scale: 2, width: 1440, height: 900)
+        let file = pngFile(image)
+        var editorTimes: [Double] = []
+        for _ in 0..<5 {
+            let start = Date()
+            let editor = AnnotationEditor(image: image, file: file)
+            editor.show()
+            editor.testWindow.displayIfNeeded()
+            editorTimes.append(milliseconds(since: start))
+            editor.testCloseEditor()
+            await wait(0.2)
+        }
+        print("tiempo: clic a editor \(timing(middle(editorTimes))), peor \(timing(editorTimes.max() ?? 0))")
+        check(middle(editorTimes) <= 300, "del clic al editor abierto (\(timing(middle(editorTimes))))")
+
+        // Arrastre en un lienzo con doscientas marcas.
+        let editor = AnnotationEditor(image: image, file: file)
+        var dice = SeededNumbers(state: 0x5A41_5320_4D41_5243)
+        for index in 0..<199 {
+            let x = dice.unit() * 1300 + 40
+            let y = dice.unit() * 780 + 40
+            let tint = dice.pick([NSColor.systemRed, .systemBlue, .systemGreen, .systemOrange])
+            switch index % 5 {
+            case 0:
+                editor.canvas.add(Annotation(tool: .rectangle, color: tint, lineWidth: 4, points: [CGPoint(x: x, y: y), CGPoint(x: x + 80, y: y + 50)]))
+            case 1:
+                editor.canvas.add(Annotation(tool: .arrow, color: tint, lineWidth: 5, points: [CGPoint(x: x, y: y), CGPoint(x: x + 90, y: y + 40)]))
+            case 2:
+                editor.canvas.add(Annotation(tool: .text, color: tint, lineWidth: 4, points: [CGPoint(x: x, y: y)], text: "Marca \(index)"))
+            case 3:
+                editor.canvas.add(Annotation(tool: .counter, color: tint, lineWidth: 5, points: [CGPoint(x: x, y: y)], number: index))
+            default:
+                let stroke = (0..<30).map { CGPoint(x: x + CGFloat($0) * 3, y: y + sin(CGFloat($0)) * 8) }
+                editor.canvas.add(Annotation(tool: .pencil, color: tint, lineWidth: 3, points: stroke))
+            }
+        }
+        editor.canvas.add(Annotation(tool: .rectangle, color: .systemPink, lineWidth: 5, points: [CGPoint(x: 400, y: 300), CGPoint(x: 520, y: 380)]))
+        check(editor.canvas.document.annotations.count == 200, "el lienzo tiene doscientas marcas")
+        editor.show()
+        editor.testWindow.displayIfNeeded()
+        await wait(0.3)
+
+        var dragTimes: [Double] = []
+        _ = editor.canvas.beginDrag(at: CGPoint(x: 460, y: 340))
+        for step in 0..<120 {
+            let target = CGPoint(x: 460 + CGFloat(step) * 4, y: 340 + sin(CGFloat(step) * 0.2) * 120)
+            let start = Date()
+            editor.canvas.continueDrag(to: target)
+            editor.testWindow.displayIfNeeded()
+            dragTimes.append(milliseconds(since: start))
+        }
+        editor.canvas.endDrag()
+        print("tiempo: arrastre con 200 marcas, mitad \(timing(middle(dragTimes))), p95 \(timing(ninetyFifth(dragTimes)))")
+        check(ninetyFifth(dragTimes) <= 33, "arrastrar con doscientas marcas va a 30 cuadros o más (p95 \(timing(ninetyFifth(dragTimes))))")
+
+        // Censurar por primera vez: calcular la versión pixelada no debe frenar el dibujo.
+        let plain = editor.canvas.exportPNG()
+        let start = Date()
+        editor.canvas.add(Annotation(tool: .pixelate, color: .red, lineWidth: 5, points: [CGPoint(x: 100, y: 100), CGPoint(x: 500, y: 300)], smoothBlur: true))
+        editor.testWindow.displayIfNeeded()
+        let censorTime = milliseconds(since: start)
+        print("tiempo: primera censura \(timing(censorTime))")
+        check(censorTime <= 100, "censurar no frena el dibujo (\(timing(censorTime)))")
+        check(editor.canvas.exportPNG() != plain, "lo censurado sale en la exportación aunque se pida enseguida")
+        await wait(0.3)
+        editor.testCloseEditor()
+
+        // Leer texto no ocupa el hilo principal.
+        let snapshot = AnnotationCanvas(frame: CGRect(x: 0, y: 0, width: 1440, height: 900), image: image).textSnapshot()
+        if let snapshot {
+            probe.start()
+            _ = await scan(image: snapshot.pixels)
+            let stall = probe.stop()
+            print("tiempo: tirón al leer texto \(timing(stall))")
+            check(stall <= 120, "leer texto no traba la interfaz (\(timing(stall)))")
         }
     }
 }

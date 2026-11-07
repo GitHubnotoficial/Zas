@@ -253,7 +253,10 @@ final class SelectionOverlay {
                         continuation.resume()
                     }
                 }
-                view.setFrozen(Capture.image(at: url))
+                let frozen = await Task.detached(priority: .userInitiated) {
+                    Unchecked(value: Capture.image(at: url))
+                }.value
+                view.setFrozen(frozen.value)
                 try? FileManager.default.removeItem(at: url)
                 panel.alphaValue = 1
             }
@@ -298,6 +301,9 @@ final class SelectionOverlay {
     func testFreeze() {
         freeze()
     }
+
+    /// La pantalla oscurecida ya está en pantalla.
+    var testIsShowing: Bool { !panels.isEmpty && panels.allSatisfy(\.isVisible) }
 
     func testChoose(mode: SelectionMode) {
         choose(mode: mode)

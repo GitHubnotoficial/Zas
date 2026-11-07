@@ -55,6 +55,81 @@ enum Design {
     static let edgeMargin: CGFloat = 18
     static let stackGap: CGFloat = 10
     static let actionSize: CGFloat = 32
+
+    /// El resorte de toda la app, también en SwiftUI.
+    static let springResponse = 0.42
+    static let springDamping = 0.86
+    /// Salir por el borde va más rápido que entrar: lo que se va ya no importa.
+    static let exitResponse = 0.34
+
+    /// Las pruebas lo fijan para ver los dos caminos. El sistema manda en todo lo demás.
+    @MainActor
+    static var reduceMotion: Bool {
+        #if ZAS_TEST
+        if let testReduceMotion { return testReduceMotion }
+        #endif
+        return NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+    }
+
+    #if ZAS_TEST
+    @MainActor static var testReduceMotion: Bool?
+    #endif
+}
+
+/// Botón propio con sus dos estados inmediatos: cursor encima y pulsado.
+/// Las subclases pintan cada estado; aquí solo se sigue al ratón.
+class ReactiveButton: NSButton {
+    private(set) var isHovering = false
+    private(set) var isPressed = false
+    private var hoverArea: NSTrackingArea?
+
+    /// Se llama en cuanto cambia cualquiera de los dos estados.
+    func reactiveStateChanged() {
+        needsDisplay = true
+    }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverArea {
+            removeTrackingArea(hoverArea)
+        }
+        let area = NSTrackingArea(rect: .zero, options: [.activeAlways, .inVisibleRect, .mouseEnteredAndExited], owner: self, userInfo: nil)
+        addTrackingArea(area)
+        hoverArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        isHovering = true
+        reactiveStateChanged()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isHovering = false
+        reactiveStateChanged()
+    }
+
+    /// `NSButton` sigue al ratón dentro de `mouseDown`: vuelve de ahí al soltar.
+    override func mouseDown(with event: NSEvent) {
+        isPressed = true
+        reactiveStateChanged()
+        super.mouseDown(with: event)
+        isPressed = false
+        reactiveStateChanged()
+    }
+
+    #if ZAS_TEST
+    func testSetHovering(_ value: Bool) {
+        isHovering = value
+        reactiveStateChanged()
+    }
+
+    func testSetPressed(_ value: Bool) {
+        isPressed = value
+        reactiveStateChanged()
+    }
+    #endif
 }
 
 /// Vidrio del sistema con esquinas redondeadas y un filo de luz.
@@ -98,7 +173,7 @@ final class GlassView: NSVisualEffectView {
 }
 
 /// Botón redondeado de una barra de vidrio.
-final class GlassButton: NSButton {
+final class GlassButton: ReactiveButton {
     var isActive = false {
         didSet { refresh() }
     }
@@ -107,9 +182,6 @@ final class GlassButton: NSButton {
     var activeColor: NSColor = Palette.accent {
         didSet { refresh() }
     }
-
-    private var hovering = false
-    private var hoverArea: NSTrackingArea?
 
     init(symbol: String, tooltip: String, target: AnyObject?, action: Selector?, size: CGFloat = Design.actionSize) {
         super.init(frame: CGRect(x: 0, y: 0, width: size, height: size))
@@ -132,30 +204,12 @@ final class GlassButton: NSButton {
         fatalError("init(coder:) no se usa")
     }
 
-    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        if let hoverArea {
-            removeTrackingArea(hoverArea)
-        }
-        let area = NSTrackingArea(rect: .zero, options: [.activeAlways, .inVisibleRect, .mouseEnteredAndExited], owner: self, userInfo: nil)
-        addTrackingArea(area)
-        hoverArea = area
-    }
-
-    override func mouseEntered(with event: NSEvent) {
-        hovering = true
-        refresh()
-    }
-
-    override func mouseExited(with event: NSEvent) {
-        hovering = false
-        refresh()
-    }
-
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
+        refresh()
+    }
+
+    override func reactiveStateChanged() {
         refresh()
     }
 
@@ -163,10 +217,19 @@ final class GlassButton: NSButton {
         contentTintColor = isActive ? .alternateSelectedControlTextColor : .labelColor
         setAccessibilityValue(isActive ? "Activo" : nil)
         effectiveAppearance.performAsCurrentDrawingAppearance {
-            let fill: NSColor = isActive ? activeColor : (hovering && isEnabled ? .quaternaryLabelColor : .clear)
+            var fill: NSColor = isActive ? activeColor : .clear
+            if isPressed, isEnabled {
+                fill = isActive ? activeColor.withAlphaComponent(0.75) : .tertiaryLabelColor
+            } else if isHovering, isEnabled, !isActive {
+                fill = .quaternaryLabelColor
+            }
             layer?.backgroundColor = fill.cgColor
         }
     }
+
+    #if ZAS_TEST
+    var testFill: CGColor? { layer?.backgroundColor }
+    #endif
 }
 
 /// Resorte amortiguado: lo que hace que algo se sienta como un objeto con peso.
@@ -184,13 +247,13 @@ enum Spring {
     @MainActor
     @discardableResult
     static func run(
-        response: Double = 0.42,
-        damping: Double = 0.86,
+        response: Double = Design.springResponse,
+        damping: Double = Design.springDamping,
         step: @escaping @MainActor (CGFloat) -> Void,
         completion: (@MainActor () -> Void)? = nil
     ) -> Timer {
         // Quien pide reducir el movimiento ve el resultado sin el viaje.
-        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+        if Design.reduceMotion {
             step(1)
             completion?()
             return Timer(timeInterval: 0, repeats: false) { _ in }
@@ -394,7 +457,7 @@ enum EditorIcon {
 /// Control de las barras del editor y del panel Fondo. Nunca enseña el borde de `NSButton`:
 /// una cápsula o un rectángulo con un punto de color, un grosor, un icono o un texto.
 /// Con `chevron` avisa de que abre algo.
-final class PillControl: NSButton {
+final class PillControl: ReactiveButton {
     enum Content {
         case dot(NSColor)
         case stroke(CGFloat)
@@ -444,8 +507,6 @@ final class PillControl: NSButton {
     private let radius: CGFloat
     private let raised: Bool
     private let showsChevron: Bool
-    private var hovering = false
-    private var hoverArea: NSTrackingArea?
 
     private var room: CGFloat { raised ? Self.shadowRoom : 0 }
     private var shape: CGRect { bounds.insetBy(dx: room, dy: room) }
@@ -487,28 +548,6 @@ final class PillControl: NSButton {
         return (size.width + padding * 2).rounded(.up)
     }
 
-    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        if let hoverArea {
-            removeTrackingArea(hoverArea)
-        }
-        let area = NSTrackingArea(rect: .zero, options: [.activeAlways, .inVisibleRect, .mouseEnteredAndExited], owner: self, userInfo: nil)
-        addTrackingArea(area)
-        hoverArea = area
-    }
-
-    override func mouseEntered(with event: NSEvent) {
-        hovering = true
-        needsDisplay = true
-    }
-
-    override func mouseExited(with event: NSEvent) {
-        hovering = false
-        needsDisplay = true
-    }
-
     override func drawFocusRingMask() {
         NSBezierPath(roundedRect: shape, xRadius: radius, yRadius: radius).fill()
     }
@@ -542,10 +581,10 @@ final class PillControl: NSButton {
             path.fill()
             NSGraphicsContext.restoreGraphicsState()
         }
-        if isHighlighted {
+        if isHighlighted || isPressed {
             Palette.pressed.setFill()
             path.fill()
-        } else if hovering && isEnabled {
+        } else if isHovering && isEnabled {
             Palette.hover.setFill()
             path.fill()
         }

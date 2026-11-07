@@ -1,10 +1,16 @@
 import AppKit
 import CoreImage
 
+/// Crear un `CIContext` cuesta decenas de milisegundos y mucha memoria.
+/// Hay uno solo para toda la app, y se puede usar desde cualquier hilo.
+enum ImageContext {
+    static let shared = CIContext(options: [.cacheIntermediates: false])
+}
+
 /// Cambios sobre la imagen completa. Conservan la densidad Retina.
 @MainActor
 enum ImageTools {
-    private static func pixels(of image: NSImage) -> (CGImage, CGFloat)? {
+    private nonisolated static func pixels(of image: NSImage) -> (CGImage, CGFloat)? {
         guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
         return (cgImage, CGFloat(cgImage.width) / max(image.size.width, 1))
     }
@@ -96,7 +102,7 @@ enum ImageTools {
     }
 
     /// Pasa un recorte en puntos, con origen abajo, a pixeles con origen arriba.
-    private static func pixelRect(_ rect: CGRect, in image: NSImage, scale: CGFloat) -> CGRect {
+    private nonisolated static func pixelRect(_ rect: CGRect, in image: NSImage, scale: CGFloat) -> CGRect {
         CGRect(
             x: rect.minX * scale,
             y: (image.size.height - rect.maxY) * scale,
@@ -112,22 +118,47 @@ enum ImageTools {
         if let crop, let cropped = source.cropping(to: pixelRect(crop, in: image, scale: scale)) {
             working = cropped
         }
-        // Un difuminado no necesita detalle: a este tamaño se calcula al instante.
-        let factor = min(1, 480 / CGFloat(max(working.width, working.height, 1)))
-        let reduced = CIImage(cgImage: working).transformed(by: CGAffineTransform(scaleX: factor, y: factor))
+        return blurred(working).map { NSImage(cgImage: $0, size: CGSize(width: $0.width, height: $0.height)) }
+    }
+
+    /// Un difuminado no necesita detalle: a este tamaño se calcula al instante.
+    nonisolated static func blurred(_ image: CGImage) -> CGImage? {
+        let factor = min(1, 480 / CGFloat(max(image.width, image.height, 1)))
+        let reduced = CIImage(cgImage: image).transformed(by: CGAffineTransform(scaleX: factor, y: factor))
         let extent = reduced.extent.integral
         let filter = CIFilter(name: "CIGaussianBlur", parameters: [
             kCIInputImageKey: reduced.clampedToExtent(),
             kCIInputRadiusKey: 26,
         ])
-        guard let output = filter?.outputImage?.cropped(to: extent),
-              let result = CIContext().createCGImage(output, from: extent)
-        else { return nil }
-        return NSImage(cgImage: result, size: extent.size)
+        guard let output = filter?.outputImage?.cropped(to: extent) else { return nil }
+        return ImageContext.shared.createCGImage(output, from: extent)
+    }
+
+    /// Velo de una tarjeta: la captura pequeña y difuminada, para que los botones se lean sobre cualquier imagen.
+    nonisolated static func veil(from image: CGImage) -> CGImage? {
+        let scale = min(320 / max(CGFloat(image.width), 1), 1)
+        let small = CIImage(cgImage: image).transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+        let blurred = small.clampedToExtent().applyingGaussianBlur(sigma: 10).cropped(to: small.extent)
+        return ImageContext.shared.createCGImage(blurred, from: small.extent)
+    }
+
+    /// Copia reducida para enseñarla pequeña.
+    nonisolated static func reduced(_ image: CGImage, longestSide: Int) -> CGImage? {
+        let factor = min(CGFloat(longestSide) / CGFloat(max(image.width, image.height, 1)), 1)
+        let width = max(Int(CGFloat(image.width) * factor), 1)
+        let height = max(Int(CGFloat(image.height) * factor), 1)
+        let space = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
+        guard let context = CGContext(
+            data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+            space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+        context.interpolationQuality = .high
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        return context.makeImage()
     }
 
     /// Lee el color del borde y cuánto espacio liso deja la captura en cada lado.
-    static func edgeInfo(of image: NSImage, crop: CGRect) -> EdgeInfo {
+    nonisolated static func edgeInfo(of image: NSImage, crop: CGRect) -> EdgeInfo {
         let fallback = EdgeInfo(color: [1, 1, 1], left: 0, right: 0, top: 0, bottom: 0)
         guard let (source, scale) = pixels(of: image),
               let cropped = source.cropping(to: pixelRect(crop, in: image, scale: scale))
@@ -237,7 +268,7 @@ extension NSColor {
 }
 
 /// Lo que se sabe del contorno de una captura: su color y el espacio liso de cada lado, en puntos.
-struct EdgeInfo: Equatable {
+struct EdgeInfo: Equatable, Sendable {
     var color: [CGFloat]
     var left: CGFloat
     var right: CGFloat

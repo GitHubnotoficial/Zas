@@ -16,6 +16,7 @@ extension Design {
         static let outlineWidth: CGFloat = 2
         static let controlFill = NSColor(white: 1, alpha: 0.85)
         static let controlHover = NSColor.white
+        static let controlPressed = NSColor(white: 0.86, alpha: 1)
         static let ink = NSColor(white: 0.1, alpha: 1)
         static let veil = NSColor.black.withAlphaComponent(0.42)
         /// Sombra propia, más suave y amplia que la del sistema.
@@ -182,7 +183,8 @@ final class ThumbnailController {
         kind: ThumbnailKind,
         text: String? = nil,
         inClipboard: Bool = true,
-        from source: CGRect? = nil
+        from source: CGRect? = nil,
+        preview: NSImage? = nil
     ) {
         screen = NSScreen.underMouse
 
@@ -211,6 +213,7 @@ final class ThumbnailController {
         let view = ThumbnailView(
             frame: CGRect(origin: .zero, size: size),
             image: image,
+            preview: preview,
             file: file,
             kind: kind,
             text: text
@@ -258,7 +261,7 @@ final class ThumbnailController {
             guard let self, let item else { return }
             Capture.copyText(file.path)
             self.items.forEach { $0.view.isInClipboard = false }
-            Capture.playSound()
+            Sounds.play(.copy)
             item.view.flashCopied("Ruta copiada")
         }
         view.onSummarize = { [weak self] in
@@ -343,7 +346,7 @@ final class ThumbnailController {
             return
         }
         items.forEach { $0.view.isInClipboard = $0 === item }
-        Capture.playSound()
+        Sounds.play(.copy)
         view.flashCopied("Copiado")
     }
 
@@ -390,7 +393,7 @@ final class ThumbnailController {
         let start = panel.frame
         let target = exitFrame(from: start)
         leaving.append(panel)
-        Spring.run(response: 0.34, damping: 1, step: { progress in
+        Spring.run(response: Design.exitResponse, damping: 1, step: { progress in
             panel.setFrame(start.moved(to: target, by: progress), display: true)
         }, completion: { [weak self] in
             panel.orderOut(nil)
@@ -538,6 +541,8 @@ final class ThumbnailController {
     func testActionLabels(index: Int) -> [String] { items[index].view.actionLabels }
     func testIsOutlined(index: Int) -> Bool { items[index].view.isOutlined }
     func testHitsButton(index: Int, at point: CGPoint) -> Bool { items[index].view.hitsButton(at: point) }
+    func testHasVeil(index: Int) -> Bool { items[index].view.hasVeil }
+    func testDrawnPixels(index: Int) -> Int { items[index].view.drawnPixels }
     func testSave(index: Int, to url: URL) -> Bool { items[index].view.writeCopy(to: url) }
     func testExitFrame(from frame: CGRect) -> CGRect { exitFrame(from: frame) }
 
@@ -561,10 +566,8 @@ private final class OutlineView: NSView {
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
 
-private final class CardControl: NSButton {
+private final class CardControl: ReactiveButton {
     private let minimumWidth: CGFloat
-    private var hovering = false
-    private var hoverArea: NSTrackingArea?
 
     init(title: String? = nil, symbol: String? = nil, label: String, size: CGSize, target: AnyObject, action: Selector) {
         minimumWidth = size.width
@@ -592,8 +595,6 @@ private final class CardControl: NSButton {
         fatalError("init(coder:) no se usa")
     }
 
-    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-
     /// Un aviso largo, como "Ruta copiada", ensancha la píldora en vez de cortarse.
     func showTitle(_ text: String) {
         let paragraph = NSMutableParagraphStyle()
@@ -607,28 +608,13 @@ private final class CardControl: NSButton {
         frame.size.width = max(minimumWidth, ceil(title.size().width) + Design.Card.pillPadding * 2)
     }
 
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        if let hoverArea {
-            removeTrackingArea(hoverArea)
-        }
-        let area = NSTrackingArea(rect: .zero, options: [.activeAlways, .inVisibleRect, .mouseEnteredAndExited], owner: self, userInfo: nil)
-        addTrackingArea(area)
-        hoverArea = area
-    }
-
-    override func mouseEntered(with event: NSEvent) {
-        hovering = true
-        refresh()
-    }
-
-    override func mouseExited(with event: NSEvent) {
-        hovering = false
+    override func reactiveStateChanged() {
         refresh()
     }
 
     private func refresh() {
-        layer?.backgroundColor = (hovering ? Design.Card.controlHover : Design.Card.controlFill).cgColor
+        let fill = isPressed ? Design.Card.controlPressed : (isHovering ? Design.Card.controlHover : Design.Card.controlFill)
+        layer?.backgroundColor = fill.cgColor
     }
 }
 
@@ -664,6 +650,8 @@ private final class ThumbnailView: NSView, NSDraggingSource {
     let cardSize: CGSize
 
     private let image: NSImage
+    /// Lo que se pinta: una copia pequeña. La tarjeta redibuja en cada cuadro de su resorte.
+    private var shown: NSImage
     private let file: URL
     private let kind: ThumbnailKind
     private let text: String?
@@ -696,8 +684,9 @@ private final class ThumbnailView: NSView, NSDraggingSource {
     var actionCount: Int { controls.count }
     var actionLabels: [String] { controls.compactMap { $0.accessibilityLabel() } }
 
-    init(frame: CGRect, image: NSImage, file: URL, kind: ThumbnailKind, text: String?) {
+    init(frame: CGRect, image: NSImage, preview: NSImage?, file: URL, kind: ThumbnailKind, text: String?) {
         self.image = image
+        shown = preview ?? image
         self.file = file
         self.kind = kind
         self.text = text
@@ -715,6 +704,7 @@ private final class ThumbnailView: NSView, NSDraggingSource {
         buildControls()
         buildOutline()
         layoutCard()
+        prepareImages(needsPreview: preview == nil)
     }
 
     required init?(coder: NSCoder) {
@@ -775,14 +765,30 @@ private final class ThumbnailView: NSView, NSDraggingSource {
     }
 
     /// La propia captura difuminada: se ve en cualquier fondo y no depende de lo que haya detrás del panel.
-    private func paintVeil() {
-        guard veil.layer?.contents == nil,
-              let source = image.cgImage(forProposedRect: nil, context: nil, hints: nil)
-        else { return }
-        let scale = min(320 / max(CGFloat(source.width), 1), 1)
-        let small = CIImage(cgImage: source).transformed(by: CGAffineTransform(scaleX: scale, y: scale))
-        let blurred = small.clampedToExtent().applyingGaussianBlur(sigma: 10).cropped(to: small.extent)
-        veil.layer?.contents = CIContext().createCGImage(blurred, from: small.extent)
+    /// Se calcula aparte y por adelantado: así el primer paso del cursor responde al instante.
+    private func prepareImages(needsPreview: Bool) {
+        guard let source = shown.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return }
+        let box = Unchecked(value: source)
+        let size = image.size
+        Task { @MainActor [weak self] in
+            let result = await Task.detached(priority: .utility) { () -> Unchecked<(CGImage?, CGImage?)> in
+                let small = needsPreview ? ImageTools.reduced(box.value, longestSide: 640) : nil
+                return Unchecked(value: (small, ImageTools.veil(from: small ?? box.value)))
+            }.value
+            guard let self else { return }
+            if let small = result.value.0 {
+                self.shown = NSImage(cgImage: small, size: size)
+                self.needsDisplay = true
+            }
+            self.veil.layer?.contents = result.value.1
+        }
+    }
+
+    var hasVeil: Bool { veil.layer?.contents != nil }
+
+    /// Ancho en pixeles de lo que la tarjeta redibuja.
+    var drawnPixels: Int {
+        shown.cgImage(forProposedRect: nil, context: nil, hints: nil)?.width ?? 0
     }
 
     private func makePill(_ title: String, label: String, action: Selector) -> CardControl {
@@ -859,7 +865,7 @@ private final class ThumbnailView: NSView, NSDraggingSource {
     /// Fundido corto. Con Reducir movimiento, el cambio es inmediato.
     private func fade(_ views: [NSView], to alpha: CGFloat) {
         NSAnimationContext.beginGrouping()
-        NSAnimationContext.current.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.16
+        NSAnimationContext.current.duration = Design.reduceMotion ? 0 : 0.16
         views.forEach { $0.animator().alphaValue = alpha }
         NSAnimationContext.endGrouping()
     }
@@ -1014,9 +1020,6 @@ private final class ThumbnailView: NSView, NSDraggingSource {
     func setHovering(_ value: Bool) {
         guard hovering != value else { return }
         hovering = value
-        if value {
-            paintVeil()
-        }
         fade([veil], to: value ? 1 : 0)
         fade(controls, to: value ? 1 : 0)
         refreshBadge()
@@ -1038,7 +1041,7 @@ private final class ThumbnailView: NSView, NSDraggingSource {
         // Del texto se arrastra el texto: su imagen de paso ya se borró.
         let writer: NSPasteboardWriting = kind == .text ? ((text ?? "") as NSString) : (file as NSURL)
         let item = NSDraggingItem(pasteboardWriter: writer)
-        item.setDraggingFrame(bounds, contents: image)
+        item.setDraggingFrame(bounds, contents: shown)
         beginDraggingSession(with: [item], event: event, source: self)
     }
 
@@ -1082,7 +1085,7 @@ private final class ThumbnailView: NSView, NSDraggingSource {
         let imageSize = image.size
         let ratio = max(bounds.width / max(imageSize.width, 1), bounds.height / max(imageSize.height, 1))
         let drawn = CGSize(width: imageSize.width * ratio, height: imageSize.height * ratio)
-        image.draw(in: CGRect(
+        shown.draw(in: CGRect(
             x: (bounds.width - drawn.width) / 2,
             y: (bounds.height - drawn.height) / 2,
             width: drawn.width,

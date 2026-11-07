@@ -123,6 +123,8 @@ private struct ShortcutField: NSViewRepresentable {
 extension Design {
     enum SettingsWindow {
         static let size = CGSize(width: 720, height: 594)
+        /// Las secciones se desplazan: la ventana puede encoger hasta aquí.
+        static let minimumSize = CGSize(width: 640, height: 420)
         static let radius: CGFloat = 16
         static let sidebarWidth: CGFloat = 190
         static let sidebarInset: CGFloat = 10
@@ -234,7 +236,7 @@ private struct SidebarEntry: View {
             )
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(ReactiveButtonStyle())
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }
@@ -422,9 +424,9 @@ private struct SettingsView: View {
                 get: { launchAtLogin },
                 set: { setLaunchAtLogin($0) }
             ))
+            SettingsToggle(title: "Efectos de sonido", isOn: $settings.soundEffects)
         }
         SettingsSection("Captura") {
-            SettingsToggle(title: "Sonido al capturar", isOn: $settings.playSound)
             SettingsToggle(title: "Ocultar iconos del escritorio", isOn: $settings.hidesDesktopIcons)
         }
         SettingsSection("Miniaturas") {
@@ -672,10 +674,15 @@ final class WindowCoordinator: NSObject, NSWindowDelegate {
     func showSettings() {
         if settingsWindow == nil {
             let metrics = Design.SettingsWindow.self
-            let bounds = CGRect(origin: .zero, size: metrics.size)
+            // En una pantalla baja, la ventana cabe entera: el contenido se desplaza.
+            let room = NSScreen.underMouse.visibleFrame.height - 40
+            let bounds = CGRect(origin: .zero, size: CGSize(
+                width: metrics.size.width,
+                height: max(min(metrics.size.height, room), metrics.minimumSize.height)
+            ))
             let window = NSWindow(
                 contentRect: bounds,
-                styleMask: [.titled, .closable, .fullSizeContentView],
+                styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
                 backing: .buffered,
                 defer: false
             )
@@ -691,6 +698,8 @@ final class WindowCoordinator: NSObject, NSWindowDelegate {
             window.isOpaque = false
             window.backgroundColor = .clear
             window.isReleasedWhenClosed = false
+            window.minSize = metrics.minimumSize
+            window.delegate = self
 
             let navigation = SettingsNavigation()
             navigation.onChange = { [weak window] pane in
@@ -713,6 +722,11 @@ final class WindowCoordinator: NSObject, NSWindowDelegate {
         settingsWindow?.makeKeyAndOrderFront(nil)
         // La sombra sigue a las esquinas propias, no al rectángulo de la ventana.
         settingsWindow?.invalidateShadow()
+    }
+
+    /// La sombra sigue a las esquinas propias: hay que recalcularla al cambiar de tamaño.
+    func windowDidResize(_ notification: Notification) {
+        (notification.object as? NSWindow)?.invalidateShadow()
     }
 
     private var history: HistoryController?
@@ -769,6 +783,7 @@ final class WindowCoordinator: NSObject, NSWindowDelegate {
     }
 
     var testSettingsTitle: String { settingsWindow?.title ?? "" }
+    var testSettingsWindow: NSWindow? { settingsWindow }
 
     func closeAll() {
         settingsWindow?.close()

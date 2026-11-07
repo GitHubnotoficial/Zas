@@ -35,8 +35,11 @@ final class AnnotationCanvas: NSView {
     /// Una versión pixelada por cada intensidad usada.
     private var pixelatedVersions: [String: NSImage] = [:]
     private var pixelatedSource: NSImage?
+    private var pendingPixelated: Set<String> = []
 
-    private func pixelated(block: CGFloat, smooth: Bool) -> NSImage? {
+    /// `live` es para la pantalla: si esa versión aún no existe se calcula aparte y se pinta al llegar,
+    /// porque difuminar una captura grande tarda cientos de milisegundos. Exportar siempre espera.
+    private func pixelated(block: CGFloat, smooth: Bool, live: Bool) -> NSImage? {
         // Cada versión pesa tanto como la captura: pocas, y solo de la imagen actual.
         if pixelatedSource !== image || pixelatedVersions.count >= 6 {
             pixelatedVersions.removeAll()
@@ -46,9 +49,33 @@ final class AnnotationCanvas: NSView {
         if let cached = pixelatedVersions[key] {
             return cached
         }
+        if live {
+            requestPixelated(key: key, block: block, smooth: smooth)
+            return nil
+        }
         let version = AnnotationRenderer.makePixelated(image, block: block, smooth: smooth)
         pixelatedVersions[key] = version
         return version
+    }
+
+    private func requestPixelated(key: String, block: CGFloat, smooth: Bool) {
+        let source = image
+        guard !pendingPixelated.contains(key),
+              let pixels = source.cgImage(forProposedRect: nil, context: nil, hints: nil)
+        else { return }
+        pendingPixelated.insert(key)
+        let box = Unchecked(value: pixels)
+        let size = source.size
+        Task { @MainActor [weak self] in
+            let result = await Task.detached(priority: .userInitiated) {
+                Unchecked(value: AnnotationRenderer.pixelated(box.value, pointWidth: size.width, block: block, smooth: smooth))
+            }.value
+            guard let self else { return }
+            self.pendingPixelated.remove(key)
+            guard self.pixelatedSource === source, let version = result.value else { return }
+            self.pixelatedVersions[key] = NSImage(cgImage: version, size: size)
+            self.needsDisplay = true
+        }
     }
 
     var filled = false
@@ -219,6 +246,21 @@ final class AnnotationCanvas: NSView {
 
     /// La captura actual sin marcas: de ella sale la muestra de difuminado del panel.
     var currentImage: NSImage { image }
+
+    /// Lee el color del borde aparte. Con esto, elegir el primer fondo no frena el dibujo.
+    func prewarmBackdrop() {
+        let owner = image
+        let content = contentRect
+        if let edgeCache, edgeCache.image === owner, edgeCache.crop == content { return }
+        let box = Unchecked(value: owner)
+        Task { @MainActor [weak self] in
+            let info = await Task.detached(priority: .userInitiated) {
+                ImageTools.edgeInfo(of: box.value, crop: content)
+            }.value
+            guard let self, self.image === owner, self.contentRect == content else { return }
+            self.edgeCache = (owner, content, info)
+        }
+    }
 
     /// Cambia el fondo sin tocar la imagen ni las marcas.
     /// Mientras un deslizador se mueve, `finished` es `false` y todo cuenta como un solo paso de deshacer.
@@ -509,9 +551,12 @@ final class AnnotationCanvas: NSView {
         case .none:
             return
         case .move(let last):
+            let before = document.annotations[index]
             document.annotations[index].translate(dx: point.x - last.x, dy: point.y - last.y)
             dragMode = .move(last: point)
+            invalidate(before, document.annotations[index])
         case .resize(let anchor, let original, let start):
+            let before = document.annotations[index]
             var updated = original
             let width = start.x - anchor.x
             let height = start.y - anchor.y
@@ -521,8 +566,30 @@ final class AnnotationCanvas: NSView {
                 y: abs(height) > 1 ? (point.y - anchor.y) / height : 1
             )
             document.annotations[index] = updated
+            invalidate(before, updated)
         }
-        needsDisplay = true
+    }
+
+    /// Solo se repinta lo que tocan las marcas: con doscientas, redibujar el lienzo entero pierde cuadros.
+    private func invalidate(_ first: Annotation, _ second: Annotation) {
+        // El foco oscurece toda la imagen.
+        guard first.tool != .spotlight else {
+            needsDisplay = true
+            return
+        }
+        setNeedsDisplay(viewArea(of: first).union(viewArea(of: second)))
+    }
+
+    /// Lo que ocupa una marca en el lienzo, con su grosor, su punta y los tiradores de selección.
+    private func viewArea(of mark: Annotation) -> CGRect {
+        var area = mark.bounds
+        if mark.tool == .arrow {
+            area = area.union(CGRect(origin: mark.arrowControl, size: .zero))
+        }
+        let scale = displayScale
+        let reach = mark.lineWidth * 3 + 16 + 14 / scale
+        area = area.insetBy(dx: -reach, dy: -reach)
+        return CGRect(origin: viewPoint(fromImage: area.origin), size: CGSize(width: area.width * scale, height: area.height * scale))
     }
 
     func endDrag() {
@@ -574,13 +641,14 @@ final class AnnotationCanvas: NSView {
         }
 
         guard var annotation = current, let first = annotation.points.first else { return }
+        let before = annotation
         let freehand = annotation.isFreehand
         if event.modifierFlags.contains(.shift), !freehand {
             point = Self.constrained(point, from: first, tool: annotation.tool)
         }
         annotation.points = freehand ? annotation.points + [point] : [first, point]
         current = annotation
-        needsDisplay = true
+        invalidate(before, annotation)
     }
 
     override func mouseUp(with event: NSEvent) {
@@ -665,7 +733,8 @@ final class AnnotationCanvas: NSView {
             }
             return
         }
-        if plain, let characters = event.charactersIgnoringModifiers?.uppercased(),
+        // Una tecla muerta, como el acento, llega vacía: la herramienta Imagen tampoco tiene letra.
+        if plain, let characters = event.charactersIgnoringModifiers?.uppercased(), !characters.isEmpty,
            let match = AnnotationTool.allCases.first(where: { $0.key == characters }) {
             onToolShortcut?(match)
             return
@@ -745,7 +814,7 @@ final class AnnotationCanvas: NSView {
         context.scaleBy(x: scale, y: scale)
         context.translateBy(x: -output.minX, y: -output.minY)
 
-        renderContents(including: current)
+        renderContents(including: current, live: true)
         if let selectedIndex, document.annotations.indices.contains(selectedIndex) {
             drawSelection(document.annotations[selectedIndex], scale: scale)
         }
@@ -756,9 +825,9 @@ final class AnnotationCanvas: NSView {
     }
 
     /// Las marcas van en una capa aparte: el borrador las quita sin tocar la captura.
-    private func renderContents(including draft: Annotation? = nil, withBackdrop: Bool = true) {
+    private func renderContents(including draft: Annotation? = nil, withBackdrop: Bool = true, live: Bool = false) {
         guard withBackdrop, let backdrop = document.backdrop else {
-            renderCapture(including: draft)
+            renderCapture(including: draft, live: live)
             return
         }
         let content = contentRect
@@ -771,16 +840,16 @@ final class AnnotationCanvas: NSView {
             blurred: backdrop.kind == .ownBlur ? blurredBackdrop : nil,
             picture: backdropPicture(backdrop.picture)
         ) {
-            renderCapture(including: draft)
+            renderCapture(including: draft, live: live)
         }
     }
 
-    private func renderCapture(including draft: Annotation?) {
+    private func renderCapture(including draft: Annotation?, live: Bool) {
         image.draw(in: CGRect(origin: .zero, size: image.size))
         guard let context = NSGraphicsContext.current?.cgContext else { return }
         context.beginTransparencyLayer(auxiliaryInfo: nil)
         for annotation in document.annotations + (draft.map { [$0] } ?? []) {
-            let version = annotation.tool == .pixelate ? pixelated(block: annotation.blockSize, smooth: annotation.smoothBlur) : nil
+            let version = annotation.tool == .pixelate ? pixelated(block: annotation.blockSize, smooth: annotation.smoothBlur, live: live) : nil
             AnnotationRenderer.draw(annotation, pixelated: version, imageSize: image.size)
         }
         context.endTransparencyLayer()
@@ -818,6 +887,11 @@ final class AnnotationCanvas: NSView {
 
     /// Exporta lo que se ve. Sin el fondo, sale solo la captura con sus marcas.
     func exportPNG(includingBackdrop: Bool = true) -> Data? {
+        exportBitmap(includingBackdrop: includingBackdrop)?.representation(using: .png, properties: [:])
+    }
+
+    /// El resultado sin codificar: lo lento es el PNG, y ese paso se puede hacer fuera del hilo principal.
+    func exportBitmap(includingBackdrop: Bool = true) -> NSBitmapImageRep? {
         guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
             return nil
         }
@@ -850,7 +924,15 @@ final class AnnotationCanvas: NSView {
 
         // Se asigna al final para no alterar la escala del dibujo de arriba.
         bitmap.size = frame.size
-        return bitmap.representation(using: .png, properties: [:])
+        return bitmap
+    }
+
+    /// Lo que se lee al seleccionar texto: el mismo resultado, para mostrarlo y para reconocerlo.
+    func textSnapshot() -> (image: NSImage, pixels: CGImage)? {
+        guard let bitmap = exportBitmap(), let pixels = bitmap.cgImage else { return nil }
+        let image = NSImage(size: bitmap.size)
+        image.addRepresentation(bitmap)
+        return (image, pixels)
     }
 
     #if ZAS_TEST

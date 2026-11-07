@@ -35,7 +35,11 @@ Zas es una app nativa de Mac para capturar y grabar la pantalla, copiarlo al ins
 
 ## Pruebas
 
-Corren en cada push: `Tests/SelfTest.swift` (lógica, editor, captura, video), el mismo binario con `--pantallas` (segunda pantalla Retina virtual, `Tests/PantallaVirtual/main.m`), `Tests/Driver/main.swift` (uso real con atajos y ratón, a escala normal y Retina), grabación de demo e instalador.
+Corren en cada push: `Tests/SelfTest.swift` (lógica, editor, captura, video, batería de texto, repaso de funciones y tiempos), el mismo binario con `--pantallas` (segunda pantalla Retina virtual, `Tests/PantallaVirtual/main.m`), `Tests/Driver/main.swift` (uso real con atajos y ratón, a escala normal y Retina), grabación de demo e instalador.
+
+Selección de texto: la batería dibuja 60 imágenes con semilla fija y exige un acierto mínimo por categoría, en el texto copiado y en Live Text. Deja `texto-resumen.txt` y las tres peor leídas (`texto-peor-*.png`) en `escenas`. Si una categoría no llega, mira esas imágenes: un fallo de Zas se corrige en la app; una limitación de Vision se apunta aquí con el dato medido. El umbral no se baja a ciegas.
+
+Responsividad: los topes de `responsivenessTests` son para la máquina virtual de GitHub, sin GPU. Lo lento va fuera del hilo principal (`Capture.prepare`, `Capture.encodePNG`, `TextReader`, carátulas, pixelado, tramos de desplazamiento). Hay un solo `CIContext`, `ImageContext.shared`. Un botón propio hereda de `ReactiveButton` para tener cursor encima y pulsado.
 
 Trampas conocidas:
 - `screencapture` escribe primero un archivo oculto `.Zas…` y luego lo renombra. Ignóralo.
@@ -61,7 +65,7 @@ Manda sobre lo anterior donde choquen. Se copia estructura y comportamiento, nun
 - Esquinas continuas (`cornerCurve = .continuous`). Radios: tarjeta 14, control 10. Margen 18, separación 10 (`Design` en `Sources/Glass.swift`).
 - La captura manda: la interfaz aparece solo cuando hace falta. En reposo nada tapa la captura; las acciones aparecen al pasar el cursor y el resto en clic derecho.
 - Física real: resorte con response 0.42 y damping 0.86 (`Spring`). La tarjeta nace donde se tomó la captura. Se descarta deslizando con dos dedos.
-- Sonido: el obturador del sistema.
+- Sonido: cuatro efectos propios sintetizados en `Sources/Sounds.swift` (obturador, copiar, inicio y fin de grabación), sin archivos de terceros. Ajuste "Efectos de sonido", encendido por defecto. Nunca suenan mientras se graba: el inicio termina antes de arrancar y el fin suena después de parar.
 - La selección se dibuja con capas, sin redibujar todo.
 - Principios: quitar y revelar, un acento por pantalla, pocos iconos, movimiento con motivo, optimizar el caso común.
 
@@ -105,7 +109,7 @@ No hecho, a propósito: nube (necesita servidor y cuentas), Studio Mode (editor 
 
 Trampas de la 1.1: una vista encima de la tarjeta debe dejar pasar los clics; el aviso de macOS se queda con el teclado hasta que se acepta; `syncHover` apaga el estado de cursor encima en las pruebas, porque el cursor real está fuera.
 
-Pendiente permanente: probar en un Mac físico, arrastrar "Arrástrame" a otra app, Compartir, ocultar iconos con un escritorio real, pegar de verdad en Claude Code, micrófono, audio del Mac con sonido real, teclas con permiso de Accesibilidad, cámara, gesto de trackpad y captura con desplazamiento sobre una app real.
+Pendiente permanente: probar en un Mac físico, arrastrar "Arrástrame" a otra app, el menú de Compartir y sus destinos, ocultar iconos con un escritorio real, pegar de verdad en Claude Code, micrófono, audio del Mac con sonido real, escuchar los cuatro efectos y comprobar que no entran en un video con micrófono, teclas con permiso de Accesibilidad, cámara, gesto de trackpad, cuentagotas, pantalla ProMotion y captura con desplazamiento sobre una app real.
 
 ## Herramientas fuera del repositorio
 

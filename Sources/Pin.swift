@@ -75,13 +75,15 @@ final class PinController: NSObject {
         panels.removeAll()
     }
 
+    var testCount: Int { panels.count }
+
     func simulateHover() {
         panels.compactMap { $0.contentView as? PinView }.forEach { $0.closeButton?.isHidden = false }
     }
     #endif
 }
 
-private final class PinCloseButton: NSButton {
+private final class PinCloseButton: ReactiveButton {
     init(target: AnyObject, action: Selector) {
         super.init(frame: .zero)
         image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Cerrar")?
@@ -94,7 +96,12 @@ private final class PinCloseButton: NSButton {
         self.action = action
         wantsLayer = true
         layer?.cornerRadius = Design.Card.circleSize.height / 2
-        layer?.backgroundColor = Design.Card.controlFill.cgColor
+        reactiveStateChanged()
+    }
+
+    override func reactiveStateChanged() {
+        let fill = isPressed ? Design.Card.controlPressed : (isHovering ? Design.Card.controlHover : Design.Card.controlFill)
+        layer?.backgroundColor = fill.cgColor
     }
 
     required init?(coder: NSCoder) {

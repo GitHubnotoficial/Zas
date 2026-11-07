@@ -1,5 +1,12 @@
 import AppKit
 
+/// Resultado de añadir un tramo.
+struct ScrollStep: @unchecked Sendable {
+    let stitcher: ScrollStitcher
+    let added: Bool
+    let preview: CGImage?
+}
+
 /// Une tramos de una pantalla que se desplaza hacia abajo en una sola imagen larga.
 /// Compara filas de píxeles para encontrar cuánto se movió el contenido entre dos tramos.
 struct ScrollStitcher {
@@ -14,6 +21,30 @@ struct ScrollStitcher {
 
     var height: Int { pieces.reduce(0) { $0 + $1.height } }
     var width: Int { pieces.first?.width ?? 0 }
+
+    /// Compara filas y escribe imágenes largas: nada de esto debe correr en el hilo principal.
+    static func advanced(_ stitcher: ScrollStitcher, adding url: URL, previewWidth: Int, previewHeight: Int) async -> ScrollStep {
+        let box = Unchecked(value: stitcher)
+        return await Task.detached(priority: .userInitiated) { () -> ScrollStep in
+            var current = box.value
+            guard let image = Capture.image(at: url) else {
+                return ScrollStep(stitcher: current, added: false, preview: nil)
+            }
+            let added = current.add(image)
+            let preview = added ? current.tailPreview(width: previewWidth, maxHeight: previewHeight) : nil
+            return ScrollStep(stitcher: current, added: added, preview: preview)
+        }.value
+    }
+
+    /// Une todo y lo guarda. `scale` son los pixeles por punto. Devuelve el tamaño en puntos.
+    static func save(_ stitcher: ScrollStitcher, to url: URL, scale: CGFloat) async -> CGSize? {
+        let box = Unchecked(value: stitcher)
+        return await Task.detached(priority: .userInitiated) { () -> CGSize? in
+            guard let image = box.value.composed() else { return nil }
+            let size = CGSize(width: CGFloat(image.width) / scale, height: CGFloat(image.height) / scale)
+            return Capture.writePNG(image, to: url, pointSize: size) ? size : nil
+        }.value
+    }
 
     /// Devuelve `true` si entró contenido nuevo.
     @discardableResult
@@ -209,7 +240,7 @@ enum ScrollHUDLayout {
 }
 
 /// Píldora con icono y texto.
-private final class ScrollPillButton: NSButton {
+private final class ScrollPillButton: ReactiveButton {
     init(frame: CGRect, title: String, symbol: String, hint: String, color: NSColor, target: AnyObject, action: Selector) {
         super.init(frame: frame)
         isBordered = false
@@ -233,7 +264,9 @@ private final class ScrollPillButton: NSButton {
         fatalError("init(coder:) no se usa")
     }
 
-    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    override func reactiveStateChanged() {
+        alphaValue = isPressed ? 0.6 : (isHovering ? 0.85 : 1)
+    }
 }
 
 /// Lo que se ve mientras se desplaza: Cancelar y Listo, y la imagen que va creciendo.

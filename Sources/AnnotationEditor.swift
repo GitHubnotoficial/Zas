@@ -2,7 +2,7 @@ import AppKit
 import VisionKit
 
 /// Punto de color en la paleta.
-private final class DotButton: NSButton {
+private final class DotButton: ReactiveButton {
     var dotColor: NSColor? {
         didSet { needsDisplay = true }
     }
@@ -35,6 +35,10 @@ private final class DotButton: NSButton {
             ring.lineWidth = 2
             ring.stroke()
         }
+        if isPressed || isHovering {
+            (isPressed ? Palette.pressed : Palette.hover).setFill()
+            NSBezierPath(ovalIn: bounds.insetBy(dx: 1, dy: 1)).fill()
+        }
         (dotColor ?? Palette.text).setFill()
         let radius = dotDiameter / 2
         let dot = NSBezierPath(ovalIn: CGRect(
@@ -51,21 +55,42 @@ private final class DotButton: NSButton {
     }
 }
 
+/// Análisis de Live Text. La imagen se amplía igual que para copiar y se piden los mismos idiomas:
+/// sin eso, un Mac en inglés leería peor las tildes y una captura 1x perdería letras.
+@MainActor
+enum LiveText {
+    private static let analyzer = ImageAnalyzer()
+
+    static func analysis(of image: NSImage) async -> ImageAnalysis? {
+        guard ImageAnalyzer.isSupported,
+              let source = image.cgImage(forProposedRect: nil, context: nil, hints: nil)
+        else { return nil }
+        let box = Unchecked(value: source)
+        let large = await Task.detached(priority: .userInitiated) {
+            Unchecked(value: TextReader.enlarged(box.value))
+        }.value
+        var configuration = ImageAnalyzer.Configuration([.text])
+        configuration.locales = TextReader.languages
+        return try? await analyzer.analyze(large.value, orientation: .up, configuration: configuration)
+    }
+}
+
 /// Imagen con Live Text: el texto se selecciona sobre la captura, igual que en Fotos o Vista Previa.
 @MainActor
 private final class LiveTextPane: NSView {
     private let imageView = NSImageView()
     private let overlay = ImageAnalysisOverlayView()
 
-    init(frame: CGRect, image: NSImage) {
+    /// `inset` es el aire del lienzo: la imagen se queda donde estaba, sin agrandarse al entrar.
+    init(frame: CGRect, image: NSImage, inset: CGFloat) {
         super.init(frame: frame)
-        imageView.frame = bounds
+        imageView.frame = bounds.insetBy(dx: inset, dy: inset)
         imageView.image = image
-        imageView.imageScaling = .scaleProportionallyUpOrDown
+        imageView.imageScaling = .scaleProportionallyDown
         imageView.autoresizingMask = [.width, .height]
         addSubview(imageView)
 
-        overlay.frame = bounds
+        overlay.frame = imageView.frame
         overlay.autoresizingMask = [.width, .height]
         overlay.preferredInteractionTypes = .textSelection
         overlay.selectableItemsHighlighted = true
@@ -81,15 +106,12 @@ private final class LiveTextPane: NSView {
 
     /// Devuelve `false` si este Mac no ofrece Live Text.
     func analyze() async -> Bool {
-        guard ImageAnalyzer.isSupported, let image = imageView.image else { return false }
-        let analyzer = ImageAnalyzer()
-        let configuration = ImageAnalyzer.Configuration([.text])
-        guard let analysis = try? await analyzer.analyze(image, orientation: .up, configuration: configuration) else {
-            return false
-        }
+        guard let image = imageView.image, let analysis = await LiveText.analysis(of: image) else { return false }
         overlay.analysis = analysis
         return true
     }
+
+    var imageScaling: NSImageScaling { imageView.imageScaling }
 }
 
 /// La barra comparte fila con los semáforos, una zona donde el título puede quedarse con el clic.
@@ -225,6 +247,8 @@ private final class DragPill: NSView, NSDraggingSource {
 
     private var start: CGPoint?
     private var dragged = false
+    private var isHovering = false
+    private var hoverArea: NSTrackingArea?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -243,12 +267,34 @@ private final class DragPill: NSView, NSDraggingSource {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     override func resetCursorRects() {
-        addCursorRect(bounds, cursor: .openHand)
+        addCursorRect(bounds, cursor: start == nil ? .openHand : .closedHand)
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverArea {
+            removeTrackingArea(hoverArea)
+        }
+        let area = NSTrackingArea(rect: .zero, options: [.activeAlways, .inVisibleRect, .mouseEnteredAndExited], owner: self, userInfo: nil)
+        addTrackingArea(area)
+        hoverArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        isHovering = true
+        needsDisplay = true
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isHovering = false
+        needsDisplay = true
     }
 
     override func mouseDown(with event: NSEvent) {
         start = convert(event.locationInWindow, from: nil)
         dragged = false
+        needsDisplay = true
+        NSCursor.closedHand.set()
     }
 
     override func mouseDragged(with event: NSEvent) {
@@ -271,6 +317,8 @@ private final class DragPill: NSView, NSDraggingSource {
     // Tocarla, una o dos veces, no hace nada: solo responde al arrastre.
     override func mouseUp(with event: NSEvent) {
         start = nil
+        needsDisplay = true
+        NSCursor.openHand.set()
     }
 
     func draggingSession(
@@ -280,10 +328,22 @@ private final class DragPill: NSView, NSDraggingSource {
         .copy
     }
 
+    func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
+        start = nil
+        needsDisplay = true
+    }
+
     override func draw(_ dirtyRect: NSRect) {
         let capsule = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: bounds.height / 2 - 0.5, yRadius: bounds.height / 2 - 0.5)
         Palette.group.setFill()
         capsule.fill()
+        if start != nil {
+            Palette.pressed.setFill()
+            capsule.fill()
+        } else if isHovering {
+            Palette.hover.setFill()
+            capsule.fill()
+        }
         Palette.hairline.setStroke()
         capsule.lineWidth = 1
         capsule.stroke()
@@ -380,6 +440,8 @@ final class AnnotationEditor: NSObject, NSWindowDelegate, NSPopoverDelegate {
     private var panelSpring: Timer?
     private var sharePicker: NSSharingServicePicker?
     private var pathExport: (revision: Int, url: URL)?
+    /// "Listo" ya está codificando: un segundo Enter no debe guardar dos veces.
+    private var isFinishing = false
 
     private var sizeValue: ValueChip?
     private var penColor = Palette.markDefault
@@ -880,6 +942,7 @@ final class AnnotationEditor: NSObject, NSWindowDelegate, NSPopoverDelegate {
         panelSpring?.invalidate()
 
         if open {
+            canvas.prewarmBackdrop()
             backgroundPanel.reload(canvas.document.backdrop, capture: canvas.currentImage)
             backgroundPanel.isHidden = false
         }
@@ -978,7 +1041,7 @@ final class AnnotationEditor: NSObject, NSWindowDelegate, NSPopoverDelegate {
         let popover = NSPopover()
         popover.contentViewController = controller
         popover.behavior = .transient
-        popover.animates = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        popover.animates = !Design.reduceMotion
         popover.delegate = self
         stylePopover = popover
         openPopover = kind
@@ -1174,7 +1237,7 @@ final class AnnotationEditor: NSObject, NSWindowDelegate, NSPopoverDelegate {
     }
 
     private func setMagnification(_ value: CGFloat) {
-        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+        if Design.reduceMotion {
             scrollView.magnification = value
             refreshZoomLabel()
             return
@@ -1234,21 +1297,19 @@ final class AnnotationEditor: NSObject, NSWindowDelegate, NSPopoverDelegate {
             return
         }
         canvas.commitText()
-        guard let data = canvas.exportPNG(), let snapshot = NSImage(data: data) else { return }
+        guard let snapshot = canvas.textSnapshot() else { return }
 
-        let url = Capture.temporaryFileURL()
-        try? data.write(to: url)
-        TextReader.read(from: url) { text in
-            try? FileManager.default.removeItem(at: url)
+        TextReader.read(image: snapshot.pixels) { text in
             guard !text.isEmpty else {
                 Toast.shared.show("No hay texto en esta captura")
                 return
             }
             Capture.copyText(text)
+            Sounds.play(.copy)
             Toast.shared.show("Texto copiado")
         }
 
-        let pane = LiveTextPane(frame: scrollView.frame, image: snapshot)
+        let pane = LiveTextPane(frame: scrollView.frame, image: snapshot.image, inset: canvas.fitInset)
         pane.autoresizingMask = [.width, .height]
         window.contentView?.addSubview(pane, positioned: .above, relativeTo: scrollView)
         liveText = pane
@@ -1286,14 +1347,16 @@ final class AnnotationEditor: NSObject, NSWindowDelegate, NSPopoverDelegate {
 
     @objc private func quickCopy() {
         canvas.commitText()
-        guard let data = canvas.exportPNG() else { return }
-        let url = Capture.temporaryFileURL()
-        guard (try? data.write(to: url)) != nil, Capture.copyImage(at: url) != nil else {
-            Toast.shared.show("No se pudo copiar.")
-            return
+        guard let bitmap = canvas.exportBitmap() else { return }
+        Task { @MainActor in
+            guard let data = await Capture.encodePNG(bitmap) else {
+                Toast.shared.show("No se pudo copiar.")
+                return
+            }
+            Capture.publish(data)
+            Sounds.play(.copy)
+            Toast.shared.show("Copiado")
         }
-        Capture.playSound()
-        Toast.shared.show("Copiado")
     }
 
     /// Archivo de paso con el resultado actual, para arrastrar o compartir.
@@ -1309,9 +1372,14 @@ final class AnnotationEditor: NSObject, NSWindowDelegate, NSPopoverDelegate {
             Toast.shared.show("No se pudo crear la imagen.")
             return
         }
-        let picker = NSSharingServicePicker(items: [url])
+        let picker = NSSharingServicePicker(items: Self.shareItems(for: url))
         sharePicker = picker
         picker.show(relativeTo: sender.bounds, of: sender, preferredEdge: .maxY)
+    }
+
+    /// Se comparte el archivo con las marcas, no la captura original.
+    private static func shareItems(for file: URL) -> [Any] {
+        [file]
     }
 
     @objc private func pinPressed() {
@@ -1340,7 +1408,7 @@ final class AnnotationEditor: NSObject, NSWindowDelegate, NSPopoverDelegate {
         }
         guard let path else { return }
         Capture.copyText(path.path)
-        Capture.playSound()
+        Sounds.play(.copy)
         Toast.shared.show("Ruta copiada")
     }
 
@@ -1453,21 +1521,27 @@ final class AnnotationEditor: NSObject, NSWindowDelegate, NSPopoverDelegate {
     }
 
     @objc func copyAndClose() {
+        guard !isFinishing else { return }
         canvas.commitText()
-        let output = nextCopyURL(in: Capture.imageFolder)
-        guard let data = canvas.exportPNG() else {
+        guard let bitmap = canvas.exportBitmap() else {
             Toast.shared.show("No se pudo crear la imagen.")
             return
         }
-        guard (try? data.write(to: output)) != nil,
-              let copied = Capture.copyImage(at: output)
-        else {
-            Toast.shared.show("No se pudo guardar. Revisa la carpeta en Ajustes.")
-            return
+        isFinishing = true
+        let output = nextCopyURL(in: Capture.imageFolder)
+        Task { @MainActor in
+            defer { self.isFinishing = false }
+            guard let data = await Capture.encodePNG(bitmap),
+                  (try? data.write(to: output)) != nil,
+                  let copied = NSImage(data: data)
+            else {
+                Toast.shared.show("No se pudo guardar. Revisa la carpeta en Ajustes.")
+                return
+            }
+            Capture.publish(data)
+            self.window.close()
+            self.onFinish?(copied, output)
         }
-
-        window.close()
-        onFinish?(copied, output)
     }
 
     /// Nombre sin el " anotada" de una edición anterior, para no acumularlo.
@@ -1574,16 +1648,58 @@ final class AnnotationEditor: NSObject, NSWindowDelegate, NSPopoverDelegate {
 
     /// Prueba real de Live Text: detecta texto en una imagen y dice si lo encontró.
     func testLiveTextFindsText() async -> Bool {
-        guard ImageAnalyzer.isSupported, let data = canvas.exportPNG(), let snapshot = NSImage(data: data) else {
+        guard let snapshot = canvas.textSnapshot(), let analysis = await LiveText.analysis(of: snapshot.image) else {
             return false
         }
-        let analyzer = ImageAnalyzer()
-        guard let analysis = try? await analyzer.analyze(
-            snapshot,
-            orientation: .up,
-            configuration: ImageAnalyzer.Configuration([.text])
-        ) else { return false }
         return analysis.hasResults(for: .text)
+    }
+
+    /// Entrar a seleccionar texto no debe agrandar una captura pequeña.
+    var testTextPaneScaling: NSImageScaling? { liveText?.imageScaling }
+
+    func testKeyDown(_ characters: String) {
+        guard let event = NSEvent.keyEvent(
+            with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+            windowNumber: window.windowNumber, context: nil, characters: characters,
+            charactersIgnoringModifiers: characters, isARepeat: false, keyCode: 0
+        ) else { return }
+        canvas.keyDown(with: event)
+    }
+
+    func testShowBackgroundPanel() { setBackgroundPanel(open: true) }
+    var testPanel: BackgroundPanel { backgroundPanel }
+    func testQuickCopy() { quickCopy() }
+    func testCopyPath() { copyPathPressed() }
+    func testPin() { pinPressed() }
+    func testSaveCopy() { saveCopy() }
+    func testFinish() { copyAndClose() }
+    func testDragFile() -> URL? { exportTemporaryFile() }
+    func testZoomPreset(_ percent: Int) {
+        let item = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        item.tag = percent
+        zoomPreset(item)
+    }
+
+    var testZoomLabel: String? { zoomPill?.accessibilityValue() as? String }
+    func testCloseEditor() { window.close() }
+    static func testPinCount() -> Int { pins.testCount }
+    static func testClosePins() { pins.closeAll() }
+
+    /// Lo que recibiría el selector de Compartir, sin abrirlo: su menú detendría la prueba.
+    func testShareItems() -> [Any]? {
+        exportTemporaryFile().map(Self.shareItems)
+    }
+
+    /// Cuántos controles se pisan en las dos barras.
+    var testBarOverlaps: Int {
+        var total = 0
+        for bar in window.contentView?.subviews.compactMap({ $0 as? EditorBar }) ?? [] {
+            let frames = bar.subviews.map { $0.frame.insetBy(dx: 1, dy: 1) }
+            for (index, frame) in frames.enumerated() {
+                total += frames[(index + 1)...].filter { $0.intersects(frame) }.count
+            }
+        }
+        return total
     }
     #endif
 }

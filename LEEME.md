@@ -87,6 +87,10 @@ El botón **Fondo** abre un panel con degradados, imágenes, difuminado y colore
 
 Lo que dibujas queda seleccionado: arrástralo para moverlo o usa sus esquinas para cambiarle el tamaño. Doble clic en un texto lo vuelve a editar. Censurar funciona con recuadro o con pincel, y pincel, borrador y resaltador muestran su tamaño a la vista. El punto de color abre la mini paleta: color, cualquier otro color y tamaño. ⌘+ y ⌘- hacen zoom, y también se puede pellizcar el trackpad. ⌘C copia sin cerrar, ⌘S guarda una copia y el botón de guardar deja reemplazar el original o guardar como. El botón de texto copia todo el texto y deja seleccionarlo sobre la imagen. ⇧⌘7 también lee códigos QR. ⌘Z deshace y ⇧⌘Z rehace. Mayúsculas alinea las flechas y hace cuadros y círculos perfectos. Supr borra la marca seleccionada. Esc cierra el editor y, si dibujaste algo, pregunta antes de perderlo.
 
+## Sonidos
+
+Zas tiene cuatro sonidos propios y suaves: capturar, copiar, empezar y terminar de grabar. Se apagan en **Ajustes**, con **Efectos de sonido**. Mientras grabas no suena nada, así que no entran en el video.
+
 ## Escritorio limpio
 
 En el menú de Zas puedes ocultar los iconos del escritorio mientras capturas. Vuelven al apagarlo o al cerrar Zas.

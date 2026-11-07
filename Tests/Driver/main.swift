@@ -487,6 +487,47 @@ withFreshCard("Anotar") { card in
     check(zasWindowCount(minimumWidth: 700) == 0, "sin marcas, Esc cierra el editor")
 }
 
+// Panel Fondo y Arrástrame con el ratón de verdad, sobre el editor de una captura de 300 × 250.
+withFreshCard("Fondo") { card in
+    click(at: annotateButton(in: card))
+    wait(1.2)
+    guard let editor = windowFrame(owner: "Zas") else {
+        check(false, "Fondo: el editor abre")
+        return
+    }
+    click(at: CGPoint(x: editor.minX + 206, y: editor.minY + 26))
+    wait(1)
+    // Primer degradado: 52 de barra, 14 de aire, ajustes, Ninguno y el título de la sección.
+    click(at: CGPoint(x: editor.minX + 30, y: editor.minY + 197))
+    wait(0.6)
+    shot("e2e-07d-panel-fondo")
+
+    // Soltar en el escritorio depende de Finder: el resultado se anota, pero no frena la corrida.
+    let desktop = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask)[0]
+    let before = Set((try? FileManager.default.contentsOfDirectory(atPath: desktop.path)) ?? [])
+    drag(from: CGPoint(x: editor.midX, y: editor.maxY - 22), to: CGPoint(x: screen.frame.maxX - 120, y: screen.frame.maxY - 220))
+    wait(1.5)
+    let dropped = Set((try? FileManager.default.contentsOfDirectory(atPath: desktop.path)) ?? []).subtracting(before)
+    print("Arrástrame al escritorio: \(dropped.isEmpty ? "sin archivo nuevo" : dropped.joined(separator: ", "))")
+    shot("e2e-07e-arrastrame")
+    for name in dropped {
+        try? FileManager.default.removeItem(at: desktop.appendingPathComponent(name))
+    }
+
+    click(at: CGPoint(x: editor.midX, y: editor.maxY - 70))
+    let result = newFile("png") {
+        press(kVK_Return)
+    }
+    if let size = pixelSize(result) {
+        // Sesenta y cuatro puntos de margen por lado, el valor con el que nace el fondo.
+        check(size == ((300 + 128) * scale, (250 + 128) * scale), "elegir un degradado añade el fondo a la imagen (\(size))")
+    } else {
+        check(false, "elegir un degradado añade el fondo a la imagen")
+    }
+    wait(0.8)
+    check(zasWindowCount(minimumWidth: 700) == 0, "Enter cierra el editor con fondo")
+}
+
 withFreshCard("Cerrar") { card in
     let before = cardFrames().count
     click(at: closeButton(in: card))
