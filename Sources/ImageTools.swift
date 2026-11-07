@@ -134,14 +134,6 @@ enum ImageTools {
         return ImageContext.shared.createCGImage(output, from: extent)
     }
 
-    /// Velo de una tarjeta: la captura pequeña y difuminada, para que los botones se lean sobre cualquier imagen.
-    nonisolated static func veil(from image: CGImage) -> CGImage? {
-        let scale = min(320 / max(CGFloat(image.width), 1), 1)
-        let small = CIImage(cgImage: image).transformed(by: CGAffineTransform(scaleX: scale, y: scale))
-        let blurred = small.clampedToExtent().applyingGaussianBlur(sigma: 10).cropped(to: small.extent)
-        return ImageContext.shared.createCGImage(blurred, from: small.extent)
-    }
-
     /// Copia reducida para enseñarla pequeña.
     nonisolated static func reduced(_ image: CGImage, longestSide: Int) -> CGImage? {
         let factor = min(CGFloat(longestSide) / CGFloat(max(image.width, image.height, 1)), 1)

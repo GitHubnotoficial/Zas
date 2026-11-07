@@ -1,4 +1,5 @@
 import AppKit
+@preconcurrency import ScreenCaptureKit
 
 /// Caja para pasar entre hilos algo que ya no va a cambiar.
 struct Unchecked<Value>: @unchecked Sendable {
@@ -143,6 +144,22 @@ enum Capture {
         let width = Int(rect.width.rounded())
         let height = Int(rect.height.rounded())
         return "-R\(x),\(y),\(width),\(height)"
+    }
+
+    /// La pantalla sin las ventanas indicadas: congelar no necesita esconder la capa oscura.
+    @available(macOS 14.0, *)
+    static func screenImage(of screen: NSScreen, excluding windowIDs: [CGWindowID]) async -> CGImage? {
+        guard let displayID = screen.displayID,
+              let content = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true),
+              let display = content.displays.first(where: { $0.displayID == displayID })
+        else { return nil }
+        let hidden = content.windows.filter { windowIDs.contains($0.windowID) }
+        let filter = SCContentFilter(display: display, excludingWindows: hidden)
+        let configuration = SCStreamConfiguration()
+        configuration.width = Int(screen.frame.width * screen.backingScaleFactor)
+        configuration.height = Int(screen.frame.height * screen.backingScaleFactor)
+        configuration.showsCursor = false
+        return try? await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration)
     }
 
     /// Corre `screencapture` en segundo plano. Devuelve `false` si no quedó archivo.

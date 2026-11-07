@@ -161,15 +161,21 @@ func newestCard() -> CGRect? {
     cardFrames().max { $0.maxY < $1.maxY }
 }
 
-/// Un sitio de la tarjeta donde no hay botones: las píldoras y los círculos dejan libre el borde del centro.
+/// Un sitio de la tarjeta donde no hay botones: las píldoras y la fila de iconos dejan libre el borde del centro.
 func freeSpot(in card: CGRect) -> CGPoint { CGPoint(x: card.minX + 16, y: card.midY) }
-/// Centros exactos: píldoras de 22 con 6 entre ellas, círculos de 20 a 6 del borde.
-func copyButton(in card: CGRect) -> CGPoint { CGPoint(x: card.midX, y: card.midY - 14) }
-func saveButton(in card: CGRect) -> CGPoint { CGPoint(x: card.midX, y: card.midY + 14) }
+/// Centros exactos. Píldoras de 64 × 22 con 6 entre ellas: apiladas, o en fila si la tarjeta mide menos de 110.
+func copyButton(in card: CGRect) -> CGPoint {
+    card.height < 110 ? CGPoint(x: card.midX - 35, y: card.midY) : CGPoint(x: card.midX, y: card.midY - 14)
+}
+func saveButton(in card: CGRect) -> CGPoint {
+    card.height < 110 ? CGPoint(x: card.midX + 35, y: card.midY) : CGPoint(x: card.midX, y: card.midY + 14)
+}
+/// Cerrar es un círculo de 20 a 6 del borde, arriba a la izquierda.
 func closeButton(in card: CGRect) -> CGPoint { CGPoint(x: card.minX + 16, y: card.minY + 16) }
-func pinButton(in card: CGRect) -> CGPoint { CGPoint(x: card.maxX - 16, y: card.minY + 16) }
-func annotateButton(in card: CGRect) -> CGPoint { CGPoint(x: card.minX + 16, y: card.maxY - 16) }
-func pathButton(in card: CGRect) -> CGPoint { CGPoint(x: card.maxX - 16, y: card.maxY - 16) }
+/// Fila inferior centrada: tres casillas de 28 con 2 entre ellas, a 16 del borde.
+func pinButton(in card: CGRect) -> CGPoint { CGPoint(x: card.midX - 30, y: card.maxY - 16) }
+func annotateButton(in card: CGRect) -> CGPoint { CGPoint(x: card.midX, y: card.maxY - 16) }
+func pathButton(in card: CGRect) -> CGPoint { CGPoint(x: card.midX + 30, y: card.maxY - 16) }
 
 /// Una captura fijada de la región de 300 × 250.
 func pinnedFrame() -> CGRect? {
@@ -289,6 +295,19 @@ dismissSystemPrompt()
 
 if let size = pixelSize(region) {
     check(size == (300 * scale, 250 * scale), "el área mide lo arrastrado (\(size))")
+}
+// La firma amarilla se dispara cuando la imagen ya existe: no puede salir en el archivo.
+if let region, let rep = (try? Data(contentsOf: region)).flatMap({ NSBitmapImageRep(data: $0) }) {
+    var signature = 0
+    for x in stride(from: 0, to: rep.pixelsWide, by: 2) {
+        for y in stride(from: 0, to: rep.pixelsHigh, by: 2) {
+            if let color = rep.colorAt(x: x, y: y)?.usingColorSpace(.sRGB),
+               color.redComponent > 0.9, abs(color.greenComponent - 0.8) < 0.08, color.blueComponent < 0.15 {
+                signature += 1
+            }
+        }
+    }
+    check(signature == 0, "la firma amarilla no sale en la captura (\(signature) puntos)")
 }
 wait(0.6)
 let types = NSPasteboard.general.types ?? []
@@ -495,17 +514,19 @@ withFreshCard("Fondo") { card in
         check(false, "Fondo: el editor abre")
         return
     }
-    click(at: CGPoint(x: editor.minX + 206, y: editor.minY + 26))
+    // Fondo: tercer icono de 28 con 4 entre ellos, después de los 84 de los semáforos.
+    click(at: CGPoint(x: editor.minX + 162, y: editor.minY + 26))
     wait(1)
-    // Primer degradado: 52 de barra, 14 de aire, ajustes, Ninguno y el título de la sección.
-    click(at: CGPoint(x: editor.minX + 30, y: editor.minY + 197))
+    // Primer degradado, justo después de Ninguno: 52 de barra, 14 de aire, ajustes y el título de la sección.
+    click(at: CGPoint(x: editor.minX + 63, y: editor.minY + 140))
     wait(0.6)
     shot("e2e-07d-panel-fondo")
 
     // Soltar en el escritorio depende de Finder: el resultado se anota, pero no frena la corrida.
     let desktop = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask)[0]
     let before = Set((try? FileManager.default.contentsOfDirectory(atPath: desktop.path)) ?? [])
-    drag(from: CGPoint(x: editor.midX, y: editor.maxY - 22), to: CGPoint(x: screen.frame.maxX - 120, y: screen.frame.maxY - 220))
+    // Arrástrame está en el centro de la barra de 36.
+    drag(from: CGPoint(x: editor.midX, y: editor.maxY - 18), to: CGPoint(x: screen.frame.maxX - 120, y: screen.frame.maxY - 220))
     wait(1.5)
     let dropped = Set((try? FileManager.default.contentsOfDirectory(atPath: desktop.path)) ?? []).subtracting(before)
     print("Arrástrame al escritorio: \(dropped.isEmpty ? "sin archivo nuevo" : dropped.joined(separator: ", "))")
@@ -645,10 +666,11 @@ if !recognized.isEmpty {
     wait(3)
     shot("e2e-09c-texto-editor")
     if let editor = windowFrame(owner: "Zas") {
-        let middle = editor.midY + 26
+        // Centro del lienzo: entre la barra de 52 y la de 36. La tira mide 380 × 22, sin agrandarse.
+        let middle = editor.midY + 8
         // Las tarjetas que queden flotan sobre el editor: el arrastre empieza a su derecha.
-        let start = max(editor.minX + 60, visible.minX + 18 + 224 + 20)
-        drag(from: CGPoint(x: start, y: middle), to: CGPoint(x: editor.maxX - 60, y: middle))
+        let start = max(editor.midX - 180, visible.minX + 18 + 224 + 20)
+        drag(from: CGPoint(x: start, y: middle), to: CGPoint(x: editor.midX + 180, y: middle))
         wait(0.5)
         shot("e2e-09d-texto-seleccionado")
         NSPasteboard.general.clearContents()

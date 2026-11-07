@@ -14,7 +14,7 @@ final class Toast {
         panel?.orderOut(nil)
 
         let label = NSTextField(labelWithString: text)
-        label.font = large ? .systemFont(ofSize: 44, weight: .semibold) : .systemFont(ofSize: 13, weight: .medium)
+        label.font = large ? .systemFont(ofSize: 44) : .systemFont(ofSize: 13)
         label.lineBreakMode = .byTruncatingMiddle
         label.textColor = Palette.text
         label.alignment = .center
@@ -47,7 +47,7 @@ final class Toast {
         panel.animationBehavior = .none
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
 
-        let background = GlassView(frame: CGRect(origin: .zero, size: size), radius: large ? 24 : size.height / 2)
+        let background = GlassView(frame: CGRect(origin: .zero, size: size), radius: large ? Design.radiusLarge : Design.radiusMedium)
         label.frame.origin = CGPoint(
             x: ((size.width - label.frame.width) / 2).rounded(),
             y: ((size.height - label.frame.height) / 2).rounded()
@@ -67,7 +67,7 @@ final class Toast {
         panel.setFrame(start, display: false)
         panel.orderFrontRegardless()
         panel.invalidateShadow()
-        fade(panel, to: 1, duration: 0.14)
+        fade(panel, to: 1)
         Spring.run(step: { progress in
             panel.setFrame(start.moved(to: target, by: progress), display: true)
         })
@@ -76,8 +76,8 @@ final class Toast {
         hideTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
             guard !Task.isCancelled else { return }
-            self?.fade(panel, to: 0, duration: 0.2)
-            try? await Task.sleep(nanoseconds: 220_000_000)
+            self?.fade(panel, to: 0)
+            try? await Task.sleep(nanoseconds: UInt64((Design.fadeDuration + 0.02) * 1_000_000_000))
             guard !Task.isCancelled else { return }
             panel.orderOut(nil)
             if self?.panel === panel {
@@ -92,9 +92,9 @@ final class Toast {
         panel = nil
     }
 
-    private func fade(_ panel: NSPanel, to alpha: CGFloat, duration: TimeInterval) {
+    private func fade(_ panel: NSPanel, to alpha: CGFloat) {
         NSAnimationContext.beginGrouping()
-        NSAnimationContext.current.duration = duration
+        NSAnimationContext.current.duration = Design.fadeDuration
         panel.animator().alphaValue = alpha
         NSAnimationContext.endGrouping()
     }

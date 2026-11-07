@@ -200,7 +200,8 @@ extension ScrollStitcher {
 /// Dónde van los controles de la captura con desplazamiento, en coordenadas de AppKit.
 /// Se evita pisar la selección: lo que esté dentro de ella podría acabar en la imagen.
 enum ScrollHUDLayout {
-    static let barSize = CGSize(width: 202, height: 32)
+    /// Misma barra que el selector: margen, radio y botones de sus medidas.
+    static let barSize = CGSize(width: 202, height: Design.actionSize + Design.barPadding * 2)
     static let previewWidth: CGFloat = 148
     static let previewMaxHeight: CGFloat = 300
     static let margin: CGFloat = 18
@@ -239,25 +240,27 @@ enum ScrollHUDLayout {
     }
 }
 
-/// Píldora con icono y texto.
-private final class ScrollPillButton: ReactiveButton {
-    init(frame: CGRect, title: String, symbol: String, hint: String, color: NSColor, target: AnyObject, action: Selector) {
+/// Botón de texto de la barra. `Listo` es la acción principal y lleva el acento.
+private final class ScrollBarButton: ReactiveButton {
+    private let isPrimary: Bool
+
+    init(frame: CGRect, title: String, hint: String, isPrimary: Bool, target: AnyObject, action: Selector) {
+        self.isPrimary = isPrimary
         super.init(frame: frame)
         isBordered = false
-        image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
-            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 11, weight: .bold))
-        imagePosition = .imageLeading
-        imageHugsTitle = true
-        contentTintColor = color
         attributedTitle = NSAttributedString(string: title, attributes: [
-            .font: NSFont.systemFont(ofSize: 13, weight: .medium),
-            .foregroundColor: color,
+            .font: NSFont.systemFont(ofSize: 13, weight: isPrimary ? .semibold : .regular),
+            .foregroundColor: isPrimary ? Palette.onAccent : NSColor.labelColor,
         ])
         toolTip = hint
         self.target = target
         self.action = action
+        wantsLayer = true
+        layer?.cornerRadius = Design.barRadius - Design.barPadding
+        layer?.cornerCurve = .continuous
         setAccessibilityLabel(title)
         setAccessibilityHelp(hint)
+        refresh()
     }
 
     required init?(coder: NSCoder) {
@@ -265,7 +268,19 @@ private final class ScrollPillButton: ReactiveButton {
     }
 
     override func reactiveStateChanged() {
-        alphaValue = isPressed ? 0.6 : (isHovering ? 0.85 : 1)
+        refresh()
+    }
+
+    private func refresh() {
+        let fill: NSColor
+        if isPrimary {
+            fill = isPressed ? Palette.accent.withAlphaComponent(0.75) : Palette.accent
+        } else {
+            fill = isPressed ? .tertiaryLabelColor : (isHovering ? .quaternaryLabelColor : .clear)
+        }
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            layer?.backgroundColor = fill.cgColor
+        }
     }
 }
 
@@ -321,39 +336,30 @@ final class ScrollCaptureHUD: NSObject {
     private func buildBar() {
         bar.hasShadow = true
         let size = ScrollHUDLayout.barSize
-        let gap = Design.stackGap
-        let cancelWidth = ((size.width - gap) * 0.54).rounded()
-        let doneWidth = size.width - gap - cancelWidth
-        let container = NSView(frame: CGRect(origin: .zero, size: size))
+        let padding = Design.barPadding
+        let buttonHeight = size.height - padding * 2
+        let doneWidth: CGFloat = 76
+        let glass = GlassView(frame: CGRect(origin: .zero, size: size), radius: Design.barRadius)
 
-        let glass = GlassView(frame: CGRect(x: 0, y: 0, width: cancelWidth, height: size.height), radius: size.height / 2)
-        let cancel = ScrollPillButton(
-            frame: glass.bounds,
+        let cancel = ScrollBarButton(
+            frame: CGRect(x: padding, y: padding, width: size.width - padding * 3 - doneWidth, height: buttonHeight),
             title: "Cancelar",
-            symbol: "xmark",
             hint: "Descarta la captura (Esc)",
-            color: .labelColor,
+            isPrimary: false,
             target: self,
             action: #selector(cancelPressed)
         )
         glass.addSubview(cancel)
-        container.addSubview(glass)
-
-        let done = ScrollPillButton(
-            frame: CGRect(x: cancelWidth + gap, y: 0, width: doneWidth, height: size.height),
+        let done = ScrollBarButton(
+            frame: CGRect(x: size.width - padding - doneWidth, y: padding, width: doneWidth, height: buttonHeight),
             title: "Listo",
-            symbol: "checkmark",
             hint: "Termina y une la captura (Enter)",
-            color: .white,
+            isPrimary: true,
             target: self,
             action: #selector(donePressed)
         )
-        done.wantsLayer = true
-        done.layer?.cornerRadius = size.height / 2
-        done.layer?.cornerCurve = .continuous
-        done.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
-        container.addSubview(done)
-        bar.contentView = container
+        glass.addSubview(done)
+        bar.contentView = glass
     }
 
     private func buildPreview() {
@@ -366,7 +372,7 @@ final class ScrollCaptureHUD: NSObject {
         imageView.layer?.cornerRadius = Design.controlRadius
         imageView.layer?.cornerCurve = .continuous
         imageView.layer?.masksToBounds = true
-        imageView.layer?.borderWidth = 0.5
+        imageView.layer?.borderWidth = Design.lineWidth
         imageView.layer?.borderColor = NSColor.separatorColor.cgColor
         imageView.setAccessibilityElement(true)
         imageView.setAccessibilityRole(.image)
@@ -408,7 +414,7 @@ final class ScrollCaptureHUD: NSObject {
     /// Solo aparece: no viaja, así que no hay nada que quitar con Reducir movimiento.
     private func fade(_ panel: NSPanel) {
         NSAnimationContext.beginGrouping()
-        NSAnimationContext.current.duration = 0.14
+        NSAnimationContext.current.duration = Design.fadeDuration
         panel.animator().alphaValue = 1
         NSAnimationContext.endGrouping()
     }

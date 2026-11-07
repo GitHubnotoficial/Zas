@@ -95,7 +95,7 @@ private enum HistoryMetrics {
     static var step: CGFloat { tile.width + gap }
 }
 
-/// Píldoras de filtro, carrusel con la enfocada en el centro y la acción de abrir.
+/// Control segmentado, carrusel con la enfocada en el centro y la acción de abrir como texto.
 private struct HistoryView: View {
     @ObservedObject var model: HistoryModel
     let onOpen: (URL) -> Void
@@ -125,11 +125,11 @@ private struct HistoryView: View {
     var body: some View {
         VStack(spacing: 0) {
             filters
-                .padding(.top, 20)
+                .padding(.top, 16)
             if model.visible.isEmpty {
                 Text("Aún no hay capturas aquí.")
                     .font(.system(size: 13))
-                    .foregroundStyle(Color.white.opacity(0.75))
+                    .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 carousel
@@ -143,26 +143,14 @@ private struct HistoryView: View {
     }
 
     private var filters: some View {
-        HStack(spacing: 8) {
+        Picker("Filtrar el historial", selection: Binding(get: { model.filter }, set: { model.select($0) })) {
             ForEach(HistoryFilter.allCases, id: \.self) { item in
-                Button {
-                    model.select(item)
-                } label: {
-                    Text(item.rawValue)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(Color.white)
-                        .padding(.horizontal, 14)
-                        .frame(height: 28)
-                        .background(model.filter == item ? Color.accentColor : Color.white.opacity(0.16), in: Capsule())
-                        .contentShape(Capsule())
-                }
-                .buttonStyle(ReactiveButtonStyle())
-                .accessibilityLabel(item.rawValue)
-                .accessibilityAddTraits(model.filter == item ? .isSelected : [])
+                Text(item.rawValue).tag(item)
             }
         }
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Filtrar el historial")
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .fixedSize()
     }
 
     private var carousel: some View {
@@ -204,18 +192,10 @@ private struct HistoryView: View {
                 onOpen(file)
             }
         } label: {
-            HStack(spacing: 5) {
-                Image(systemName: "return")
-                    .font(.system(size: 11, weight: .bold))
-                    .accessibilityHidden(true)
-                Text("Abrir")
-                    .font(.system(size: 13, weight: .semibold))
-            }
-            .foregroundStyle(Color.white)
-            .padding(.horizontal, 14)
-            .frame(height: 26)
-            .background(Color.accentColor, in: Capsule())
-            .contentShape(Capsule())
+            Text("⏎ Abrir")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .contentShape(Rectangle())
         }
         .buttonStyle(ReactiveButtonStyle())
         .accessibilityLabel("Abrir")
@@ -286,12 +266,12 @@ private struct HistoryTile: View {
                     Image(nsImage: preview).resizable().scaledToFill()
                 } else {
                     Image(systemName: isVideo ? "film" : "photo")
-                        .font(.title)
-                        .foregroundStyle(Color.white.opacity(0.6))
+                        .font(.system(size: Design.iconSize * 2))
+                        .foregroundStyle(.secondary)
                 }
             }
             .frame(width: size.width, height: size.height)
-            .background(Color.white.opacity(0.08))
+            .background(Color(nsColor: Palette.group))
             .clipped()
             .accessibilityHidden(true)
 
@@ -303,7 +283,7 @@ private struct HistoryTile: View {
         }
         .frame(width: size.width, height: size.height)
         .clipShape(shape)
-        .overlay(shape.strokeBorder(Color.white.opacity(0.14), lineWidth: 0.5))
+        .overlay(shape.strokeBorder(Color(nsColor: Palette.hairline), lineWidth: Design.lineWidth))
         .overlay(
             RoundedRectangle(cornerRadius: Design.cardRadius + HistoryMetrics.ring, style: .continuous)
                 .strokeBorder(Color.accentColor, lineWidth: HistoryMetrics.ring)
@@ -321,10 +301,10 @@ private struct HistoryTile: View {
                 Text("GIF")
             }
         }
-        .font(.system(size: 10, weight: .bold))
+        .font(.system(size: 10))
         .foregroundStyle(Color.white)
         .padding(.horizontal, 7)
-        .frame(height: 20)
+        .frame(height: 18)
         .background(Color.black.opacity(0.6), in: Capsule())
     }
 }
@@ -349,10 +329,12 @@ private final class HistoryPanel: NSPanel {
     }
 }
 
-/// El historial: una franja de vidrio oscuro a todo el ancho, abajo en la pantalla.
+/// El historial: una franja de material que sigue la apariencia del sistema, abajo en la pantalla.
 @MainActor
 final class HistoryController {
     private static let height: CGFloat = 268
+    /// Aire hasta los bordes de la pantalla.
+    static let inset: CGFloat = 12
     /// Recorrido del trackpad que equivale a pasar una tarjeta.
     private static let wheelStep: CGFloat = 90
 
@@ -382,7 +364,12 @@ final class HistoryController {
     func show() {
         reload()
         let screen = NSScreen.underMouse
-        let frame = CGRect(x: screen.frame.minX, y: screen.frame.minY, width: screen.frame.width, height: Self.height)
+        let frame = CGRect(
+            x: screen.frame.minX + Self.inset,
+            y: screen.frame.minY + Self.inset,
+            width: screen.frame.width - Self.inset * 2,
+            height: Self.height
+        )
         let panel = HistoryPanel(
             contentRect: frame,
             styleMask: [.borderless, .nonactivatingPanel],
@@ -391,17 +378,15 @@ final class HistoryController {
         )
         panel.title = "Historial"
         panel.setAccessibilityLabel("Historial")
-        // Por encima del Dock: la franja llega hasta el borde de la pantalla.
+        // Por encima del Dock: la franja queda a la misma distancia de los tres bordes.
         panel.level = .statusBar
         panel.isOpaque = false
         panel.backgroundColor = .clear
-        panel.hasShadow = false
+        panel.hasShadow = true
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
         panel.animationBehavior = .none
         panel.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary, .ignoresCycle]
-        // El vidrio es oscuro siempre: las carátulas se leen mejor sobre fondo oscuro.
-        panel.appearance = NSAppearance(named: .darkAqua)
         panel.contentView = content(size: frame.size)
         panel.onKey = { [weak self] event in
             self?.handle(event) ?? false
@@ -416,11 +401,12 @@ final class HistoryController {
         panel.alphaValue = 0
         panel.setFrame(start, display: false)
         panel.makeKeyAndOrderFront(nil)
+        panel.invalidateShadow()
         NSAnimationContext.beginGrouping()
-        NSAnimationContext.current.duration = 0.16
+        NSAnimationContext.current.duration = Design.fadeDuration
         panel.animator().alphaValue = 1
         NSAnimationContext.endGrouping()
-        // Amortiguado del todo: un rebote despegaría la franja del borde inferior.
+        // Amortiguado del todo: un rebote se notaría contra el borde de la pantalla.
         // Solo viaja: mover el marco sin volver a dibujar toda la franja en cada cuadro.
         spring = Spring.run(damping: 1, step: { progress in
             panel.setFrameOrigin(start.moved(to: frame, by: progress).origin)
@@ -448,35 +434,19 @@ final class HistoryController {
             return
         }
         NSAnimationContext.beginGrouping()
-        NSAnimationContext.current.duration = 0.14
+        NSAnimationContext.current.duration = Design.fadeDuration
         panel.animator().alphaValue = 0
         NSAnimationContext.endGrouping()
         Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 160_000_000)
+            try? await Task.sleep(nanoseconds: UInt64((Design.fadeDuration + 0.02) * 1_000_000_000))
             panel.orderOut(nil)
         }
     }
 
     private func content(size: CGSize) -> NSView {
         let bounds = CGRect(origin: .zero, size: size)
-        let glass = NSVisualEffectView(frame: bounds)
-        glass.material = .hudWindow
-        glass.blendingMode = .behindWindow
-        glass.state = .active
+        let glass = GlassView(frame: bounds, radius: Design.radiusLarge, material: .hudWindow)
         glass.autoresizingMask = [.width, .height]
-
-        // Oscurece un poco lo que hay detrás, para que el texto se lea sobre cualquier fondo.
-        let tint = NSView(frame: bounds)
-        tint.wantsLayer = true
-        tint.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.3).cgColor
-        tint.autoresizingMask = [.width, .height]
-        glass.addSubview(tint)
-
-        let edge = NSView(frame: CGRect(x: 0, y: size.height - 1, width: size.width, height: 1))
-        edge.wantsLayer = true
-        edge.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.12).cgColor
-        edge.autoresizingMask = [.width, .minYMargin]
-        glass.addSubview(edge)
 
         let host = NSHostingView(rootView: HistoryView(
             model: model,

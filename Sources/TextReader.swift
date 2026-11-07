@@ -18,10 +18,15 @@ struct TextPiece: Equatable {
     let box: CGRect
 }
 
-/// Pone en orden lo que entrega Vision. No reordena columnas: solo arregla lo que se puede saber
-/// con certeza, que es una línea antes que la de arriba y una fila partida en trozos.
+/// Pone en orden lo que entrega Vision. Dos columnas de texto se quedan como están; lo que se
+/// arregla es lo que se puede saber con certeza: una línea antes que la de arriba, una fila
+/// partida en trozos y una tabla, que Vision entrega por columnas y se lee por filas.
 enum TextLayout {
     static func ordered(_ pieces: [TextPiece]) -> String {
+        if let table = tableRows(pieces) {
+            return table.map { row in row.map(\.text).joined(separator: " ") }.joined(separator: "\n")
+        }
+
         var sorted: [TextPiece] = []
         for piece in pieces {
             var index = sorted.count
@@ -44,6 +49,36 @@ enum TextLayout {
                 row.sorted { $0.box.minX < $1.box.minX }.map(\.text).joined(separator: " ")
             }
             .joined(separator: "\n")
+    }
+
+    /// Filas de una tabla, de arriba abajo, o nada si esto no parece una tabla. Lo que la separa de un
+    /// artículo a dos columnas es el aire: sus celdas son cortas y quedan lejos unas de otras.
+    private static func tableRows(_ pieces: [TextPiece]) -> [[TextPiece]]? {
+        guard pieces.count >= 4 else { return nil }
+        var rows: [[TextPiece]] = []
+        for piece in pieces.sorted(by: { $0.box.midY > $1.box.midY }) {
+            if let index = rows.lastIndex(where: { row in row.contains { isSameRow($0, piece) } }) {
+                rows[index].append(piece)
+            } else {
+                rows.append([piece])
+            }
+        }
+        let cells = rows.filter { $0.count >= 2 }
+        guard cells.count >= 2,
+              CGFloat(cells.reduce(0) { $0 + $1.count }) >= CGFloat(pieces.count) * 0.75
+        else { return nil }
+
+        rows = rows.map { row in row.sorted { $0.box.minX < $1.box.minX } }
+        var gaps: [CGFloat] = []
+        for row in rows {
+            for (left, right) in zip(row, row.dropFirst()) {
+                gaps.append(right.box.minX - left.box.maxX)
+            }
+        }
+        guard !gaps.isEmpty else { return nil }
+        let meanGap = gaps.reduce(0, +) / CGFloat(gaps.count)
+        let meanWidth = pieces.reduce(0) { $0 + $1.box.width } / CGFloat(pieces.count)
+        return meanGap > meanWidth * 0.25 ? rows : nil
     }
 
     /// `first` está en la misma columna que `second` y claramente por encima.

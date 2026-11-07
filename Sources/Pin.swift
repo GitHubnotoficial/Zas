@@ -87,7 +87,7 @@ private final class PinCloseButton: ReactiveButton {
     init(target: AnyObject, action: Selector) {
         super.init(frame: .zero)
         image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Cerrar")?
-            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: Design.Card.symbolSize, weight: .semibold))
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: Design.Card.symbolSize, weight: .regular))
         imagePosition = .imageOnly
         isBordered = false
         contentTintColor = Design.Card.ink
@@ -121,7 +121,7 @@ private final class PinView: NSView {
         layer?.cornerRadius = Design.Card.radius
         layer?.cornerCurve = .continuous
         layer?.masksToBounds = true
-        layer?.borderWidth = 0.5
+        layer?.borderWidth = Design.lineWidth
         refreshBorder()
         setAccessibilityElement(true)
         setAccessibilityRole(.image)

@@ -11,7 +11,7 @@ private final class FlippedView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         Palette.hairline.setFill()
         for y in lines {
-            NSBezierPath(rect: CGRect(x: BackgroundPanel.side, y: y, width: bounds.width - BackgroundPanel.side * 2, height: 1)).fill()
+            NSBezierPath(rect: CGRect(x: BackgroundPanel.side, y: y, width: bounds.width - BackgroundPanel.side * 2, height: Design.lineWidth)).fill()
         }
     }
 }
@@ -63,14 +63,14 @@ private final class SwatchButton: ReactiveButton {
     }
 
     override func drawFocusRingMask() {
-        NSBezierPath(roundedRect: area, xRadius: radius, yRadius: radius).fill()
+        NSBezierPath.continuous(in: area, radius: radius).fill()
     }
 
     override var focusRingMaskBounds: NSRect { bounds }
 
     override func draw(_ dirtyRect: NSRect) {
         guard let context = NSGraphicsContext.current?.cgContext else { return }
-        let shape = NSBezierPath(roundedRect: area, xRadius: radius, yRadius: radius)
+        let shape = NSBezierPath.continuous(in: area, radius: radius)
 
         Palette.group.setFill()
         shape.fill()
@@ -89,94 +89,16 @@ private final class SwatchButton: ReactiveButton {
 
         // Contorno suave: si no, las muestras claras se pierden en el panel.
         Palette.hairline.setStroke()
-        shape.lineWidth = 0.5
+        shape.lineWidth = Design.lineWidth
         shape.stroke()
 
         if isChosen {
             Palette.accent.setStroke()
             let reach = ringGap + ringWidth / 2
-            let ring = NSBezierPath(roundedRect: area.insetBy(dx: -reach, dy: -reach), xRadius: radius + reach, yRadius: radius + reach)
+            let ring = NSBezierPath.continuous(in: area.insetBy(dx: -reach, dy: -reach), radius: radius + reach)
             ring.lineWidth = ringWidth
             ring.stroke()
         }
-    }
-}
-
-/// Casilla propia: su dibujo es de Zas, su papel y su estado siguen siendo los de una casilla del sistema.
-private final class PanelCheckbox: ReactiveButton {
-    private let label: String
-
-    override var isFlipped: Bool { false }
-
-    override var isEnabled: Bool {
-        didSet { alphaValue = isEnabled ? 1 : 0.45 }
-    }
-
-    override var state: NSControl.StateValue {
-        didSet { needsDisplay = true }
-    }
-
-    private static let gap: CGFloat = 7
-    private static var attributes: [NSAttributedString.Key: Any] {
-        [.font: NSFont.systemFont(ofSize: 12, weight: .medium), .foregroundColor: Palette.text]
-    }
-
-    init(title: String, target: AnyObject, action: Selector) {
-        label = title
-        let text = (title as NSString).size(withAttributes: PanelCheckbox.attributes)
-        super.init(frame: CGRect(x: 0, y: 0, width: Design.checkbox + PanelCheckbox.gap + text.width.rounded(.up), height: Design.checkbox))
-        setButtonType(.switch)
-        self.title = ""
-        isBordered = false
-        self.target = target
-        self.action = action
-        setAccessibilityLabel(title)
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) no se usa")
-    }
-
-    override func drawFocusRingMask() {
-        NSBezierPath(roundedRect: CGRect(x: 0, y: 0, width: Design.checkbox, height: Design.checkbox), xRadius: Design.checkboxRadius, yRadius: Design.checkboxRadius).fill()
-    }
-
-    override var focusRingMaskBounds: NSRect { bounds }
-
-    override func draw(_ dirtyRect: NSRect) {
-        let side = Design.checkbox
-        let top = (bounds.height - side) / 2
-        let frame = CGRect(x: 0, y: top, width: side, height: side)
-        let box = NSBezierPath(roundedRect: frame, xRadius: Design.checkboxRadius, yRadius: Design.checkboxRadius)
-        let isOn = state == .on
-        (isOn ? Palette.accent : Palette.pill).setFill()
-        box.fill()
-        if isPressed {
-            Palette.pressed.setFill()
-            box.fill()
-        } else if isHovering, isEnabled {
-            Palette.hover.setFill()
-            box.fill()
-        }
-        Palette.softEdge.setStroke()
-        box.lineWidth = 0.5
-        box.stroke()
-
-        if isOn {
-            let check = NSBezierPath()
-            check.move(to: CGPoint(x: frame.minX + 4.8, y: frame.midY))
-            check.line(to: CGPoint(x: frame.minX + 7.8, y: frame.midY - 3.2))
-            check.line(to: CGPoint(x: frame.minX + 13.2, y: frame.midY + 3.6))
-            check.lineWidth = 2
-            check.lineCapStyle = .round
-            check.lineJoinStyle = .round
-            Palette.onAccent.setStroke()
-            check.stroke()
-        }
-
-        let text = label as NSString
-        let size = text.size(withAttributes: Self.attributes)
-        text.draw(at: CGPoint(x: side + Self.gap, y: bounds.midY - size.height / 2), withAttributes: Self.attributes)
     }
 }
 
@@ -192,6 +114,13 @@ final class BackgroundPanel: NSView {
     static let width: CGFloat = 232
     /// Relleno lateral. La referencia manda: cinco muestras de 34 con 9 de separación llenan justo este ancho.
     static let side: CGFloat = 13
+    /// Seis columnas de 28: la primera muestra es Ninguno.
+    private static let swatch: CGFloat = 28
+    private static let swatchPitch: CGFloat = 35.6
+    private static let perGradientRow = 6
+    /// Diez degradados sobrios. Son posiciones de `BackdropArt.gradients`: los proyectos guardados
+    /// con uno de los demás siguen abriéndose igual.
+    private static let gradientChoices = [7, 10, 12, 13, 3, 1, 5, 14, 9, 11]
 
     /// Cada cambio del fondo. El segundo valor es `false` mientras un deslizador sigue en movimiento.
     var onChange: ((Backdrop?, Bool) -> Void)?
@@ -222,6 +151,7 @@ final class BackgroundPanel: NSView {
 
     private var presetButton: PillControl?
     private var presetMenu = NSMenu()
+    private var noneButton: SwatchButton?
     private var gradientButtons: [SwatchButton] = []
     private var solidButtons: [SwatchButton] = []
     private var clearButton: SwatchButton?
@@ -234,7 +164,7 @@ final class BackgroundPanel: NSView {
     private var insetSlider: NSSlider?
     private var shadowSlider: NSSlider?
     private var cornersSlider: NSSlider?
-    private var balanceBox: PanelCheckbox?
+    private var balanceBox: NSButton?
     private var marginValue: ValueChip?
     /// Se construye al abrirlo: cuarenta muestras no deben retrasar cada editor que se abre.
     private var isBuilt = false
@@ -263,7 +193,7 @@ final class BackgroundPanel: NSView {
         Palette.window.setFill()
         NSBezierPath(rect: bounds).fill()
         Palette.hairline.setFill()
-        NSBezierPath(rect: CGRect(x: bounds.maxX - 1, y: 0, width: 1, height: bounds.height)).fill()
+        NSBezierPath(rect: CGRect(x: bounds.maxX - Design.lineWidth, y: 0, width: Design.lineWidth, height: bounds.height)).fill()
     }
 
     // MARK: - Construcción
@@ -271,8 +201,8 @@ final class BackgroundPanel: NSView {
     private func build() {
         let side = Self.side
         let inner = Self.width - side * 2
-        let swatch: CGFloat = 34
-        let pitch = swatch + 9
+        let swatch = Self.swatch
+        let pitch = Self.swatchPitch
         var y: CGFloat = 14
         var lines: [CGFloat] = []
 
@@ -296,75 +226,89 @@ final class BackgroundPanel: NSView {
         // Ajustes guardados: fila con su flecha y, fuera, un + fino.
         let presets = PillControl(
             content: .leadingText("Ajustes guardados"),
-            width: inner - 26,
-            height: 32,
+            width: inner - 28,
+            height: Design.controlSize,
             radius: Design.panelRadius,
+            surface: .group,
             tooltip: "Ajustes guardados",
+            chevron: true,
             target: self,
             action: #selector(presetsPressed(_:))
         )
         presets.frame.origin = CGPoint(x: side, y: y)
         body.addSubview(presets)
         presetButton = presets
-        let save = PillControl(content: .symbol("plus"), width: 20, height: 32, radius: 6, surface: .clear, tooltip: "Guardar el ajuste actual", chevron: false, target: self, action: #selector(savePreset))
-        save.symbolSize = 13
-        save.symbolWeight = .light
+        let save = PillControl(content: .symbol("plus"), width: 22, tooltip: "Guardar el ajuste actual", target: self, action: #selector(savePreset))
         save.tint = Palette.secondaryText
-        save.frame.origin = CGPoint(x: Self.width - side - 20, y: y)
+        save.frame.origin = CGPoint(x: Self.width - side - 22, y: y)
         body.addSubview(save)
         rebuildPresets()
-        y += 40
+        y += Design.controlSize + 8
 
-        // Ninguno.
-        let none = PillControl(content: .text("Ninguno"), width: inner, height: 36, radius: Design.panelRadius, surface: .group, tooltip: "Quitar el fondo", chevron: false, target: self, action: #selector(nonePressed))
-        none.frame.origin = CGPoint(x: side, y: y)
-        body.addSubview(none)
-        y += 36 + 14
-
-        // Degradados: cinco por fila.
+        // Degradados. Ninguno es la primera muestra: quitar el fondo es elegir otro fondo.
         caption("Degradados")
-        for (index, gradient) in BackdropArt.gradients.enumerated() {
-            let button = SwatchButton(side: swatch, radius: 10, label: gradient.name, target: self, action: #selector(gradientPressed(_:)))
+        let columns = Self.perGradientRow
+        func placeGrid(_ button: SwatchButton, slot: Int) {
+            button.place(at: CGPoint(
+                x: (side + CGFloat(slot % columns) * pitch).rounded(),
+                y: y + (CGFloat(slot / columns) * pitch).rounded()
+            ))
+            body.addSubview(button)
+        }
+        let none = SwatchButton(side: swatch, radius: Design.panelRadius, label: "Ninguno", target: self, action: #selector(nonePressed))
+        none.paint = { rect, context in
+            // Una raya en diagonal: el signo de "sin nada".
+            context.setStrokeColor(Palette.secondaryText.cgColor)
+            context.setLineWidth(1.5)
+            context.move(to: CGPoint(x: rect.minX, y: rect.minY))
+            context.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+            context.strokePath()
+        }
+        placeGrid(none, slot: 0)
+        noneButton = none
+        for (slot, index) in Self.gradientChoices.enumerated() {
+            let gradient = BackdropArt.gradients[index]
+            let button = SwatchButton(side: swatch, radius: Design.panelRadius, label: gradient.name, target: self, action: #selector(gradientPressed(_:)))
             button.tag = index
             button.paint = { rect, context in
                 BackdropArt.drawGradient(index, in: rect, context: context)
             }
-            button.place(at: CGPoint(x: side + CGFloat(index % 5) * pitch, y: y + CGFloat(index / 5) * pitch))
-            body.addSubview(button)
+            placeGrid(button, slot: slot + 1)
             gradientButtons.append(button)
         }
-        y += 4 * pitch - 9
+        y += 2 * pitch - (pitch - swatch)
         sectionBreak()
 
         // Imágenes.
         caption("Imágenes")
-        let picture = SwatchButton(side: swatch, radius: 10, label: "Última imagen", target: self, action: #selector(lastPicturePressed))
+        let picture = SwatchButton(side: swatch, radius: Design.panelRadius, label: "Última imagen", target: self, action: #selector(lastPicturePressed))
         picture.place(at: CGPoint(x: side, y: y))
         body.addSubview(picture)
         pictureButton = picture
-        let add = PillControl(content: .symbol("plus"), width: swatch, height: swatch, radius: 10, surface: .group, tooltip: "Elegir una imagen propia", chevron: false, target: self, action: #selector(addPicturePressed))
-        add.symbolSize = 13
-        add.frame.origin = CGPoint(x: side + pitch, y: y)
+        // Solo el +: sin cuadro, no parece un hueco vacío.
+        let add = PillControl(content: .symbol("plus"), width: swatch, height: swatch, tooltip: "Elegir una imagen propia", target: self, action: #selector(addPicturePressed))
+        add.tint = Palette.secondaryText
+        add.frame.origin = CGPoint(x: (side + pitch).rounded(), y: y)
         body.addSubview(add)
         y += swatch
         sectionBreak()
 
         // Difuminado.
         caption("Difuminado")
-        let blur = SwatchButton(side: swatch, radius: 10, label: "La captura difuminada", target: self, action: #selector(softPressed(_:)))
+        let blur = SwatchButton(side: swatch, radius: Design.panelRadius, label: "La captura difuminada", target: self, action: #selector(softPressed(_:)))
         blur.tag = 0
-        let white = SwatchButton(side: swatch, radius: 10, label: "Blanco suave", target: self, action: #selector(softPressed(_:)))
+        let white = SwatchButton(side: swatch, radius: Design.panelRadius, label: "Blanco suave", target: self, action: #selector(softPressed(_:)))
         white.tag = 1
         white.paint = { rect, context in
             BackdropArt.drawSoft(white: true, in: rect, context: context)
         }
-        let gray = SwatchButton(side: swatch, radius: 10, label: "Gris suave", target: self, action: #selector(softPressed(_:)))
+        let gray = SwatchButton(side: swatch, radius: Design.panelRadius, label: "Gris suave", target: self, action: #selector(softPressed(_:)))
         gray.tag = 2
         gray.paint = { rect, context in
             BackdropArt.drawSoft(white: false, in: rect, context: context)
         }
         for (index, button) in [blur, white, gray].enumerated() {
-            button.place(at: CGPoint(x: side + CGFloat(index) * pitch, y: y))
+            button.place(at: CGPoint(x: (side + CGFloat(index) * pitch).rounded(), y: y))
             body.addSubview(button)
         }
         blurButton = blur
@@ -451,7 +395,9 @@ final class BackgroundPanel: NSView {
         // Interior, con la casilla en su misma fila.
         caption("Interior")
         insetSlider = slider("Interior", min: 0, max: 80, x: side, width: 88, y: y)
-        let box = PanelCheckbox(title: "Autoequilibrar", target: self, action: #selector(balanceChanged(_:)))
+        let box = NSButton(checkboxWithTitle: "Autoequilibrar", target: self, action: #selector(balanceChanged(_:)))
+        box.font = .systemFont(ofSize: 13)
+        box.sizeToFit()
         box.frame.origin = CGPoint(x: Self.width - side - box.frame.width, y: y)
         box.toolTip = "Centra el contenido igualando el color del borde"
         body.addSubview(box)
@@ -466,6 +412,7 @@ final class BackgroundPanel: NSView {
         y += 24
         shadowSlider = slider("Sombra", min: 0, max: 1, x: side, width: half, y: y)
         cornersSlider = slider("Esquinas", min: 0, max: 40, x: side + half + 14, width: half, y: y)
+        // Dieciséis de margen abajo: el panel respira igual aunque se desplace hasta el final.
         y += 18 + 16
 
         body.frame = CGRect(x: 0, y: 0, width: Self.width, height: y)
@@ -514,9 +461,10 @@ final class BackgroundPanel: NSView {
 
     private func refresh() {
         let current = backdrop
+        noneButton?.isChosen = current == nil
         let isGradient = current?.kind == .gradient
-        for (index, button) in gradientButtons.enumerated() {
-            button.isChosen = isGradient && current?.gradient == index
+        for button in gradientButtons {
+            button.isChosen = isGradient && current?.gradient == button.tag
         }
         pictureButton?.isChosen = current?.kind == .picture
         blurButton?.isChosen = current?.kind == .ownBlur
@@ -798,7 +746,9 @@ final class BackgroundPanel: NSView {
 
     #if ZAS_TEST
     var testIsBuilt: Bool { isBuilt }
-    var testChosenGradient: Int? { gradientButtons.firstIndex { $0.isChosen } }
+    var testChosenGradient: Int? { gradientButtons.first { $0.isChosen }?.tag }
+    var testGradientCount: Int { gradientButtons.count }
+    var testNoneIsChosen: Bool { noneButton?.isChosen == true }
     var testHasBlurSwatch: Bool { captureBlur != nil }
 
     func testSetMargin(_ value: Double) {

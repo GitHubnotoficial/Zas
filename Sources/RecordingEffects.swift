@@ -133,7 +133,7 @@ final class RecordingEffects {
         fade.toValue = 0
         let group = CAAnimationGroup()
         group.animations = [scale, fade]
-        group.duration = 0.45
+        group.duration = Design.clickRingDuration
         group.timingFunction = CAMediaTimingFunction(name: .easeOut)
         ring.opacity = 0
         ring.add(group, forKey: nil)

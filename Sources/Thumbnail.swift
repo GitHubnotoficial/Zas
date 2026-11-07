@@ -1,24 +1,37 @@
+@preconcurrency import AVFoundation
 import AppKit
-import CoreImage
 import UniformTypeIdentifiers
 
 extension Design {
-    /// Tarjetas y controles que flotan sobre ellas. Son claros en los dos modos: van sobre una captura.
+    /// Tarjetas y controles que flotan sobre ellas. Van sobre una captura: como en Vista Rápida,
+    /// son un HUD oscuro con texto blanco en los dos modos.
     enum Card {
-        static let radius: CGFloat = 10
+        static let radius = Design.radiusMedium
         static let pillSize = CGSize(width: 64, height: 22)
         static let circleSize = CGSize(width: 20, height: 20)
+        static let rowButton = CGSize(width: 28, height: 24)
+        static let playSize = CGSize(width: 36, height: 36)
         static let gap: CGFloat = 6
         /// Aire a cada lado cuando un aviso no cabe en la píldora.
         static let pillPadding: CGFloat = 8
-        static let titleSize: CGFloat = 11
+        static let titleSize: CGFloat = 12
         static let symbolSize: CGFloat = 10
+        static let rowSymbolSize: CGFloat = 14
+        /// Más baja que esto, Copiar y Guardar van uno junto al otro.
+        static let shortHeight: CGFloat = 110
+        /// Más baja que esto, un video no tiene sitio para sus píldoras bajo el botón de reproducir.
+        static let videoShortHeight: CGFloat = 140
         static let outlineWidth: CGFloat = 2
-        static let controlFill = NSColor(white: 1, alpha: 0.85)
-        static let controlHover = NSColor.white
-        static let controlPressed = NSColor(white: 0.86, alpha: 1)
-        static let ink = NSColor(white: 0.1, alpha: 1)
-        static let veil = NSColor.black.withAlphaComponent(0.42)
+        /// Controles de las capturas fijadas, que no llevan material.
+        static let controlFill = NSColor.black.withAlphaComponent(0.55)
+        static let controlHover = NSColor.black.withAlphaComponent(0.7)
+        static let controlPressed = NSColor.black.withAlphaComponent(0.8)
+        static let ink = NSColor.white
+        static let hoverWash = NSColor.white.withAlphaComponent(0.12)
+        static let pressedWash = NSColor.white.withAlphaComponent(0.2)
+        static let veil = NSColor.black.withAlphaComponent(0.3)
+        /// Filo interior: separa la tarjeta de una captura del mismo color que el fondo.
+        static let rim = NSColor.white.withAlphaComponent(0.12)
         /// Sombra propia, más suave y amplia que la del sistema.
         static let shadowColor = NSColor.black
         static let shadowOpacity: Float = 0.28
@@ -295,9 +308,13 @@ final class ThumbnailController {
         let outside = (target.width + Design.edgeMargin) * outwardSign(of: target)
         let start = source.flatMap { $0.width >= 24 && $0.height >= 24 ? $0 : nil }
             ?? target.offsetBy(dx: outside, dy: 0)
-        panel.setFrame(start, display: false)
+        // Con Reducir movimiento no hay vuelo: la tarjeta aparece en su sitio con un fundido.
+        panel.setFrame(Design.reduceMotion ? target : start, display: false)
         if !isSuspended {
             panel.orderFrontRegardless()
+            if Design.reduceMotion {
+                fadeIn(panel)
+            }
         }
         layoutItems()
         // Mientras está escondida no corre el tiempo: se cuenta desde que se vuelva a ver.
@@ -305,6 +322,14 @@ final class ThumbnailController {
             startTimer(item)
             revealOutline()
         }
+    }
+
+    private func fadeIn(_ panel: NSPanel) {
+        panel.alphaValue = 0
+        NSAnimationContext.beginGrouping()
+        NSAnimationContext.current.duration = Design.fadeDuration
+        panel.animator().alphaValue = 1
+        NSAnimationContext.endGrouping()
     }
 
     /// Esconde la pila para que no salga en una captura.
@@ -560,33 +585,90 @@ final class ThumbnailController {
     #endif
 }
 
-/// Control sobre la tarjeta: claro y liso, para leerse igual sobre cualquier captura.
-/// El contorno se pinta encima de todo, pero los clics lo atraviesan.
+/// El contorno y el filo se pintan encima de la imagen, pero los clics los atraviesan.
 private final class OutlineView: NSView {
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
 
+/// Control sobre la tarjeta. Oscuro en los dos modos: se lee igual sobre cualquier captura.
 private final class CardControl: ReactiveButton {
-    private let minimumWidth: CGFloat
+    enum Style {
+        /// La acción principal, con el acento.
+        case accent
+        /// HUD oscuro de material.
+        case material
+        /// Solo el glifo, con una sombra suave para separarse de la imagen.
+        case plain
+    }
 
-    init(title: String? = nil, symbol: String? = nil, label: String, size: CGSize, target: AnyObject, action: Selector) {
+    private let minimumWidth: CGFloat
+    private let wash = NSView()
+    private let titleLabel = NSTextField(labelWithString: "")
+
+    init(
+        title: String? = nil,
+        symbol: String? = nil,
+        symbolSize: CGFloat = Design.Card.symbolSize,
+        label: String,
+        size: CGSize,
+        radius: CGFloat = Design.radiusSmall,
+        style: Style,
+        target: AnyObject,
+        action: Selector
+    ) {
         minimumWidth = size.width
         super.init(frame: CGRect(origin: .zero, size: size))
+        self.title = ""
         isBordered = false
         toolTip = label
-        contentTintColor = Design.Card.ink
         self.target = target
         self.action = action
+        wantsLayer = true
+        appearance = NSAppearance(named: .darkAqua)
+        layer?.cornerRadius = radius
+        layer?.cornerCurve = .continuous
+
+        switch style {
+        case .accent:
+            layer?.backgroundColor = Palette.accent.cgColor
+        case .material:
+            let material = GlassView(frame: bounds, radius: radius, material: .hudWindow, blending: .withinWindow)
+            material.autoresizingMask = [.width, .height]
+            addSubview(material)
+        case .plain:
+            break
+        }
+
+        wash.frame = bounds
+        wash.autoresizingMask = [.width, .height]
+        wash.wantsLayer = true
+        wash.layer?.cornerRadius = radius
+        wash.layer?.cornerCurve = .continuous
+        addSubview(wash)
+
         if let symbol {
-            image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)?
-                .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: Design.Card.symbolSize, weight: .semibold))
-            imagePosition = .imageOnly
+            let configuration = NSImage.SymbolConfiguration(pointSize: symbolSize, weight: .regular)
+                .applying(NSImage.SymbolConfiguration(paletteColors: [Design.Card.ink]))
+            let glyph = NSImageView(frame: bounds)
+            glyph.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?.withSymbolConfiguration(configuration)
+            glyph.imageScaling = .scaleNone
+            glyph.autoresizingMask = [.width, .height]
+            glyph.setAccessibilityElement(false)
+            if style == .plain {
+                let shadow = NSShadow()
+                shadow.shadowColor = NSColor.black.withAlphaComponent(0.5)
+                shadow.shadowBlurRadius = 2
+                glyph.shadow = shadow
+            }
+            addSubview(glyph)
         }
         if let title {
+            titleLabel.font = .systemFont(ofSize: Design.Card.titleSize, weight: style == .accent ? .semibold : .regular)
+            titleLabel.textColor = Design.Card.ink
+            titleLabel.setAccessibilityElement(false)
+            addSubview(titleLabel)
             showTitle(title)
         }
-        wantsLayer = true
-        layer?.cornerRadius = size.height / 2
         setAccessibilityLabel(label)
         refresh()
     }
@@ -595,17 +677,20 @@ private final class CardControl: ReactiveButton {
         fatalError("init(coder:) no se usa")
     }
 
+    /// Todo el botón responde, también encima de su material o de su texto.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        super.hitTest(point) == nil ? nil : self
+    }
+
     /// Un aviso largo, como "Ruta copiada", ensancha la píldora en vez de cortarse.
     func showTitle(_ text: String) {
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.alignment = .center
-        let title = NSAttributedString(string: text, attributes: [
-            .font: NSFont.systemFont(ofSize: Design.Card.titleSize, weight: .medium),
-            .foregroundColor: Design.Card.ink,
-            .paragraphStyle: paragraph,
-        ])
-        attributedTitle = title
-        frame.size.width = max(minimumWidth, ceil(title.size().width) + Design.Card.pillPadding * 2)
+        titleLabel.stringValue = text
+        titleLabel.sizeToFit()
+        frame.size.width = max(minimumWidth, ceil(titleLabel.frame.width) + Design.Card.pillPadding * 2)
+        titleLabel.frame.origin = CGPoint(
+            x: ((bounds.width - titleLabel.frame.width) / 2).rounded(),
+            y: ((bounds.height - titleLabel.frame.height) / 2).rounded()
+        )
     }
 
     override func reactiveStateChanged() {
@@ -613,8 +698,8 @@ private final class CardControl: ReactiveButton {
     }
 
     private func refresh() {
-        let fill = isPressed ? Design.Card.controlPressed : (isHovering ? Design.Card.controlHover : Design.Card.controlFill)
-        layer?.backgroundColor = fill.cgColor
+        let fill: NSColor = isPressed ? Design.Card.pressedWash : (isHovering ? Design.Card.hoverWash : .clear)
+        wash.layer?.backgroundColor = fill.cgColor
     }
 }
 
@@ -670,17 +755,26 @@ private final class ThumbnailView: NSView, NSDraggingSource {
     private var noticeTask: Task<Void, Never>?
     private var outlineTask: Task<Void, Never>?
     private(set) var isOutlined = false
+    /// Largo del video, cuando ya se leyó.
+    private var durationText: String?
 
-    /// Oscurece y desenfoca la captura para que los controles se lean sobre cualquier imagen.
+    /// Oscurece la captura para que los controles se lean sobre cualquier imagen. La captura se sigue viendo.
     private let veil = NSView()
+    private let rim = OutlineView()
     private let outline = OutlineView()
-    private let badge = GlassView(frame: .zero, radius: 11, blending: .withinWindow)
+    private let badge = GlassView(frame: .zero, radius: 9, material: .hudWindow, blending: .withinWindow)
     private let badgeLabel = NSTextField(labelWithString: "")
-    /// Apiladas en el centro. La primera es siempre Copiar.
+    private let badgeIcon = NSImageView()
+    /// La primera es siempre Copiar.
     private var pills: [CardControl] = []
-    private var corners: [(button: CardControl, right: Bool, top: Bool)] = []
+    private var closeButton: CardControl?
+    /// Fila inferior de iconos.
+    private var row: [CardControl] = []
+    private var playButton: CardControl?
 
-    private var controls: [CardControl] { pills + corners.map { $0.button } }
+    private var controls: [CardControl] {
+        pills + [closeButton].compactMap { $0 } + row + [playButton].compactMap { $0 }
+    }
     var actionCount: Int { controls.count }
     var actionLabels: [String] { controls.compactMap { $0.accessibilityLabel() } }
 
@@ -701,10 +795,14 @@ private final class ThumbnailView: NSView, NSDraggingSource {
         setAccessibilityLabel(kind == .video ? "Video capturado" : (kind == .text ? "Texto capturado" : "Captura"))
         buildBadge()
         buildVeil()
+        buildRim()
         buildControls()
         buildOutline()
         layoutCard()
         prepareImages(needsPreview: preview == nil)
+        if kind == .video {
+            loadDuration()
+        }
     }
 
     required init?(coder: NSCoder) {
@@ -732,89 +830,142 @@ private final class ThumbnailView: NSView, NSDraggingSource {
 
     private func layoutCard() {
         veil.frame = bounds
+        rim.frame = bounds
         outline.frame = bounds
 
         let gap = Design.Card.gap
-        let height = pills.reduce(-gap) { $0 + $1.frame.height + gap }
-        var top = ((bounds.height + height) / 2).rounded()
-        for pill in pills {
-            let size = pill.frame.size
-            pill.frame.origin = CGPoint(x: ((bounds.width - size.width) / 2).rounded(), y: top - size.height)
-            top -= size.height + gap
+        if let closeButton {
+            closeButton.frame.origin = CGPoint(x: gap, y: bounds.height - gap - closeButton.frame.height)
         }
 
-        for corner in corners {
-            let size = corner.button.frame.size
-            corner.button.frame.origin = CGPoint(
-                x: corner.right ? bounds.width - gap - size.width : gap,
-                y: corner.top ? bounds.height - gap - size.height : gap
+        let rowSize = Design.Card.rowButton
+        let rowWidth = CGFloat(row.count) * rowSize.width + CGFloat(max(row.count - 1, 0)) * 2
+        var x = ((bounds.width - rowWidth) / 2).rounded()
+        for button in row {
+            button.frame.origin = CGPoint(x: x, y: gap - 2)
+            x += rowSize.width + 2
+        }
+
+        // La altura final, no la del momento: la tarjeta nace del tamaño de la selección y encoge.
+        if let playButton {
+            let size = playButton.frame.size
+            let center = CGPoint(x: ((bounds.width - size.width) / 2).rounded(), y: ((bounds.height - size.height) / 2).rounded())
+            playButton.frame.origin = center
+            if cardSize.height < Design.Card.videoShortHeight {
+                placePillsInRow(endingAt: bounds.width - gap, y: bounds.height - gap - Design.Card.pillSize.height)
+            } else {
+                let width = pillRowWidth
+                placePillsInRow(
+                    endingAt: ((bounds.width + width) / 2).rounded(),
+                    y: center.y - gap - Design.Card.pillSize.height
+                )
+            }
+        } else if pills.count > 1, cardSize.height < Design.Card.shortHeight {
+            let width = pillRowWidth
+            placePillsInRow(
+                endingAt: ((bounds.width + width) / 2).rounded(),
+                y: ((bounds.height - Design.Card.pillSize.height) / 2).rounded()
             )
+        } else {
+            let height = pills.reduce(-gap) { $0 + $1.frame.height + gap }
+            var top = ((bounds.height + height) / 2).rounded()
+            for pill in pills {
+                let size = pill.frame.size
+                pill.frame.origin = CGPoint(x: ((bounds.width - size.width) / 2).rounded(), y: top - size.height)
+                top -= size.height + gap
+            }
+        }
+    }
+
+    private var pillRowWidth: CGFloat {
+        pills.reduce(-Design.Card.gap) { $0 + $1.frame.width + Design.Card.gap }
+    }
+
+    /// Copiar y Guardar uno junto al otro, con el último pegado a `right`.
+    private func placePillsInRow(endingAt right: CGFloat, y: CGFloat) {
+        var x = right - pillRowWidth
+        for pill in pills {
+            pill.frame.origin = CGPoint(x: x, y: y)
+            x += pill.frame.width + Design.Card.gap
         }
     }
 
     private func buildVeil() {
         veil.wantsLayer = true
-        veil.layer?.contentsGravity = .resizeAspectFill
+        veil.layer?.backgroundColor = Design.Card.veil.cgColor
         veil.alphaValue = 0
-        let scrim = NSView(frame: veil.bounds)
-        scrim.wantsLayer = true
-        scrim.layer?.backgroundColor = Design.Card.veil.cgColor
-        scrim.autoresizingMask = [.width, .height]
-        veil.addSubview(scrim)
         addSubview(veil)
     }
 
-    /// La propia captura difuminada: se ve en cualquier fondo y no depende de lo que haya detrás del panel.
-    /// Se calcula aparte y por adelantado: así el primer paso del cursor responde al instante.
+    private func buildRim() {
+        rim.wantsLayer = true
+        rim.layer?.cornerRadius = Design.Card.radius
+        rim.layer?.cornerCurve = .continuous
+        rim.layer?.borderWidth = Design.lineWidth
+        rim.layer?.borderColor = Design.Card.rim.cgColor
+        addSubview(rim)
+    }
+
+    /// Copia pequeña para no redibujar la captura entera. Se calcula aparte: la tarjeta aparece al instante.
     private func prepareImages(needsPreview: Bool) {
-        guard let source = shown.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return }
+        guard needsPreview, let source = shown.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return }
         let box = Unchecked(value: source)
         let size = image.size
         Task { @MainActor [weak self] in
-            let result = await Task.detached(priority: .utility) { () -> Unchecked<(CGImage?, CGImage?)> in
-                let small = needsPreview ? ImageTools.reduced(box.value, longestSide: 640) : nil
-                return Unchecked(value: (small, ImageTools.veil(from: small ?? box.value)))
+            let small = await Task.detached(priority: .utility) {
+                Unchecked(value: ImageTools.reduced(box.value, longestSide: 640))
             }.value
-            guard let self else { return }
-            if let small = result.value.0 {
-                self.shown = NSImage(cgImage: small, size: size)
-                self.needsDisplay = true
-            }
-            self.veil.layer?.contents = result.value.1
+            guard let self, let reduced = small.value else { return }
+            self.shown = NSImage(cgImage: reduced, size: size)
+            self.needsDisplay = true
         }
     }
 
-    var hasVeil: Bool { veil.layer?.contents != nil }
+    /// Un archivo que no es un video de verdad se queda con la marca "Video".
+    private func loadDuration() {
+        let asset = AVURLAsset(url: file)
+        Task { @MainActor [weak self] in
+            guard let seconds = try? await asset.load(.duration).seconds, seconds.isFinite, seconds > 0 else { return }
+            self?.durationText = VideoSheet.timeLabel(seconds)
+            self?.refreshBadge()
+        }
+    }
+
+    var hasVeil: Bool { veil.layer?.backgroundColor != nil }
 
     /// Ancho en pixeles de lo que la tarjeta redibuja.
     var drawnPixels: Int {
         shown.cgImage(forProposedRect: nil, context: nil, hints: nil)?.width ?? 0
     }
 
-    private func makePill(_ title: String, label: String, action: Selector) -> CardControl {
-        CardControl(title: title, label: label, size: Design.Card.pillSize, target: self, action: action)
-    }
-
-    private func makeCircle(_ symbol: String, label: String, action: Selector) -> CardControl {
-        CardControl(symbol: symbol, label: label, size: Design.Card.circleSize, target: self, action: action)
+    private func makeRowButton(_ symbol: String, label: String, action: Selector) -> CardControl {
+        CardControl(symbol: symbol, symbolSize: Design.Card.rowSymbolSize, label: label, size: Design.Card.rowButton, style: .plain, target: self, action: action)
     }
 
     /// En reposo no se ve nada de esto: la captura manda. El resto de opciones está en el clic derecho.
     private func buildControls() {
-        pills = [makePill("Copiar", label: "Copiar", action: #selector(copyAgain))]
-        corners = [(makeCircle("xmark", label: "Cerrar", action: #selector(closeCard)), false, true)]
+        pills = [CardControl(title: "Copiar", label: "Copiar", size: Design.Card.pillSize, style: .accent, target: self, action: #selector(copyAgain))]
+        let circle = Design.Card.circleSize
+        closeButton = CardControl(symbol: "xmark", label: "Cerrar", size: circle, radius: circle.height / 2, style: .material, target: self, action: #selector(closeCard))
 
         if kind != .text {
-            corners.append((makeCircle("pin", label: "Fijar en pantalla", action: #selector(pin)), true, true))
-            corners.append((makeCircle("terminal", label: "Copiar ruta para un agente", action: #selector(copyPath)), true, false))
+            pills.append(CardControl(title: "Guardar", label: "Guardar", size: Design.Card.pillSize, style: .material, target: self, action: #selector(saveAs)))
         }
         switch kind {
         case .screenshot:
-            pills.append(makePill("Guardar", label: "Guardar", action: #selector(saveAs)))
-            corners.append((makeCircle("pencil.tip", label: "Anotar", action: #selector(annotate)), false, false))
+            row = [
+                makeRowButton("pin", label: "Fijar en pantalla", action: #selector(pin)),
+                makeRowButton("pencil.tip", label: "Anotar", action: #selector(annotate)),
+                makeRowButton("terminal", label: "Copiar ruta para un agente", action: #selector(copyPath)),
+            ]
         case .video:
-            pills.append(makePill("Resumen", label: "Copiar resumen en imágenes para Claude", action: #selector(summarize)))
-            corners.append((makeCircle("play.fill", label: "Reproducir", action: #selector(open)), false, false))
+            row = [
+                makeRowButton("pin", label: "Fijar en pantalla", action: #selector(pin)),
+                makeRowButton("square.grid.2x2", label: "Copiar resumen en imágenes para Claude", action: #selector(summarize)),
+                makeRowButton("terminal", label: "Copiar ruta para un agente", action: #selector(copyPath)),
+            ]
+            let play = Design.Card.playSize
+            playButton = CardControl(symbol: "play.fill", symbolSize: Design.iconSize, label: "Reproducir", size: play, radius: play.height / 2, style: .material, target: self, action: #selector(open))
         case .text:
             break
         }
@@ -836,9 +987,18 @@ private final class ThumbnailView: NSView, NSDraggingSource {
     }
 
     private func buildBadge() {
-        badgeLabel.font = .systemFont(ofSize: 11, weight: .semibold)
-        badgeLabel.textColor = Palette.text
+        badge.appearance = NSAppearance(named: .darkAqua)
+        badgeLabel.font = .monospacedDigitSystemFont(ofSize: 10, weight: .regular)
+        badgeLabel.textColor = Design.Card.ink
         badge.addSubview(badgeLabel)
+        badgeIcon.image = NSImage(systemSymbolName: "video", accessibilityDescription: nil)?
+            .withSymbolConfiguration(
+                NSImage.SymbolConfiguration(pointSize: 10, weight: .regular)
+                    .applying(NSImage.SymbolConfiguration(paletteColors: [Design.Card.ink]))
+            )
+        badgeIcon.imageScaling = .scaleNone
+        badgeIcon.setAccessibilityElement(false)
+        badge.addSubview(badgeIcon)
         addSubview(badge)
         refreshBadge()
     }
@@ -856,16 +1016,23 @@ private final class ThumbnailView: NSView, NSDraggingSource {
         }
         badgeLabel.stringValue = badgeText
         badgeLabel.sizeToFit()
-        let size = CGSize(width: badgeLabel.frame.width + 20, height: 22)
-        badge.frame = CGRect(x: 8, y: 8, width: size.width, height: size.height)
-        badgeLabel.frame.origin = CGPoint(x: 10, y: ((size.height - badgeLabel.frame.height) / 2).rounded())
+        let height: CGFloat = 18
+        let side: CGFloat = 7
+        // El icono acompaña al largo del video, no a los avisos.
+        let showsIcon = badgeText == durationText
+        let iconWidth: CGFloat = 14
+        let iconRoom: CGFloat = showsIcon ? iconWidth + 3 : 0
+        badge.frame = CGRect(x: 8, y: 8, width: (badgeLabel.frame.width + iconRoom + side * 2).rounded(.up), height: height)
+        badgeIcon.isHidden = !showsIcon
+        badgeIcon.frame = CGRect(x: side, y: 0, width: iconWidth, height: height)
+        badgeLabel.frame.origin = CGPoint(x: side + iconRoom, y: ((height - badgeLabel.frame.height) / 2).rounded())
         badge.isHidden = false
     }
 
-    /// Fundido corto. Con Reducir movimiento, el cambio es inmediato.
+    /// Fundido corto: no viaja, así que también vale con Reducir movimiento.
     private func fade(_ views: [NSView], to alpha: CGFloat) {
         NSAnimationContext.beginGrouping()
-        NSAnimationContext.current.duration = Design.reduceMotion ? 0 : 0.16
+        NSAnimationContext.current.duration = Design.fadeDuration
         views.forEach { $0.animator().alphaValue = alpha }
         NSAnimationContext.endGrouping()
     }
@@ -977,7 +1144,7 @@ private final class ThumbnailView: NSView, NSDraggingSource {
             menu.addItem(.separator())
             menu.addItem(withTitle: "Copiar ruta", action: #selector(copyPath), keyEquivalent: "").target = self
         }
-        if kind == .screenshot {
+        if kind != .text {
             menu.addItem(withTitle: "Guardar como…", action: #selector(saveAs), keyEquivalent: "").target = self
         }
         if kind != .text, !Capture.isScratch(file) {
@@ -1103,7 +1270,7 @@ private final class ThumbnailView: NSView, NSDraggingSource {
         case .screenshot:
             return showsClipboardNotice ? "Copiado" : nil
         case .video:
-            return showsClipboardNotice ? "Video copiado" : "Video"
+            return showsClipboardNotice ? "Video copiado" : (durationText ?? "Video")
         case .text:
             return showsClipboardNotice ? "Texto copiado" : nil
         }

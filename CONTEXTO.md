@@ -49,6 +49,25 @@ Trampas conocidas:
 - Al aplicar parches con Node, un fallo a medias deja archivos cambiados: haz `git checkout -- .` y vuelve a aplicar.
 - Antes de enviar un HTML, cárgalo de verdad. `node --check` no basta si no lo ejecutas.
 
+## Diseño 1.2 "Minimalismo Apple" (crítica del dueño, punto por punto)
+
+Manda sobre todo lo anterior donde choquen, también sobre la réplica gráfica de CleanShot. Identidad propia: la da el rayo amarillo, un solo gesto de un instante.
+
+- Medidas y colores solo en `Palette` y `Design`. Un azul: `NSColor.controlAccentColor`. Radios 8, 12 y 18, continuos. Una sola forma de activo: cuadrado de radio 8, velo del acento al 18 % y glifo del acento. Rojo solo para grabar.
+- SF Symbols regular a 15 en todo. Controles a 13 regular; semibold solo la acción principal. Sin separadores internos.
+- Editor: tres grupos. Recortar, Imagen y Fondo; ocho herramientas fijas de 30 al centro (Mover, Flecha, Forma, Texto, Número, Ocultar, Dibujar, Borrador); Estilo y Listo. Forma reúne cuadro, relleno, círculo y línea; Ocultar reúne pixelado, desenfoque y foco; Dibujar reúne lápiz y resaltador. Toda variante, color y grosor viven en el popover de Estilo, que también se abre pulsando la casilla ya activa. Todas las teclas siguen dando su herramienta real.
+- Barra inferior de 36 con el fondo del lienzo: zoom, deshacer, rehacer, Live Text; Arrástrame; compartir, fijar, copiar, ruta y Guardar como.
+- Tarjeta: velo negro al 30 %, sin desenfoque, y HUD oscuro en los dos modos. Copiar con acento, Guardar en material, Cerrar arriba a la izquierda, fila inferior de iconos sin círculos. En video, reproducir al centro.
+- Ajustes: pestañas del Settings estándar, 500 de ancho, la altura sigue al contenido con resorte. "Acerca de Zas" vive en General: el menú de la app no se ve.
+- Historial: `.hudWindow` con la apariencia del sistema, radio 18, margen 12, control segmentado.
+- Firma de captura (`Sources/CaptureSignature.swift`): se dispara con el obturador, cuando la imagen ya existe, y se cancela al empezar otra captura. Por eso no puede salir en la imagen. Con Reducir movimiento, solo fundido. El amarillo #FFCC00 no se usa en ninguna otra parte.
+- Congelar: en macOS 14 o más nuevo usa `SCScreenshotManager` y deja fuera solo los paneles de selección. En macOS 13, o si falla, esconde y usa `screencapture`.
+
+Trampas de la 1.2:
+- Live Text: la capa de Apple reparte sus cajas sobre todo su tamaño. Si es mayor que la imagen, cada palabra se resalta mucho más alta que su texto. La imagen y la capa deben medir lo mismo que la imagen en el lienzo. El dibujo del resaltado es del sistema y no hay API pública para cambiarlo.
+- La mezcla por diferencia de la cruz solo ve lo que hay en su propia ventana: con la pantalla congelada invierte de verdad; en vivo, se mezcla con el velo oscuro.
+- `sharingType = .none` no vale para la selección: las escenas se toman con `screencapture` y no saldría.
+
 ## Diseño 1.1 "Estudio" (pedido del dueño: tomar el diseño de CleanShot al detalle)
 
 Manda sobre lo anterior donde choquen. Se copia estructura y comportamiento, nunca marca, nombre, iconos propios, textos, imágenes ni degradados exactos.

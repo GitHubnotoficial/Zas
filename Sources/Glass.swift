@@ -17,50 +17,72 @@ enum Palette {
 
     /// Ventana y barra superior.
     static let window = pair("zas.ventana", dark: 0x1B1B1D, light: 0xECECEE)
-    /// Zona de la captura.
+    /// Zona de la captura. La barra inferior comparte este fondo: solo las separa una línea fina.
     static let canvas = pair("zas.lienzo", dark: 0x1A1A1B, light: 0xE4E4E6)
-    static let bottomBar = pair("zas.barraInferior", dark: 0x212223, light: 0xD2D2D4)
     static let hairline = pair("zas.lineaFina", dark: 0xFFFFFF, darkAlpha: 0.1, light: 0x000000, lightAlpha: 0.1)
-    /// Grupo de herramientas, popovers y rectángulos del panel.
-    static let group = pair("zas.grupo", dark: 0x2B2B2D, light: 0xFFFFFF, lightAlpha: 0.7)
+    /// Rectángulos del panel Fondo: un velo apenas visible, nunca una isla.
+    static let group = pair("zas.grupo", dark: 0xFFFFFF, darkAlpha: 0.06, light: 0x000000, lightAlpha: 0.04)
+    /// Pista de los deslizadores y valores numéricos.
     static let pill = pair("zas.pildora", dark: 0x3A3A3C, light: 0xFFFFFF)
+    /// Secciones de Ajustes.
+    static let section = pair("zas.seccion", dark: 0xFFFFFF, darkAlpha: 0.05, light: 0xFFFFFF, lightAlpha: 0.6)
     static let text = pair("zas.texto", dark: 0xF2F2F4, light: 0x1C1C1E)
     static let secondaryText = pair("zas.textoSecundario", dark: 0x8E8E93, light: 0x636368)
-    static let accent = NSColor.hex(0x0A6FE8)
+    /// El único azul de Zas: el que eligió cada persona en Ajustes del Sistema.
+    static let accent = NSColor.controlAccentColor
     /// Color con el que nacen las marcas. Las guardadas conservan el suyo.
     static let markDefault = NSColor.hex(0xFF2D6F)
+    /// El rayo del logo. Solo aparece en el instante de la captura.
+    static let bolt = NSColor.hex(0xFFCC00)
 
     /// Texto e iconos sobre el acento.
     static let onAccent = NSColor.white
     /// Velo sobre un control al pasar el cursor y al pulsarlo.
     static let hover = pair("zas.encima", dark: 0xFFFFFF, darkAlpha: 0.08, light: 0x000000, lightAlpha: 0.06)
     static let pressed = pair("zas.pulsado", dark: 0xFFFFFF, darkAlpha: 0.14, light: 0x000000, lightAlpha: 0.1)
+    /// La única forma de "activo": velo del acento bajo un glifo del acento.
+    static var activeVeil: NSColor { accent.withAlphaComponent(Design.activeVeilOpacity) }
     /// Mando de los deslizadores.
     static let knob = pair("zas.mando", dark: 0xE4E4E6, light: 0xFBFBFC)
     /// Filo de lo blanco sobre blanco. En oscuro no hace falta.
     static let softEdge = pair("zas.filo", dark: 0x000000, darkAlpha: 0, light: 0x000000, lightAlpha: 0.14)
-    /// Sombra mínima de las cápsulas claras.
-    static let softShadow = pair("zas.sombra", dark: 0x000000, darkAlpha: 0, light: 0x000000, lightAlpha: 0.2)
     /// Cuadros del punto transparente.
     static let checker = NSColor.hex(0xB8B8BC)
 }
 
 /// Medidas compartidas: si dos piezas se parecen, deben medir lo mismo.
 enum Design {
-    static let cardRadius: CGFloat = 14
-    static let controlRadius: CGFloat = 10
-    /// Barras: radio 14 y margen 6. El botón interior mide 14 - 6 = 8, para que las curvas sean concéntricas.
-    static let barRadius: CGFloat = 14
-    static let barPadding: CGFloat = 6
+    /// Los tres únicos radios de la app, siempre continuos.
+    static let radiusSmall: CGFloat = 8
+    static let radiusMedium: CGFloat = 12
+    static let radiusLarge: CGFloat = 18
+
+    static let cardRadius = radiusMedium
+    static let controlRadius = radiusSmall
+    /// Barras: radio 12 y margen 4. El botón interior mide 12 - 4 = 8, para que las curvas sean concéntricas.
+    static let barRadius = radiusMedium
+    static let barPadding: CGFloat = 4
     static let edgeMargin: CGFloat = 18
     static let stackGap: CGFloat = 10
     static let actionSize: CGFloat = 32
+    /// Todo símbolo de la app.
+    static let iconSize: CGFloat = 15
+    static let lineWidth: CGFloat = 0.5
+    static let activeVeilOpacity: CGFloat = 0.18
 
     /// El resorte de toda la app, también en SwiftUI.
     static let springResponse = 0.42
     static let springDamping = 0.86
     /// Salir por el borde va más rápido que entrar: lo que se va ya no importa.
     static let exitResponse = 0.34
+    /// Lo que se desliza dentro de una barra: la marca de la herramienta activa.
+    static let slideResponse = 0.18
+    /// Destello de la captura y paso a la pantalla congelada.
+    static let flashDuration = 0.12
+    /// Aparecer y desaparecer sin viaje.
+    static let fadeDuration = 0.16
+    /// Anillo de un clic dentro de un video.
+    static let clickRingDuration = 0.45
 
     /// Las pruebas lo fijan para ver los dos caminos. El sistema manda en todo lo demás.
     @MainActor
@@ -178,14 +200,17 @@ final class GlassButton: ReactiveButton {
         didSet { refresh() }
     }
 
-    /// Color del fondo cuando está activo. Grabar usa rojo; lo demás, el acento del sistema.
+    /// Color del velo y del glifo cuando está activo. Grabar usa rojo; lo demás, el acento del sistema.
     var activeColor: NSColor = Palette.accent {
         didSet { refresh() }
     }
 
+    /// Lo que dice el botón junto al glifo, si dice algo.
+    private var caption: String?
+
     init(symbol: String, tooltip: String, target: AnyObject?, action: Selector?, size: CGFloat = Design.actionSize) {
         super.init(frame: CGRect(x: 0, y: 0, width: size, height: size))
-        let configuration = NSImage.SymbolConfiguration(pointSize: size * 0.42, weight: .medium)
+        let configuration = NSImage.SymbolConfiguration(pointSize: Design.iconSize, weight: .regular)
         image = NSImage(systemSymbolName: symbol, accessibilityDescription: tooltip)?
             .withSymbolConfiguration(configuration)
         imagePosition = .imageOnly
@@ -204,6 +229,18 @@ final class GlassButton: ReactiveButton {
         fatalError("init(coder:) no se usa")
     }
 
+    /// Ensancha el botón para que diga en qué estado está.
+    func show(caption text: String) {
+        caption = text
+        let font = NSFont.systemFont(ofSize: 13)
+        attributedTitle = NSAttributedString(string: text, attributes: [.font: font, .foregroundColor: activeColor])
+        imagePosition = .imageLeading
+        imageHugsTitle = true
+        let textWidth = (text as NSString).size(withAttributes: [.font: font]).width
+        frame.size.width = (frame.height + textWidth + 8).rounded(.up)
+        refresh()
+    }
+
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
         refresh()
@@ -214,12 +251,12 @@ final class GlassButton: ReactiveButton {
     }
 
     private func refresh() {
-        contentTintColor = isActive ? .alternateSelectedControlTextColor : .labelColor
-        setAccessibilityValue(isActive ? "Activo" : nil)
+        contentTintColor = isActive ? activeColor : .labelColor
+        setAccessibilityValue(isActive ? (caption ?? "Activo") : nil)
         effectiveAppearance.performAsCurrentDrawingAppearance {
-            var fill: NSColor = isActive ? activeColor : .clear
+            var fill: NSColor = isActive ? activeColor.withAlphaComponent(Design.activeVeilOpacity) : .clear
             if isPressed, isEnabled {
-                fill = isActive ? activeColor.withAlphaComponent(0.75) : .tertiaryLabelColor
+                fill = isActive ? activeColor.withAlphaComponent(Design.activeVeilOpacity * 2) : .tertiaryLabelColor
             } else if isHovering, isEnabled, !isActive {
                 fill = .quaternaryLabelColor
             }
@@ -229,6 +266,7 @@ final class GlassButton: ReactiveButton {
 
     #if ZAS_TEST
     var testFill: CGColor? { layer?.backgroundColor }
+    var testCaption: String? { caption }
     #endif
 }
 
@@ -305,181 +343,82 @@ extension NSRect {
 extension Design {
     /// Barra superior del editor, la misma fila de los semáforos.
     static let editorBar: CGFloat = 52
-    static let editorBottomBar: CGFloat = 44
-    /// Alto de todo control de esas barras.
-    static let pillHeight: CGFloat = 30
-    /// Botones sin marco dentro de esas barras.
+    static let editorBottomBar: CGFloat = 36
+    /// Iconos sin marco de las barras.
+    static let controlSize: CGFloat = 28
+    /// Casilla de cada herramienta: ancho fijo, nada se desplaza al elegir otra.
     static let toolSize: CGFloat = 30
-    /// Herramienta activa: más ancha que las demás.
-    static let activeToolWidth: CGFloat = 42
-    static let imagePillWidth: CGFloat = 44
-    static let stylePillWidth: CGFloat = 46
-    static let bottomActionWidth: CGFloat = 42
-    static let dragPillWidth: CGFloat = 128
+    static let dragPillWidth: CGFloat = 104
     static let barGap: CGFloat = 8
     /// Radio de los rectángulos del panel Fondo.
-    static let panelRadius: CGFloat = 8
+    static let panelRadius = radiusSmall
     static let valueChip = CGSize(width: 34, height: 22)
     static let sliderKnob = CGSize(width: 22, height: 14)
     static let sliderTrack: CGFloat = 5
-    static let checkbox: CGFloat = 18
-    static let checkboxRadius: CGFloat = 5
+    /// Sombra de la imagen sobre el lienzo.
+    static let canvasShadowOpacity: CGFloat = 0.12
+    static let canvasShadowDrop: CGFloat = 2
+    static let canvasShadowBlur: CGFloat = 12
 }
 
-/// Iconos de la barra del editor que SF Symbols no resuelve con el peso de la referencia.
-/// Se dibujan en una caja de 16 puntos, con origen abajo.
-enum EditorIcon {
-    case picture, backdrop, cursor, rectangle, filledRectangle, ellipse, line, arrow, letter, mosaic, focus, number
-
-    func draw(at center: CGPoint, color: NSColor) {
-        guard let context = NSGraphicsContext.current?.cgContext else { return }
-        NSGraphicsContext.saveGraphicsState()
-        context.translateBy(x: (center.x - 8).rounded(), y: (center.y - 8).rounded())
-        color.set()
-        paint(color: color, context: context)
-        NSGraphicsContext.restoreGraphicsState()
-    }
-
-    private func polygon(_ points: [CGPoint]) -> NSBezierPath {
+extension NSBezierPath {
+    /// Rectángulo de esquinas continuas, como `cornerCurve = .continuous` pero para dibujar.
+    /// La curva arranca antes de la esquina y llega sin el codo de un arco de círculo.
+    static func continuous(in rect: CGRect, radius: CGFloat) -> NSBezierPath {
+        let limit = min(rect.width, rect.height) / 2
+        let reach = min(radius * 1.28, limit)
+        let pull = reach * 0.24
         let path = NSBezierPath()
-        guard let first = points.first else { return path }
-        path.move(to: first)
-        points.dropFirst().forEach { path.line(to: $0) }
+        path.move(to: CGPoint(x: rect.minX + reach, y: rect.minY))
+        path.line(to: CGPoint(x: rect.maxX - reach, y: rect.minY))
+        path.curve(
+            to: CGPoint(x: rect.maxX, y: rect.minY + reach),
+            controlPoint1: CGPoint(x: rect.maxX - pull, y: rect.minY),
+            controlPoint2: CGPoint(x: rect.maxX, y: rect.minY + pull)
+        )
+        path.line(to: CGPoint(x: rect.maxX, y: rect.maxY - reach))
+        path.curve(
+            to: CGPoint(x: rect.maxX - reach, y: rect.maxY),
+            controlPoint1: CGPoint(x: rect.maxX, y: rect.maxY - pull),
+            controlPoint2: CGPoint(x: rect.maxX - pull, y: rect.maxY)
+        )
+        path.line(to: CGPoint(x: rect.minX + reach, y: rect.maxY))
+        path.curve(
+            to: CGPoint(x: rect.minX, y: rect.maxY - reach),
+            controlPoint1: CGPoint(x: rect.minX + pull, y: rect.maxY),
+            controlPoint2: CGPoint(x: rect.minX, y: rect.maxY - pull)
+        )
+        path.line(to: CGPoint(x: rect.minX, y: rect.minY + reach))
+        path.curve(
+            to: CGPoint(x: rect.minX + reach, y: rect.minY),
+            controlPoint1: CGPoint(x: rect.minX, y: rect.minY + pull),
+            controlPoint2: CGPoint(x: rect.minX + pull, y: rect.minY)
+        )
         path.close()
         return path
     }
-
-    private func stroke(_ points: [CGPoint], width: CGFloat = 2) {
-        let path = NSBezierPath()
-        guard let first = points.first else { return }
-        path.move(to: first)
-        points.dropFirst().forEach { path.line(to: $0) }
-        path.lineWidth = width
-        path.lineCapStyle = .round
-        path.lineJoinStyle = .round
-        path.stroke()
-    }
-
-    private func paint(color: NSColor, context: CGContext) {
-        switch self {
-        case .picture:
-            // Foto llena con su montaña calada y un + que la muerde por la esquina.
-            context.beginTransparencyLayer(auxiliaryInfo: nil)
-            let frame = NSBezierPath(roundedRect: CGRect(x: 0, y: 2.5, width: 13.5, height: 11), xRadius: 2.5, yRadius: 2.5)
-            frame.append(polygon([
-                CGPoint(x: 2, y: 4.5), CGPoint(x: 5, y: 8), CGPoint(x: 6.8, y: 6), CGPoint(x: 8, y: 7), CGPoint(x: 8.8, y: 4.5),
-            ]))
-            frame.windingRule = .evenOdd
-            frame.fill()
-            NSGraphicsContext.current?.compositingOperation = .clear
-            NSBezierPath(ovalIn: CGRect(x: 7.8, y: -0.7, width: 9.4, height: 9.4)).fill()
-            NSGraphicsContext.current?.compositingOperation = .sourceOver
-            stroke([CGPoint(x: 12.5, y: 1.2), CGPoint(x: 12.5, y: 6.8)], width: 1.7)
-            stroke([CGPoint(x: 9.7, y: 4), CGPoint(x: 15.3, y: 4)], width: 1.7)
-            context.endTransparencyLayer()
-        case .backdrop:
-            // Marco con una imagen dentro.
-            let frame = NSBezierPath(roundedRect: CGRect(x: 0.8, y: 1.8, width: 14.4, height: 12.4), xRadius: 3, yRadius: 3)
-            frame.lineWidth = 1.6
-            frame.stroke()
-            let inner = NSBezierPath(roundedRect: CGRect(x: 3.4, y: 4.4, width: 9.2, height: 7.2), xRadius: 1.4, yRadius: 1.4)
-            inner.append(polygon([
-                CGPoint(x: 4.4, y: 5.4), CGPoint(x: 6.9, y: 8.4), CGPoint(x: 8.5, y: 6.7), CGPoint(x: 9.6, y: 7.7), CGPoint(x: 11.6, y: 5.4),
-            ]))
-            inner.windingRule = .evenOdd
-            inner.fill()
-        case .cursor:
-            let pointer = polygon([
-                CGPoint(x: 4.2, y: 14.6), CGPoint(x: 4.2, y: 3.4), CGPoint(x: 7.2, y: 6.1), CGPoint(x: 9.1, y: 1.8),
-                CGPoint(x: 11, y: 2.6), CGPoint(x: 9.2, y: 6.9), CGPoint(x: 13, y: 7.1),
-            ])
-            pointer.lineWidth = 0.9
-            pointer.lineJoinStyle = .round
-            pointer.fill()
-            pointer.stroke()
-        case .rectangle:
-            let square = NSBezierPath(roundedRect: CGRect(x: 2.5, y: 2.5, width: 11, height: 11), xRadius: 2, yRadius: 2)
-            square.lineWidth = 2
-            square.stroke()
-        case .filledRectangle:
-            NSBezierPath(roundedRect: CGRect(x: 1.5, y: 1.5, width: 13, height: 13), xRadius: 3, yRadius: 3).fill()
-        case .ellipse:
-            let circle = NSBezierPath(ovalIn: CGRect(x: 2, y: 2, width: 12, height: 12))
-            circle.lineWidth = 2.2
-            circle.stroke()
-        case .line:
-            stroke([CGPoint(x: 13, y: 13), CGPoint(x: 3, y: 3)])
-        case .arrow:
-            stroke([CGPoint(x: 13, y: 13), CGPoint(x: 3.5, y: 3.5)], width: 2.2)
-            stroke([CGPoint(x: 3.5, y: 10.5), CGPoint(x: 3.5, y: 3.5), CGPoint(x: 10.5, y: 3.5)], width: 2.2)
-        case .letter:
-            let attributes: [NSAttributedString.Key: Any] = [
-                .font: NSFont.systemFont(ofSize: 16, weight: .bold),
-                .foregroundColor: color,
-            ]
-            let letter = "A" as NSString
-            let size = letter.size(withAttributes: attributes)
-            letter.draw(at: CGPoint(x: 8 - size.width / 2, y: 8 - size.height / 2), withAttributes: attributes)
-        case .mosaic:
-            // Tres por tres, ajedrezado, con las esquinas del conjunto redondeadas.
-            NSBezierPath(roundedRect: CGRect(x: 1.5, y: 1.5, width: 13, height: 13), xRadius: 3, yRadius: 3).addClip()
-            let cell: CGFloat = 13 / 3
-            for row in 0..<3 {
-                for column in 0..<3 {
-                    color.withAlphaComponent((row + column) % 2 == 0 ? 1 : 0.42).setFill()
-                    NSBezierPath(rect: CGRect(
-                        x: 1.5 + CGFloat(column) * cell,
-                        y: 1.5 + CGFloat(row) * cell,
-                        width: cell,
-                        height: cell
-                    )).fill()
-                }
-            }
-        case .focus:
-            let outer = NSBezierPath(roundedRect: CGRect(x: 0.8, y: 2.3, width: 14.4, height: 11.4), xRadius: 2.6, yRadius: 2.6)
-            outer.lineWidth = 1.6
-            outer.stroke()
-            let inner = NSBezierPath(roundedRect: CGRect(x: 4.2, y: 5.3, width: 7.6, height: 5.4), xRadius: 1, yRadius: 1)
-            inner.lineWidth = 1.5
-            inner.stroke()
-        case .number:
-            let disc = NSBezierPath(ovalIn: CGRect(x: 1, y: 1, width: 14, height: 14))
-            disc.append(polygon([
-                CGPoint(x: 9, y: 3.8), CGPoint(x: 9, y: 12.2), CGPoint(x: 7.4, y: 12.2), CGPoint(x: 5, y: 10.5),
-                CGPoint(x: 5, y: 8.8), CGPoint(x: 6.9, y: 9.9), CGPoint(x: 6.9, y: 3.8),
-            ]))
-            disc.windingRule = .evenOdd
-            disc.fill()
-        }
-    }
 }
 
-/// Control de las barras del editor y del panel Fondo. Nunca enseña el borde de `NSButton`:
-/// una cápsula o un rectángulo con un punto de color, un grosor, un icono o un texto.
-/// Con `chevron` avisa de que abre algo.
+/// Control de las barras del editor y del panel Fondo. En reposo no tiene fondo: un icono, un punto
+/// de color o un texto. El velo aparece con el cursor. Con `chevron` avisa de que abre algo.
 final class PillControl: ReactiveButton {
     enum Content {
         case dot(NSColor)
-        case stroke(CGFloat)
         case symbol(String)
-        case icon(EditorIcon)
         case text(String)
         /// Texto pegado a la izquierda, como en la fila de ajustes guardados.
         case leadingText(String)
     }
 
     enum Surface {
-        case pill, group, accent, clear
+        case clear, group, accent
     }
-
-    /// Aire alrededor de la forma para que quepa la sombra de `raised`.
-    static let shadowRoom: CGFloat = 2
 
     var content: Content {
         didSet { needsDisplay = true }
     }
 
-    /// Fondo azul e icono blanco.
+    /// Velo y glifo del acento.
     var isActive = false {
         didSet {
             setAccessibilityValue(isActive ? "Activo" : nil)
@@ -487,14 +426,19 @@ final class PillControl: ReactiveButton {
         }
     }
 
+    /// La barra de herramientas pinta el velo aparte, porque se desliza entre ellas.
+    var paintsActiveVeil = true {
+        didSet { needsDisplay = true }
+    }
+
     /// Color del icono cuando no debe ser el del texto.
     var tint: NSColor? {
         didSet { needsDisplay = true }
     }
 
-    var symbolSize: CGFloat = 14
-    var symbolWeight: NSFont.Weight = .semibold
-    var textWeight: NSFont.Weight = .medium
+    var symbolSize: CGFloat = Design.iconSize
+    var symbolWeight: NSFont.Weight = .regular
+    var textWeight: NSFont.Weight = .regular
 
     override var isEnabled: Bool {
         didSet { alphaValue = isEnabled ? 1 : 0.35 }
@@ -505,31 +449,24 @@ final class PillControl: ReactiveButton {
 
     private let surface: Surface
     private let radius: CGFloat
-    private let raised: Bool
     private let showsChevron: Bool
-
-    private var room: CGFloat { raised ? Self.shadowRoom : 0 }
-    private var shape: CGRect { bounds.insetBy(dx: room, dy: room) }
 
     init(
         content: Content,
         width: CGFloat,
-        height: CGFloat = Design.pillHeight,
-        radius: CGFloat? = nil,
-        surface: Surface = .pill,
-        raised: Bool = false,
+        height: CGFloat = Design.controlSize,
+        radius: CGFloat = Design.radiusSmall,
+        surface: Surface = .clear,
         tooltip: String,
-        chevron: Bool = true,
+        chevron: Bool = false,
         target: AnyObject?,
         action: Selector?
     ) {
         self.content = content
         self.surface = surface
-        self.radius = radius ?? height / 2
-        self.raised = raised
+        self.radius = radius
         showsChevron = chevron
-        let extra = raised ? PillControl.shadowRoom * 2 : 0
-        super.init(frame: CGRect(x: 0, y: 0, width: width + extra, height: height + extra))
+        super.init(frame: CGRect(x: 0, y: 0, width: width, height: height))
         title = ""
         isBordered = false
         toolTip = tooltip
@@ -542,96 +479,71 @@ final class PillControl: ReactiveButton {
         fatalError("init(coder:) no se usa")
     }
 
-    /// Ancho de una cápsula con texto de 12, con su relleno a cada lado.
-    static func width(for text: String, weight: NSFont.Weight, padding: CGFloat = 14) -> CGFloat {
-        let size = (text as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 12, weight: weight)])
+    /// Ancho de un control con texto de 13, con su relleno a cada lado.
+    static func width(for text: String, weight: NSFont.Weight, padding: CGFloat = 12) -> CGFloat {
+        let size = (text as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 13, weight: weight)])
         return (size.width + padding * 2).rounded(.up)
     }
 
+    private var shapePath: NSBezierPath {
+        NSBezierPath.continuous(in: bounds, radius: radius)
+    }
+
     override func drawFocusRingMask() {
-        NSBezierPath(roundedRect: shape, xRadius: radius, yRadius: radius).fill()
+        shapePath.fill()
     }
 
     override var focusRingMaskBounds: NSRect { bounds }
 
-    private var fillColor: NSColor? {
-        if isActive {
-            return Palette.accent
-        }
-        switch surface {
-        case .pill: return Palette.pill
-        case .group: return Palette.group
-        case .accent: return Palette.accent
-        case .clear: return nil
-        }
-    }
-
     override func draw(_ dirtyRect: NSRect) {
-        let path = NSBezierPath(roundedRect: shape, xRadius: radius, yRadius: radius)
-        if let fill = fillColor {
-            NSGraphicsContext.saveGraphicsState()
-            if raised {
-                let shadow = NSShadow()
-                shadow.shadowColor = Palette.softShadow
-                shadow.shadowOffset = CGSize(width: 0, height: -0.5)
-                shadow.shadowBlurRadius = 1.5
-                shadow.set()
-            }
-            fill.setFill()
+        let path = shapePath
+        switch surface {
+        case .clear: break
+        case .group:
+            Palette.group.setFill()
             path.fill()
-            NSGraphicsContext.restoreGraphicsState()
+        case .accent:
+            Palette.accent.setFill()
+            path.fill()
+        }
+        if isActive, paintsActiveVeil {
+            Palette.activeVeil.setFill()
+            path.fill()
         }
         if isHighlighted || isPressed {
             Palette.pressed.setFill()
             path.fill()
-        } else if isHovering && isEnabled {
+        } else if isHovering && isEnabled && !isActive {
             Palette.hover.setFill()
             path.fill()
         }
 
-        let onAccent = isActive || surface == .accent
-        let foreground = tint ?? (onAccent ? Palette.onAccent : Palette.text)
+        let foreground = tint ?? (isActive ? Palette.accent : (surface == .accent ? Palette.onAccent : Palette.text))
         // Con flecha, el contenido se aparta hacia la izquierda y deja sitio a los 10 puntos de la derecha.
-        let center = CGPoint(x: shape.minX + (shape.width - (showsChevron ? 10 : 0)) / 2, y: shape.midY)
+        let center = CGPoint(x: (bounds.width - (showsChevron ? 10 : 0)) / 2, y: bounds.midY)
         drawContent(at: center, color: foreground)
 
         if showsChevron {
-            let chevron = NSBezierPath()
-            let x = shape.maxX - 11
-            chevron.move(to: CGPoint(x: x - 4, y: shape.midY + 2))
-            chevron.line(to: CGPoint(x: x, y: shape.midY - 2))
-            chevron.line(to: CGPoint(x: x + 4, y: shape.midY + 2))
-            chevron.lineWidth = 1.5
-            chevron.lineCapStyle = .round
-            chevron.lineJoinStyle = .round
-            Palette.secondaryText.setStroke()
-            chevron.stroke()
+            let configuration = NSImage.SymbolConfiguration(pointSize: 9, weight: .regular)
+                .applying(NSImage.SymbolConfiguration(paletteColors: [Palette.secondaryText]))
+            if let chevron = NSImage(systemSymbolName: "chevron.down", accessibilityDescription: nil)?.withSymbolConfiguration(configuration) {
+                let size = chevron.size
+                chevron.draw(in: CGRect(x: bounds.maxX - 11 - size.width / 2, y: bounds.midY - size.height / 2, width: size.width, height: size.height))
+            }
         }
     }
 
     private func drawContent(at center: CGPoint, color: NSColor) {
         switch content {
         case .dot(let dotColor):
-            let dot = CGRect(x: center.x - 9, y: center.y - 9, width: 18, height: 18)
+            let dot = CGRect(x: center.x - 8, y: center.y - 8, width: 16, height: 16)
             dotColor.setFill()
             NSBezierPath(ovalIn: dot).fill()
-            NSColor.white.setStroke()
-            let ring = NSBezierPath(ovalIn: dot.insetBy(dx: 0.75, dy: 0.75))
-            ring.lineWidth = 1.5
-            ring.stroke()
-            // El anillo blanco desaparecería sobre la píldora blanca del modo claro.
-            Palette.softEdge.setStroke()
-            let edge = NSBezierPath(ovalIn: dot.insetBy(dx: -0.25, dy: -0.25))
-            edge.lineWidth = 0.5
+            // Filo fino: el blanco se perdería sobre la barra clara.
+            Palette.hairline.setStroke()
+            let edge = NSBezierPath(ovalIn: dot.insetBy(dx: 0.25, dy: 0.25))
+            edge.lineWidth = Design.lineWidth
             edge.stroke()
-        case .stroke(let value):
-            let line = NSBezierPath()
-            line.lineWidth = min(max(1.5 + value * 0.7, 2), 7)
-            line.lineCapStyle = .round
-            line.move(to: CGPoint(x: center.x - 6.5, y: center.y - 5.5))
-            line.line(to: CGPoint(x: center.x + 6.5, y: center.y + 5.5))
-            color.setStroke()
-            line.stroke()
         case .symbol(let name):
             let configuration = NSImage.SymbolConfiguration(pointSize: symbolSize, weight: symbolWeight)
                 .applying(NSImage.SymbolConfiguration(paletteColors: [color]))
@@ -639,8 +551,6 @@ final class PillControl: ReactiveButton {
                 let size = symbol.size
                 symbol.draw(in: CGRect(x: center.x - size.width / 2, y: center.y - size.height / 2, width: size.width, height: size.height))
             }
-        case .icon(let icon):
-            icon.draw(at: center, color: color)
         case .text(let text):
             let attributes = textAttributes(color: color)
             let size = (text as NSString).size(withAttributes: attributes)
@@ -648,14 +558,14 @@ final class PillControl: ReactiveButton {
         case .leadingText(let text):
             let attributes = textAttributes(color: color)
             let size = (text as NSString).size(withAttributes: attributes)
-            let room = CGRect(x: shape.minX + 10, y: center.y - size.height / 2, width: shape.width - 32, height: size.height)
+            let room = CGRect(x: 10, y: center.y - size.height / 2, width: bounds.width - 32, height: size.height)
             (text as NSString).draw(with: room, options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine], attributes: attributes, context: nil)
         }
     }
 
     private func textAttributes(color: NSColor) -> [NSAttributedString.Key: Any] {
         [
-            .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: textWeight),
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 13, weight: textWeight),
             .foregroundColor: color,
         ]
     }
@@ -693,7 +603,7 @@ final class ZasSliderCell: NSSliderCell {
         Palette.pill.setFill()
         track.fill()
         Palette.softEdge.setStroke()
-        track.lineWidth = 0.5
+        track.lineWidth = Design.lineWidth
         track.stroke()
 
         var done = bar
@@ -708,7 +618,7 @@ final class ZasSliderCell: NSSliderCell {
         Palette.knob.setFill()
         knob.fill()
         Palette.softEdge.setStroke()
-        knob.lineWidth = 0.5
+        knob.lineWidth = Design.lineWidth
         knob.stroke()
     }
 }
@@ -740,9 +650,9 @@ final class ValueChip: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         fill.setFill()
-        NSBezierPath(roundedRect: bounds, xRadius: 6, yRadius: 6).fill()
+        NSBezierPath.continuous(in: bounds, radius: Design.radiusSmall).fill()
         let attributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium),
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular),
             .foregroundColor: Palette.text,
         ]
         let size = (text as NSString).size(withAttributes: attributes)

@@ -562,7 +562,7 @@ enum SelfTest {
         await wait(0.4)
         check(thumbs.testActionCount(index: 0) == 6, "la tarjeta tiene seis acciones al pasar el cursor")
         check(
-            thumbs.testActionLabels(index: 0) == ["Copiar", "Guardar", "Cerrar", "Fijar en pantalla", "Copiar ruta para un agente", "Anotar"],
+            thumbs.testActionLabels(index: 0) == ["Copiar", "Guardar", "Cerrar", "Fijar en pantalla", "Anotar", "Copiar ruta para un agente"],
             "cada botón de la tarjeta tiene su etiqueta (\(thumbs.testActionLabels(index: 0)))"
         )
         check(thumbs.testBadge(index: 0) == "Copiado", "la última miniatura dice Copiado")
@@ -610,15 +610,37 @@ enum SelfTest {
         try? FileManager.default.removeItem(at: copied)
         thumbs.dismissAll()
 
-        // La marca de video se queda y Copiar y Resumen van al centro.
+        // La marca de video se queda. Copiar y Guardar siempre; Resumen pasa a la fila de iconos.
         thumbs.show(image: demoImage(), file: file, kind: .video)
         check(
-            thumbs.testActionLabels(index: 0) == ["Copiar", "Copiar resumen en imágenes para Claude", "Cerrar", "Fijar en pantalla", "Copiar ruta para un agente", "Reproducir"],
-            "el video lleva Resumen y Reproducir (\(thumbs.testActionLabels(index: 0)))"
+            thumbs.testActionLabels(index: 0) == ["Copiar", "Guardar", "Cerrar", "Fijar en pantalla", "Copiar resumen en imágenes para Claude", "Copiar ruta para un agente", "Reproducir"],
+            "el video lleva Guardar, Resumen y Reproducir (\(thumbs.testActionLabels(index: 0)))"
         )
         check(thumbs.testBadge(index: 0) == "Video copiado", "un video recién copiado lo dice")
         await wait(2.2)
         check(thumbs.testBadge(index: 0) == "Video", "en reposo, el video conserva su marca")
+        thumbs.dismissAll()
+
+        // Tarjeta baja: Copiar y Guardar van en fila, con el aire justo entre los dos.
+        thumbs.show(image: demoImage(width: 1000, height: 300), file: file, kind: .screenshot)
+        await wait(0.8)
+        thumbs.simulateHover(index: 0)
+        check(thumbs.testHitsButton(index: 0, at: CGPoint(x: 77, y: 42)) && thumbs.testHitsButton(index: 0, at: CGPoint(x: 147, y: 42)), "en una tarjeta baja, Copiar y Guardar van en fila")
+        check(!thumbs.testHitsButton(index: 0, at: CGPoint(x: 112, y: 42)), "entre Copiar y Guardar el clic es de la tarjeta")
+        thumbs.dismissAll()
+
+        // Video: reproducir al centro de la imagen, y las píldoras donde no lo pisen.
+        thumbs.show(image: demoImage(width: 500, height: 620), file: file, kind: .video)
+        await wait(0.8)
+        thumbs.simulateHover(index: 0)
+        check(thumbs.testHitsButton(index: 0, at: CGPoint(x: 80, y: 84)), "en un video alto, reproducir queda en el centro")
+        check(thumbs.testHitsButton(index: 0, at: CGPoint(x: 45, y: 49)) && thumbs.testHitsButton(index: 0, at: CGPoint(x: 115, y: 49)), "en un video alto, Copiar y Guardar van bajo reproducir")
+        thumbs.dismissAll()
+        thumbs.show(image: demoImage(width: 900, height: 500), file: file, kind: .video)
+        await wait(0.8)
+        thumbs.simulateHover(index: 0)
+        check(thumbs.testHitsButton(index: 0, at: CGPoint(x: 112, y: 62)), "en un video bajo, reproducir también queda en el centro")
+        check(thumbs.testHitsButton(index: 0, at: CGPoint(x: 116, y: 107)) && thumbs.testHitsButton(index: 0, at: CGPoint(x: 186, y: 107)), "en un video bajo, Copiar y Guardar suben a la fila de Cerrar")
         thumbs.dismissAll()
 
         // La tarjeta sigue la forma de la captura, dentro de sus límites.
@@ -844,6 +866,26 @@ enum SelfTest {
         check(rep?.pixelsWide == expectedWidth, "el ancho capturado es exacto (\(rep?.pixelsWide ?? 0))")
         panel.orderOut(nil)
 
+        // Congelar no esconde nada en macOS 14 o más nuevo: la capa oscura queda fuera del filtro.
+        let frozenMark = colorPanel(selection.appKitRect, NSColor(srgbRed: 0, green: 1, blue: 0, alpha: 1))
+        await wait(0.4)
+        let freezer = SelectionOverlay()
+        freezer.begin(mode: .screenshot) { _ in }
+        await wait(0.3)
+        freezer.testFreeze()
+        check(freezer.testFreezeCaption == "Congelada", "el botón queda activo y dice Congelada")
+        check(await until(3) { freezer.testFrozenImage != nil }, "congelar deja la imagen de la pantalla")
+        if let frozen = freezer.testFrozenImage {
+            let frozenRep = NSBitmapImageRep(cgImage: frozen)
+            let frozenScale = CGFloat(frozen.width) / screen.frame.width
+            let spot = frozenRep.colorAt(x: Int(280 * frozenScale), y: Int(195 * frozenScale))?.usingColorSpace(.sRGB)
+            check((spot?.greenComponent ?? 0) > 0.85, "la imagen congelada no lleva la capa oscura (\(spot?.greenComponent ?? 0))")
+        }
+        freezer.simulateHover(at: CGPoint(x: 400, y: 300))
+        check(freezer.testLoupeSide == 96, "la lupa es un círculo de 96")
+        freezer.cancel()
+        frozenMark.orderOut(nil)
+
         let second = Capture.newFileURL(extension: "png")
         check(second != file, "dos capturas seguidas no se pisan")
 
@@ -971,8 +1013,8 @@ enum SelfTest {
         history.closesOnFocusLoss = false
         await wait(0.9)
         check(history.testCanBecomeKey, "el panel del historial puede recibir teclado")
-        check(history.testFrame.width == NSScreen.underMouse.frame.width, "el historial ocupa todo el ancho")
-        check(history.testFrame.minY == NSScreen.underMouse.frame.minY, "el historial llega al borde inferior")
+        check(history.testFrame.width == NSScreen.underMouse.frame.width - HistoryController.inset * 2, "el historial ocupa todo el ancho, con su margen a cada lado")
+        check(history.testFrame.minY == NSScreen.underMouse.frame.minY + HistoryController.inset, "el historial queda a su margen del borde inferior")
         history.testKey(124)
         check(history.model.focus == 1, "la flecha derecha pasa a la siguiente tarjeta")
         history.testKey(123)
@@ -1138,9 +1180,16 @@ enum SelfTest {
             await shoot("\(label)-01-seleccion-ventana")
             // Sobre el escritorio, sin ventana resaltada: solo la cruz y las coordenadas.
             overlay.simulateHover(at: CGPoint(x: 950, y: 90))
+            let pointScale = NSScreen.screens[0].backingScaleFactor
+            check(overlay.testCoordinates == "\(Int(950 * pointScale)), \(Int(90 * pointScale))", "las coordenadas van en una línea (\(overlay.testCoordinates ?? "nada"))")
             await shoot("\(label)-01b-cruz-coordenadas")
             overlay.simulateDrag(from: CGPoint(x: 310, y: 200), to: CGPoint(x: 760, y: 470))
             await shoot("\(label)-02-seleccion-area")
+            // La firma de la captura, detenida a medio camino: en la app solo dura un instante.
+            let signatureZone = Selection(screen: NSScreen.screens[0], rect: CGRect(x: 310, y: 200, width: 450, height: 270)).appKitRect
+            CaptureSignature.shared.testFreeze(in: signatureZone, progress: 0.45)
+            await shoot("\(label)-02c-firma-captura")
+            CaptureSignature.shared.cancel()
             overlay.testFreeze()
             await wait(1)
             overlay.simulateHover(at: CGPoint(x: 400, y: 300))
@@ -1207,6 +1256,17 @@ enum SelfTest {
             await shoot("\(label)-07g-popover-grosor")
             editor.testOpenSizePopover()
             await wait(0.3)
+
+            // Cada casilla con variantes las reúne en el popover de estilo.
+            let variantScenes: [(AnnotationTool, String)] = [(.rectangle, "07j-popover-forma"), (.pixelate, "07k-popover-ocultar"), (.pencil, "07l-popover-dibujar")]
+            for (tool, scene) in variantScenes {
+                editor.testSelect(tool: tool)
+                editor.testOpenStylePopover()
+                check(editor.testStylePopoverShown, "se abre el popover de \(tool.label)")
+                await shoot("\(label)-\(scene)")
+                editor.testOpenStylePopover()
+                await wait(0.3)
+            }
 
             editor.testOpenBackgroundPanel(gradient: 7)
             await wait(1)
@@ -1462,6 +1522,20 @@ extension SelfTest {
                 piece("a1", 0.05, 0.8), piece("a2", 0.05, 0.7), piece("b1", 0.55, 0.85), piece("b2", 0.55, 0.75),
             ]) == "a1\na2\nb1\nb2",
             "dos columnas no se mezclan"
+        )
+        check(
+            TextLayout.ordered([
+                piece("a1", 0.05, 0.8, 0.42), piece("a2", 0.05, 0.7, 0.42), piece("b1", 0.52, 0.8, 0.42), piece("b2", 0.52, 0.7, 0.42),
+            ]) == "a1\na2\nb1\nb2",
+            "un artículo a dos columnas alineadas se sigue leyendo por columnas"
+        )
+        check(
+            TextLayout.ordered([
+                piece("1042", 0.05, 0.8, 0.15), piece("1043", 0.05, 0.7, 0.15),
+                piece("María", 0.4, 0.8, 0.15), piece("Carlos", 0.4, 0.7, 0.15),
+                piece("$ 128", 0.75, 0.8, 0.15), piece("$ 54", 0.75, 0.7, 0.15),
+            ]) == "1042 María $ 128\n1043 Carlos $ 54",
+            "una tabla entregada por columnas se lee por filas"
         )
         check(TextLayout.ordered([]).isEmpty, "sin texto no sale nada")
 
@@ -1961,8 +2035,11 @@ extension SelfTest {
         editor.testPanel.testChooseTransparent()
         let clear = editor.canvas.exportPNG().flatMap { NSBitmapImageRep(data: $0) }
         check((clear?.colorAt(x: 2, y: 2)?.alphaComponent ?? 1) < 0.01, "el fondo transparente sale transparente")
+        check(editor.testPanel.testGradientCount == 10, "el panel ofrece diez degradados")
+        check(!editor.testPanel.testNoneIsChosen, "con un fondo elegido, Ninguno no está marcado")
         editor.testPanel.testChooseNone()
         check(editor.canvas.document.backdrop == nil, "Ninguno quita el fondo")
+        check(editor.testPanel.testNoneIsChosen, "Ninguno es una muestra más y queda marcada")
         check(editor.canvas.exportPNG().flatMap { NSBitmapImageRep(data: $0) }?.pixelsWide == 1200, "sin fondo, la exportación vuelve a su tamaño")
         check(editor.canvas.document.annotations.count == 1, "cambiar de fondo nunca toca la marca")
         await wait(0.2)
@@ -2047,6 +2124,57 @@ extension SelfTest {
         check(editor.testZoomLabel == "200%", "el zoom del menú cuenta sobre el tamaño real (\(editor.testZoomLabel ?? "nada"))")
         editor.testZoomPreset(100)
         check(editor.testZoomLabel == "100%", "el zoom vuelve al 100 %")
+
+        // Ocho casillas quietas: elegir otra herramienta solo mueve el cuadrado activo.
+        check(editor.testSlotCount == 8, "la barra tiene ocho herramientas")
+        let toolFrames = editor.testToolFrames
+        check(toolFrames.allSatisfy { $0.width == 30 && $0.height == 30 }, "cada herramienta mide 30 × 30")
+        for slot in 0..<editor.testSlotCount {
+            editor.testPressSlot(slot)
+            check(editor.testToolFrames == toolFrames, "elegir la casilla \(slot) no mueve ninguna otra")
+            check(editor.testCurrentSlot == slot && editor.testMarkerFrame == toolFrames[slot], "el cuadrado activo llega a la casilla \(slot)")
+        }
+        editor.testKeyDown("c")
+        check(editor.testMarkerFrame == nil, "Recortar vive fuera de la tira: el cuadrado se aparta")
+
+        // Cada letra sigue siendo su herramienta, aunque compartan casilla.
+        for (key, slot) in [("r", 2), ("o", 2), ("x", 5), ("f", 5), ("p", 6), ("h", 6)] {
+            editor.testKeyDown(key)
+            check(editor.testCurrentSlot == slot, "la tecla \(key) enciende su casilla")
+        }
+        editor.testChooseShape(3)
+        check(editor.canvas.tool == .arrow && editor.canvas.plainLine && editor.testCurrentSlot == 2, "Línea es una variante de Forma")
+        editor.testKeyDown("a")
+        check(editor.canvas.tool == .arrow && !editor.canvas.plainLine && editor.testCurrentSlot == 1, "la A devuelve la flecha con su punta")
+        editor.testChooseShape(1)
+        check(editor.canvas.tool == .rectangle && editor.canvas.filled, "Relleno es una variante de Forma")
+        editor.testChooseShape(2)
+        check(editor.canvas.tool == .ellipse && !editor.canvas.filled, "Círculo es una variante de Forma")
+        editor.testPressSlot(0)
+        check(!editor.testStyleEnabled, "Mover no tiene estilo que ajustar")
+        editor.testPressSlot(2)
+        check(editor.canvas.tool == .ellipse, "Forma vuelve a la última variante usada")
+        editor.testChooseHide(1)
+        check(editor.canvas.tool == .pixelate && editor.canvas.smoothBlur, "Desenfoque es una variante de Ocultar")
+        editor.testChooseHide(2)
+        check(editor.canvas.tool == .spotlight && editor.testStyleEnabled, "Foco es una variante de Ocultar y conserva su estilo")
+        editor.testPressSlot(5)
+        check(editor.testStylePopoverShown && editor.canvas.tool == .spotlight, "pulsar la casilla activa abre su estilo sin cambiar de herramienta")
+        editor.testOpenStylePopover()
+        await wait(0.3)
+        editor.testKeyDown("a")
+        Design.testReduceMotion = nil
+
+        // El zoom con resorte: la etiqueta pasa por los valores de en medio.
+        let zoomLabels = ValueBox<Set<String>>([])
+        editor.testZoomPreset(200)
+        _ = await until(1) {
+            zoomLabels.value.insert(editor.testZoomLabel ?? "")
+            return editor.testZoomLabel == "200%"
+        }
+        check(zoomLabels.value.count > 2, "el zoom se actualiza en vivo (\(zoomLabels.value.count) valores)")
+        Design.testReduceMotion = true
+        editor.testZoomPreset(100)
         Design.testReduceMotion = nil
 
         // Ventana al mínimo: nada se pisa y el lienzo sigue dentro.
@@ -2063,9 +2191,21 @@ extension SelfTest {
 
         editor.testTextMode()
         check(editor.testTextPaneScaling == .scaleProportionallyDown, "seleccionar texto no agranda una captura pequeña")
+        check(editor.testTextPaneFrames?.image == editor.testCanvasImageFrame, "al seleccionar texto la imagen se queda en su sitio")
+        check(editor.testTextPaneFrames?.overlay == editor.testCanvasImageFrame, "la capa de Live Text mide lo mismo que la imagen")
         editor.testTextMode()
         await wait(0.2)
         editor.testCloseEditor()
+
+        // Una tira de menú en una ventana alta: era donde cada palabra se resaltaba cuatro veces su alto.
+        let strip = AnnotationEditor(image: demoImage(scale: 1, width: 380, height: 22), file: pngFile(demoImage(scale: 1, width: 380, height: 22)))
+        strip.show()
+        await wait(0.2)
+        strip.testTextMode()
+        check(strip.testTextPaneFrames?.overlay.size == CGSize(width: 380, height: 22), "en una tira, la capa de Live Text mide lo que la tira (\(strip.testTextPaneFrames?.overlay.size ?? .zero))")
+        strip.testTextMode()
+        await wait(0.2)
+        strip.testCloseEditor()
 
         let wide = demoImage(scale: 1, width: 120, height: 80)
         let flipped = ImageTools.flipped(wide, horizontally: true)
@@ -2228,20 +2368,62 @@ extension SelfTest {
         check(steps.value.count > 10 && steps.value.last == 1, "el resorte pasa por cuadros intermedios y acaba en su destino")
         Design.testReduceMotion = nil
 
-        // Ajustes se adapta a una pantalla baja.
+        // La firma: acompaña al obturador, nunca entra en una captura y se va sola.
+        check(Palette.bolt == NSColor.hex(0xFFCC00), "el amarillo de la firma es el del rayo")
+        let signature = CaptureSignature.shared
+        let signatureZone = CGRect(x: 200, y: 200, width: 300, height: 200)
+        signature.play(in: signatureZone)
+        check(signature.testIsShowing && signature.testHasEdge, "la firma recorre la zona capturada")
+        check(signature.testIsHiddenFromCapture, "la firma se esconde de cualquier captura")
+        signature.cancel()
+        check(!signature.testIsShowing, "una captura nueva cancela la firma anterior")
+        Design.testReduceMotion = true
+        signature.play(in: signatureZone)
+        check(signature.testIsShowing && !signature.testHasEdge, "con Reducir movimiento la firma es solo un fundido")
+        check(await until(1) { !signature.testIsShowing }, "el fundido se va solo")
+        Design.testReduceMotion = false
+        signature.play(in: signatureZone)
+        check(await until(2) { !signature.testIsShowing }, "la firma se va sola al terminar su vuelta")
+        Design.testReduceMotion = nil
+
+        // Ajustes mide lo que su pestaña y se adapta a una pantalla baja.
         let windows = WindowCoordinator()
         keepAlive.append(windows)
         windows.showSettings()
         await wait(0.3)
         if let window = windows.testSettingsWindow {
-            check(window.styleMask.contains(.resizable), "Ajustes se puede cambiar de tamaño")
-            window.setContentSize(window.minSize)
-            await wait(0.3)
-            check(window.frame.width == window.minSize.width && window.frame.height < Design.SettingsWindow.size.height, "Ajustes llega a su tamaño mínimo")
+            check(windows.testSettingsTabCount == 3, "Ajustes tiene sus tres pestañas en la barra")
+            check(window.frame.width == Design.SettingsWindow.width, "Ajustes mide 500 de ancho")
+            check(!window.styleMask.contains(.resizable) && !window.styleMask.contains(.miniaturizable), "Ajustes no se estira ni se minimiza, como el Settings del sistema")
+            Design.testReduceMotion = true
+            let general = window.frame.height
+            let top = window.frame.maxY
+            windows.testSettingsPane(1)
+            check(window.frame.height != general && window.frame.maxY == top, "cada pestaña da su altura sin mover el borde de arriba")
+            check(windows.testSettingsContentFits, "con espacio, el contenido no se desplaza")
+            windows.testSettingsRoom = 320
+            windows.testSettingsPane(2)
+            check(window.frame.height == 320, "en una pantalla baja, Ajustes no pasa de lo que cabe (\(window.frame.height))")
+            check(!windows.testSettingsContentFits, "en una pantalla baja, el contenido se desplaza")
             check(window.contentView?.subviews.first?.frame.size == window.contentView?.bounds.size, "el contenido de Ajustes sigue a la ventana")
+            windows.testSettingsRoom = nil
+            Design.testReduceMotion = nil
         } else {
             check(false, "se abre Ajustes")
         }
+        windows.closeAll()
+
+        // La tecla de la bienvenida se enciende con el atajo y la primera captura la despide.
+        windows.showWelcome(hasPermission: true, openSettings: {}, relaunch: {})
+        await wait(0.2)
+        windows.lightWelcomeKey()
+        check(windows.testWelcomeKeyIsLit, "el atajo se ilumina en la bienvenida")
+        windows.dimWelcomeKey()
+        check(!windows.testWelcomeKeyIsLit, "al cancelar, el atajo se apaga")
+        windows.lightWelcomeKey()
+        windows.finishWelcome()
+        await wait(0.2)
+        check(!windows.testWelcomeIsOpen, "la bienvenida se va con la primera captura")
         windows.closeAll()
     }
 

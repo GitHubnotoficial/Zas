@@ -92,7 +92,7 @@ final class RecentsStripView: NSView {
 
     init() {
         super.init(frame: CGRect(x: 0, y: 0, width: 280, height: 86))
-        label.font = .systemFont(ofSize: 11, weight: .medium)
+        label.font = .systemFont(ofSize: 11)
         label.textColor = .secondaryLabelColor
         label.frame.origin = CGPoint(x: 14, y: 66)
         label.sizeToFit()
@@ -111,7 +111,7 @@ final class RecentsStripView: NSView {
             tile.action = #selector(tilePressed(_:))
             tile.setAccessibilityLabel("Captura reciente \(index + 1)")
             tile.wantsLayer = true
-            tile.layer?.cornerRadius = 7
+            tile.layer?.cornerRadius = Design.radiusSmall
             tile.layer?.cornerCurve = .continuous
             tile.layer?.masksToBounds = true
             tile.layer?.borderWidth = 0.5

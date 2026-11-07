@@ -104,6 +104,7 @@ final class AnnotationCanvas: NSView {
     private var dragOrigin: CGPoint?
     private var dragStartDocument: AnnotationDocument?
 
+    private var shadowCache: (size: CGSize, image: NSImage)?
     private var textField: NSTextField?
     private var textStyle: (color: NSColor, width: CGFloat) = (Palette.markDefault, 5)
     private var editedMark: Annotation?
@@ -149,6 +150,9 @@ final class AnnotationCanvas: NSView {
 
     /// Escala de la imagen en el lienzo, sin contar el zoom.
     var fitScale: CGFloat { displayScale }
+
+    /// Dónde se pinta el resultado: Live Text se pone justo encima.
+    var displayFrame: CGRect { displayRect }
 
     /// Dónde se dibuja el resultado dentro del lienzo.
     private var displayRect: CGRect {
@@ -808,6 +812,7 @@ final class AnnotationCanvas: NSView {
         let output = outputRect
         let scale = displayScale
 
+        drawImageShadow(around: display)
         NSGraphicsContext.saveGraphicsState()
         NSBezierPath(rect: display).addClip()
         context.translateBy(x: display.minX, y: display.minY)
@@ -821,6 +826,39 @@ final class AnnotationCanvas: NSView {
         if let cropDraft {
             drawCropDraft(cropDraft, content: content, scale: scale)
         }
+        NSGraphicsContext.restoreGraphicsState()
+
+        Palette.hairline.setStroke()
+        let edge = NSBezierPath(rect: display.insetBy(dx: Design.lineWidth / 2, dy: Design.lineWidth / 2))
+        edge.lineWidth = Design.lineWidth
+        edge.stroke()
+    }
+
+    /// La sombra se calcula una vez por tamaño y solo se pinta fuera de la imagen:
+    /// con doscientas marcas, repetirla en cada cuadro frenaría el arrastre.
+    private func drawImageShadow(around display: CGRect) {
+        let reach = Design.canvasShadowBlur * 2
+        let outer = display.insetBy(dx: -reach, dy: -reach)
+        if shadowCache?.size != display.size {
+            let size = display.size
+            let image = NSImage(size: outer.size, flipped: false) { _ in
+                let shadow = NSShadow()
+                shadow.shadowColor = NSColor.black.withAlphaComponent(Design.canvasShadowOpacity)
+                shadow.shadowOffset = CGSize(width: 0, height: -Design.canvasShadowDrop)
+                shadow.shadowBlurRadius = Design.canvasShadowBlur
+                shadow.set()
+                NSColor.black.setFill()
+                NSBezierPath(rect: CGRect(origin: CGPoint(x: reach, y: reach), size: size)).fill()
+                return true
+            }
+            shadowCache = (size, image)
+        }
+        NSGraphicsContext.saveGraphicsState()
+        let ring = NSBezierPath(rect: outer)
+        ring.append(NSBezierPath(rect: display))
+        ring.windingRule = .evenOdd
+        ring.addClip()
+        shadowCache?.image.draw(in: outer)
         NSGraphicsContext.restoreGraphicsState()
     }
 
@@ -856,12 +894,15 @@ final class AnnotationCanvas: NSView {
     }
 
     private func drawSelection(_ annotation: Annotation, scale: CGFloat) {
-        let path = NSBezierPath(rect: annotation.bounds)
+        // El texto lleva aire: la caja no debe rozar las letras. Agarrar la esquina sigue igual.
+        let padding: CGFloat = annotation.tool == .text ? 4 / scale : 0
+        let box = annotation.bounds.insetBy(dx: -padding, dy: -padding)
+        let path = NSBezierPath(rect: box)
         path.lineWidth = 1.5 / scale
         Palette.accent.setStroke()
         path.stroke()
         let radius = 4.5 / scale
-        for corner in Self.corners(of: annotation.bounds) {
+        for corner in Self.corners(of: box) {
             let handle = NSBezierPath(ovalIn: CGRect(x: corner.x - radius, y: corner.y - radius, width: radius * 2, height: radius * 2))
             NSColor.white.setFill()
             handle.fill()

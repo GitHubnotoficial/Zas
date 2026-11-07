@@ -3,7 +3,8 @@ import ServiceManagement
 import SwiftUI
 
 /// Captura un atajo nuevo: al hacer clic escucha la siguiente combinación de teclas.
-final class ShortcutRecorderButton: NSButton {
+/// En reposo es texto a la derecha. Solo lleva fondo con el cursor encima o mientras graba.
+final class ShortcutRecorderButton: ReactiveButton {
     /// Mientras se elige un atajo, los globales se apagan: si no, se comerían la combinación.
     static var onRecordingChanged: ((Bool) -> Void)?
 
@@ -16,12 +17,17 @@ final class ShortcutRecorderButton: NSButton {
     private var monitor: Any?
     private var resignObserver: NSObjectProtocol?
 
+    private var shownText: String {
+        monitor == nil ? shortcut.displayString : "Pulsa las teclas…"
+    }
+
+    override var isFlipped: Bool { false }
+
     init(shortcut: Shortcut) {
         self.shortcut = shortcut
-        super.init(frame: CGRect(x: 0, y: 0, width: 120, height: 24))
-        bezelStyle = .rounded
-        controlSize = .small
-        font = .systemFont(ofSize: Design.SettingsWindow.detailSize)
+        super.init(frame: CGRect(x: 0, y: 0, width: 130, height: 22))
+        title = ""
+        isBordered = false
         target = self
         action = #selector(beginRecording)
         refreshTitle()
@@ -32,7 +38,30 @@ final class ShortcutRecorderButton: NSButton {
     }
 
     private func refreshTitle() {
-        title = monitor == nil ? shortcut.displayString : "Pulsa las teclas…"
+        setAccessibilityValue(shownText)
+        needsDisplay = true
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let isRecording = monitor != nil
+        let shape = NSBezierPath.continuous(in: bounds, radius: Design.radiusSmall)
+        if isRecording {
+            Palette.activeVeil.setFill()
+            shape.fill()
+        } else if isPressed {
+            Palette.pressed.setFill()
+            shape.fill()
+        } else if isHovering {
+            Palette.hover.setFill()
+            shape.fill()
+        }
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: Design.SettingsWindow.bodySize),
+            .foregroundColor: isRecording ? Palette.accent : Palette.secondaryText,
+        ]
+        let text = shownText as NSString
+        let size = text.size(withAttributes: attributes)
+        text.draw(at: CGPoint(x: bounds.maxX - 8 - size.width, y: bounds.midY - size.height / 2), withAttributes: attributes)
     }
 
     @objc private func beginRecording() {
@@ -104,6 +133,7 @@ private struct ShortcutField: NSViewRepresentable {
 
     func makeNSView(context: Context) -> ShortcutRecorderButton {
         let button = ShortcutRecorderButton(shortcut: settings.shortcut(for: action))
+        button.setAccessibilityLabel(action.title)
         button.onChange = { [settings, action] shortcut in
             settings.shortcuts[action] = shortcut
         }
@@ -118,52 +148,20 @@ private struct ShortcutField: NSViewRepresentable {
     }
 }
 
-/// Medidas y colores de la ventana de Ajustes. El fondo del contenido es más claro que la
-/// ventana del editor: las tarjetas gris muy claro solo se leen sobre blanco.
+/// Medidas de la ventana de Ajustes. Los colores son los del sistema y los de `Palette`.
 extension Design {
     enum SettingsWindow {
-        static let size = CGSize(width: 720, height: 594)
-        /// Las secciones se desplazan: la ventana puede encoger hasta aquí.
-        static let minimumSize = CGSize(width: 640, height: 420)
-        static let radius: CGFloat = 16
-        static let sidebarWidth: CGFloat = 190
-        static let sidebarInset: CGFloat = 10
-        /// Alto de la franja de los semáforos, igual a la de título del contenido.
-        static let headerHeight: CGFloat = 52
-        static let entryHeight: CGFloat = 32
-        static let entryRadius: CGFloat = 8
-        static let entryGap: CGFloat = 3
-        static let iconSide: CGFloat = 20
-        static let iconRadius: CGFloat = 5
-        static let iconSymbol: CGFloat = 11
+        static let width: CGFloat = 500
+        /// Lo que se deja libre por encima y por debajo en una pantalla baja.
+        static let screenRoom: CGFloat = 40
         static let contentMargin: CGFloat = 20
         static let sectionGap: CGFloat = 20
-        static let cardRadius: CGFloat = 10
-        static let rowHeight: CGFloat = 34
-        static let rowInset: CGFloat = 10
-        static let bodySize: CGFloat = 12
+        static let rowHeight: CGFloat = 32
+        static let rowInset: CGFloat = 12
+        static let titleSize: CGFloat = 15
+        static let bodySize: CGFloat = 13
         static let detailSize: CGFloat = 11
-        static let sectionSize: CGFloat = 13
-
-        static let grayIcon = NSColor.systemGray
-        static let redIcon = NSColor.systemRed
-        static let iconSymbolColor = NSColor.white
-
-        static var contentFill: NSColor {
-            NSColor(name: nil) { appearance in
-                let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-                return isDark ? NSColor(srgbRed: 0x1B / 255, green: 0x1B / 255, blue: 0x1D / 255, alpha: 1) : .white
-            }
-        }
-
-        static var cardFill: NSColor {
-            NSColor(name: nil) { appearance in
-                let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-                return isDark
-                    ? NSColor(srgbRed: 0x2B / 255, green: 0x2B / 255, blue: 0x2D / 255, alpha: 1)
-                    : NSColor(srgbRed: 0xF5 / 255, green: 0xF5 / 255, blue: 0xF7 / 255, alpha: 1)
-            }
-        }
+        static let sectionSize: CGFloat = 12
     }
 }
 
@@ -180,100 +178,65 @@ private enum SettingsPane: CaseIterable {
 
     var symbol: String {
         switch self {
-        case .general: return "gearshape.fill"
+        case .general: return "gearshape"
         case .shortcuts: return "command"
-        case .video: return "video.fill"
+        case .video: return "video"
         }
     }
 
-    var tint: NSColor {
-        switch self {
-        case .general, .shortcuts: return Design.SettingsWindow.grayIcon
-        case .video: return Design.SettingsWindow.redIcon
-        }
+    var identifier: NSToolbarItem.Identifier {
+        NSToolbarItem.Identifier("ajustes.\(title)")
     }
 }
 
-/// La sección elegida en la barra lateral. Avisa para que el título de la ventana la siga.
+/// La pestaña elegida. Avisa para que la ventana cambie su título y su altura.
 private final class SettingsNavigation: ObservableObject {
     @Published var pane: SettingsPane = .general {
         didSet { onChange?(pane) }
     }
 
+    /// El contenido cabe entero: no hay nada que desplazar.
+    @Published var contentFits = true
+
     var onChange: ((SettingsPane) -> Void)?
 }
 
-/// Icono en cuadro de color, texto y fondo gris cuando está elegida.
-private struct SidebarEntry: View {
-    let title: String
-    let symbol: String
-    let tint: NSColor
-    let isSelected: Bool
-    let action: () -> Void
+/// Pestañas de la barra, como en el Settings estándar.
+@MainActor
+private final class SettingsTabs: NSObject, NSToolbarDelegate {
+    private let navigation: SettingsNavigation
+    private var identifiers: [NSToolbarItem.Identifier] { SettingsPane.allCases.map(\.identifier) }
 
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 8) {
-                Image(systemName: symbol)
-                    .font(.system(size: Design.SettingsWindow.iconSymbol, weight: .semibold))
-                    .foregroundColor(Color(nsColor: Design.SettingsWindow.iconSymbolColor))
-                    .frame(width: Design.SettingsWindow.iconSide, height: Design.SettingsWindow.iconSide)
-                    .background(
-                        Color(nsColor: tint),
-                        in: RoundedRectangle(cornerRadius: Design.SettingsWindow.iconRadius, style: .continuous)
-                    )
-                    .accessibilityHidden(true)
-                Text(title)
-                    .font(.system(size: Design.SettingsWindow.bodySize))
-                    .foregroundColor(Color(nsColor: Palette.text))
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 6)
-            .frame(height: Design.SettingsWindow.entryHeight)
-            .background(
-                isSelected ? Color(nsColor: Palette.hairline) : Color.clear,
-                in: RoundedRectangle(cornerRadius: Design.SettingsWindow.entryRadius, style: .continuous)
-            )
-            .contentShape(Rectangle())
+    init(navigation: SettingsNavigation) {
+        self.navigation = navigation
+    }
+
+    func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { identifiers }
+    func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { identifiers }
+    func toolbarSelectableItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { identifiers }
+
+    func toolbar(
+        _ toolbar: NSToolbar,
+        itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier,
+        willBeInsertedIntoToolbar flag: Bool
+    ) -> NSToolbarItem? {
+        guard let pane = SettingsPane.allCases.first(where: { $0.identifier == itemIdentifier }) else { return nil }
+        let item = NSToolbarItem(itemIdentifier: itemIdentifier)
+        item.label = pane.title
+        item.image = NSImage(systemSymbolName: pane.symbol, accessibilityDescription: pane.title)
+        item.target = self
+        item.action = #selector(tabPressed(_:))
+        return item
+    }
+
+    @objc private func tabPressed(_ sender: NSToolbarItem) {
+        if let pane = SettingsPane.allCases.first(where: { $0.identifier == sender.itemIdentifier }) {
+            navigation.pane = pane
         }
-        .buttonStyle(ReactiveButtonStyle())
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }
 
-private struct SettingsSidebar: View {
-    @ObservedObject var navigation: SettingsNavigation
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: Design.SettingsWindow.entryGap) {
-            ForEach(SettingsPane.allCases, id: \.self) { pane in
-                SidebarEntry(
-                    title: pane.title,
-                    symbol: pane.symbol,
-                    tint: pane.tint,
-                    isSelected: navigation.pane == pane
-                ) {
-                    navigation.pane = pane
-                }
-            }
-            Spacer(minLength: 0)
-            // No es una sección: abre el mismo panel que el menú de la app.
-            SidebarEntry(
-                title: "Acerca de",
-                symbol: "info",
-                tint: Design.SettingsWindow.grayIcon,
-                isSelected: false
-            ) {
-                NSApp.orderFrontStandardAboutPanel(nil)
-            }
-        }
-        .padding(.top, Design.SettingsWindow.headerHeight)
-        .padding(.horizontal, Design.SettingsWindow.sidebarInset)
-        .padding(.bottom, Design.SettingsWindow.sidebarInset)
-    }
-}
-
-/// Título en negrita y filas agrupadas en una tarjeta, sin líneas entre ellas.
+/// Título discreto y filas agrupadas, sin líneas entre ellas.
 private struct SettingsSection<Content: View>: View {
     let title: String?
     let content: Content
@@ -284,11 +247,12 @@ private struct SettingsSection<Content: View>: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        let shape = RoundedRectangle(cornerRadius: Design.radiusMedium, style: .continuous)
+        VStack(alignment: .leading, spacing: 6) {
             if let title {
                 Text(title)
-                    .font(.system(size: Design.SettingsWindow.sectionSize, weight: .bold))
-                    .foregroundColor(Color(nsColor: Palette.text))
+                    .font(.system(size: Design.SettingsWindow.sectionSize, weight: .semibold))
+                    .foregroundColor(Color(nsColor: Palette.secondaryText))
                     .padding(.horizontal, Design.SettingsWindow.rowInset)
                     .accessibilityAddTraits(.isHeader)
             }
@@ -298,10 +262,8 @@ private struct SettingsSection<Content: View>: View {
             .padding(.horizontal, Design.SettingsWindow.rowInset)
             .padding(.vertical, 2)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                Color(nsColor: Design.SettingsWindow.cardFill),
-                in: RoundedRectangle(cornerRadius: Design.SettingsWindow.cardRadius, style: .continuous)
-            )
+            .background(Color(nsColor: Palette.section), in: shape)
+            .overlay(shape.strokeBorder(Color(nsColor: Palette.hairline), lineWidth: Design.lineWidth))
         }
     }
 }
@@ -378,10 +340,9 @@ private extension View {
             .fixedSize()
     }
 
-    /// Botones "Elegir…": pequeños y grises.
+    /// Botones estándar y pequeños.
     func settingsButton() -> some View {
-        buttonStyle(.bordered)
-            .controlSize(.small)
+        controlSize(.small)
     }
 }
 
@@ -391,35 +352,24 @@ private struct SettingsView: View {
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: Design.SettingsWindow.sectionGap) {
             Text(pane.title)
-                .font(.system(size: Design.SettingsWindow.sectionSize, weight: .semibold))
+                .font(.system(size: Design.SettingsWindow.titleSize, weight: .semibold))
                 .foregroundColor(Color(nsColor: Palette.text))
-                .frame(height: Design.SettingsWindow.headerHeight)
-                .padding(.horizontal, Design.SettingsWindow.contentMargin)
                 .accessibilityAddTraits(.isHeader)
-            ScrollView {
-                VStack(alignment: .leading, spacing: Design.SettingsWindow.sectionGap) {
-                    switch pane {
-                    case .general: general
-                    case .shortcuts: shortcuts
-                    case .video: video
-                    }
-                }
-                .padding(.horizontal, Design.SettingsWindow.contentMargin)
-                .padding(.bottom, Design.SettingsWindow.contentMargin)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            switch pane {
+            case .general: general
+            case .shortcuts: shortcuts
+            case .video: video
             }
-            // Cada sección empieza desde arriba.
-            .id(pane)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(Color(nsColor: Design.SettingsWindow.contentFill))
+        .padding(Design.SettingsWindow.contentMargin)
+        .frame(width: Design.SettingsWindow.width, alignment: .topLeading)
     }
 
     @ViewBuilder
     private var general: some View {
-        SettingsSection("App") {
+        SettingsSection {
             SettingsToggle(title: "Abrir Zas al iniciar sesión", isOn: Binding(
                 get: { launchAtLogin },
                 set: { setLaunchAtLogin($0) }
@@ -445,7 +395,7 @@ private struct SettingsView: View {
             SettingsToggle(title: "Guardar una copia de cada captura", isOn: $settings.saveCaptures)
             SettingsRow("Capturas y videos") {
                 HStack(spacing: 6) {
-                    Image(systemName: "folder.fill")
+                    Image(systemName: "folder")
                         .font(.system(size: Design.SettingsWindow.detailSize))
                         .foregroundColor(Color(nsColor: Palette.accent))
                         .accessibilityHidden(true)
@@ -463,6 +413,14 @@ private struct SettingsView: View {
                 }
             }
         }
+        HStack {
+            Spacer()
+            // El menú de la app no se ve en una app de la barra de menú.
+            Button("Acerca de Zas") {
+                NSApp.orderFrontStandardAboutPanel(nil)
+            }
+            .settingsButton()
+        }
     }
 
     @ViewBuilder
@@ -472,7 +430,7 @@ private struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     SettingsRow(action.title) {
                         ShortcutField(action: action, settings: settings)
-                            .frame(width: 130, height: 22)
+                            .frame(width: 136, height: 22)
                     }
                     if settings.conflicts.contains(action) {
                         Label("Este atajo ya está en uso. Elige otro.", systemImage: "exclamationmark.triangle.fill")
@@ -579,42 +537,53 @@ private struct SettingsView: View {
     }
 }
 
-/// Barra lateral sobre el vidrio de la ventana y, a la derecha, la sección elegida.
+/// La pestaña elegida. Solo se desplaza si la pantalla es más baja que su contenido.
 private struct SettingsRootView: View {
     @ObservedObject var settings: Settings
     @ObservedObject var navigation: SettingsNavigation
 
     var body: some View {
-        HStack(spacing: 0) {
-            SettingsSidebar(navigation: navigation)
-                .frame(width: Design.SettingsWindow.sidebarWidth)
+        ScrollView {
+            // Cada pestaña empieza desde arriba.
             SettingsView(settings: settings, pane: navigation.pane)
+                .id(navigation.pane)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        // La franja de los semáforos es parte del diseño: sin esto, todo bajaría 52 puntos.
-        .ignoresSafeArea()
+        .scrollDisabled(navigation.contentFits)
     }
 }
 
-/// Primer contacto: una sola idea por pantalla.
+/// La bienvenida se entera de que se pulsó el atajo.
+private final class WelcomeState: ObservableObject {
+    @Published var keyIsLit = false
+}
+
+/// Primer contacto: una sola idea por pantalla. Ritmo 24, 8, 24 y 24.
 private struct WelcomeView: View {
     let hasPermission: Bool
+    @ObservedObject var state: WelcomeState
     let openSettings: () -> Void
     let relaunch: () -> Void
     let dismiss: () -> Void
     @State private var openedSettings = false
+
+    private static let iconShape = RoundedRectangle(cornerRadius: Design.radiusLarge, style: .continuous)
+
+    private var keyMotion: Animation? {
+        Design.reduceMotion ? nil : .spring(response: Design.slideResponse, dampingFraction: Design.springDamping)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             Image(nsImage: NSApp.applicationIconImage)
                 .resizable()
                 .frame(width: 84, height: 84)
-                .padding(.top, 36)
+                .overlay(Self.iconShape.strokeBorder(Color(nsColor: Palette.hairline), lineWidth: Design.lineWidth))
+                .padding(.top, 24)
                 .accessibilityHidden(true)
 
             Text(hasPermission ? "Zas está listo" : "Permite grabar la pantalla")
-                .font(.largeTitle.weight(.bold))
-                .padding(.top, 16)
+                .font(.title)
+                .padding(.top, 24)
 
             Text(hasPermission
                 ? "Vive en la barra de menú. Haz tu primera captura con este atajo."
@@ -628,21 +597,27 @@ private struct WelcomeView: View {
 
             if hasPermission {
                 Text(Settings.shared.shortcut(for: .region).displayString)
-                    .font(.title.weight(.semibold))
-                    .padding(.vertical, 12)
-                    .padding(.horizontal, 28)
-                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                    .padding(.top, 22)
+                    .font(.title2)
+                    .foregroundStyle(state.keyIsLit ? AnyShapeStyle(Color(nsColor: Palette.accent)) : AnyShapeStyle(HierarchicalShapeStyle.primary))
+                    .padding(.vertical, 10)
+                    .padding(.horizontal, 24)
+                    .background(
+                        state.keyIsLit ? AnyShapeStyle(Color(nsColor: Palette.activeVeil)) : AnyShapeStyle(HierarchicalShapeStyle.quaternary),
+                        in: RoundedRectangle(cornerRadius: Design.radiusMedium, style: .continuous)
+                    )
+                    .animation(keyMotion, value: state.keyIsLit)
+                    .padding(.top, 24)
             }
 
             Button(action: primaryAction) {
                 Text(primaryTitle).frame(maxWidth: .infinity)
             }
+            .buttonStyle(.borderedProminent)
             .keyboardShortcut(.defaultAction)
             .controlSize(.large)
             .padding(.horizontal, 44)
-            .padding(.top, 26)
-            .padding(.bottom, 30)
+            .padding(.top, 24)
+            .padding(.bottom, 24)
         }
         .frame(width: 400)
     }
@@ -666,67 +641,89 @@ private struct WelcomeView: View {
 
 /// Crea y recuerda las dos ventanas de la app.
 @MainActor
-final class WindowCoordinator: NSObject, NSWindowDelegate {
+final class WindowCoordinator: NSObject {
     private var settingsWindow: NSWindow?
     private var settingsNavigation: SettingsNavigation?
+    private var settingsTabs: SettingsTabs?
+    private var settingsSpring: Timer?
     private var welcomeWindow: NSWindow?
+    private let welcomeState = WelcomeState()
 
     func showSettings() {
         if settingsWindow == nil {
-            let metrics = Design.SettingsWindow.self
-            // En una pantalla baja, la ventana cabe entera: el contenido se desplaza.
-            let room = NSScreen.underMouse.visibleFrame.height - 40
-            let bounds = CGRect(origin: .zero, size: CGSize(
-                width: metrics.size.width,
-                height: max(min(metrics.size.height, room), metrics.minimumSize.height)
-            ))
-            let window = NSWindow(
-                contentRect: bounds,
-                styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
-                backing: .buffered,
-                defer: false
-            )
-            // El título no se ve, pero nombra la sección para VoiceOver y el menú Ventana.
+            let width = Design.SettingsWindow.width
+            let bounds = CGRect(x: 0, y: 0, width: width, height: 400)
+            // Sin minimizar ni cambiar de tamaño: la ventana mide lo que mide su pestaña.
+            let window = NSWindow(contentRect: bounds, styleMask: [.titled, .closable], backing: .buffered, defer: false)
+            // El título no se ve, pero nombra la pestaña para VoiceOver y el menú Ventana.
             window.title = SettingsPane.general.title
             window.titleVisibility = .hidden
-            window.titlebarAppearsTransparent = true
-            window.titlebarSeparatorStyle = .none
-            // Una barra vacía da aire a los semáforos, igual que la franja de 52 del contenido.
-            window.toolbar = NSToolbar(identifier: "ajustes")
-            window.toolbarStyle = .unified
-            // Ventana transparente: las esquinas de 16 las pone el vidrio, no el sistema.
-            window.isOpaque = false
-            window.backgroundColor = .clear
             window.isReleasedWhenClosed = false
-            window.minSize = metrics.minimumSize
-            window.delegate = self
 
             let navigation = SettingsNavigation()
-            navigation.onChange = { [weak window] pane in
+            let tabs = SettingsTabs(navigation: navigation)
+            let toolbar = NSToolbar(identifier: "ajustes")
+            toolbar.delegate = tabs
+            toolbar.displayMode = .iconAndLabel
+            toolbar.selectedItemIdentifier = SettingsPane.general.identifier
+            window.toolbar = toolbar
+            window.toolbarStyle = .preference
+
+            navigation.onChange = { [weak self, weak window, weak toolbar] pane in
                 window?.title = pane.title
+                toolbar?.selectedItemIdentifier = pane.identifier
+                self?.fitSettings(animated: true)
             }
-            let glass = GlassView(frame: bounds, radius: metrics.radius, material: .sidebar)
-            glass.autoresizingMask = [.width, .height]
             let host = NSHostingView(rootView: SettingsRootView(settings: .shared, navigation: navigation))
             host.sizingOptions = []
             host.frame = bounds
             host.autoresizingMask = [.width, .height]
-            glass.addSubview(host)
-            window.contentView = glass
+            let container = NSView(frame: bounds)
+            container.addSubview(host)
+            window.contentView = container
 
-            window.center()
             settingsWindow = window
             settingsNavigation = navigation
+            settingsTabs = tabs
+            fitSettings(animated: false)
+            window.center()
         }
         NSApp.activate(ignoringOtherApps: true)
         settingsWindow?.makeKeyAndOrderFront(nil)
-        // La sombra sigue a las esquinas propias, no al rectángulo de la ventana.
-        settingsWindow?.invalidateShadow()
+        // Con la barra ya en pantalla, la cuenta de su altura es la definitiva.
+        fitSettings(animated: false)
     }
 
-    /// La sombra sigue a las esquinas propias: hay que recalcularla al cambiar de tamaño.
-    func windowDidResize(_ notification: Notification) {
-        (notification.object as? NSWindow)?.invalidateShadow()
+    /// La mayor altura que cabe en la pantalla de la ventana.
+    private func settingsRoom(in window: NSWindow) -> CGFloat {
+        #if ZAS_TEST
+        if let testSettingsRoom {
+            return testSettingsRoom
+        }
+        #endif
+        return (window.screen ?? NSScreen.underMouse).visibleFrame.height - Design.SettingsWindow.screenRoom
+    }
+
+    /// Lleva la ventana a la altura de la pestaña, sin mover su borde de arriba.
+    /// En una pantalla baja se queda dentro y el contenido se desplaza.
+    private func fitSettings(animated: Bool) {
+        guard let window = settingsWindow, let navigation = settingsNavigation, let content = window.contentView else { return }
+        settingsSpring?.invalidate()
+        let wanted = NSHostingView(rootView: SettingsView(settings: .shared, pane: navigation.pane)).fittingSize.height.rounded(.up)
+        let chrome = window.frame.height - content.bounds.height
+        let room = settingsRoom(in: window)
+        let height = min(wanted + chrome, room)
+        navigation.contentFits = wanted + chrome <= room
+
+        let start = window.frame
+        let target = CGRect(x: start.minX, y: start.maxY - height, width: start.width, height: height)
+        guard animated else {
+            window.setFrame(target, display: true)
+            return
+        }
+        settingsSpring = Spring.run(step: { [weak window] progress in
+            window?.setFrame(start.moved(to: target, by: progress), display: true)
+        })
     }
 
     private var history: HistoryController?
@@ -749,12 +746,29 @@ final class WindowCoordinator: NSObject, NSWindowDelegate {
         history?.close(animated: false)
     }
 
+    /// El atajo de la bienvenida se ilumina al pulsarlo y sigue encendido durante la primera captura.
+    func lightWelcomeKey() {
+        welcomeState.keyIsLit = welcomeWindow?.isVisible == true
+    }
+
+    func dimWelcomeKey() {
+        welcomeState.keyIsLit = false
+    }
+
+    /// La primera captura ya salió: la bienvenida ha cumplido.
+    func finishWelcome() {
+        guard welcomeState.keyIsLit else { return }
+        welcomeState.keyIsLit = false
+        welcomeWindow?.close()
+    }
+
     func showWelcome(hasPermission: Bool, openSettings: @escaping () -> Void, relaunch: @escaping () -> Void) {
         let dismiss: () -> Void = { [weak self] in
             self?.welcomeWindow?.close()
         }
         let host = NSHostingController(rootView: WelcomeView(
             hasPermission: hasPermission,
+            state: welcomeState,
             openSettings: openSettings,
             relaunch: relaunch,
             dismiss: dismiss
@@ -784,12 +798,20 @@ final class WindowCoordinator: NSObject, NSWindowDelegate {
 
     var testSettingsTitle: String { settingsWindow?.title ?? "" }
     var testSettingsWindow: NSWindow? { settingsWindow }
+    /// Simula una pantalla baja: la ventana de Ajustes no puede pasar de esta altura.
+    var testSettingsRoom: CGFloat?
+    var testSettingsContentFits: Bool { settingsNavigation?.contentFits ?? false }
+    var testSettingsTabCount: Int { settingsWindow?.toolbar?.items.count ?? 0 }
+    var testWelcomeKeyIsLit: Bool { welcomeState.keyIsLit }
+    var testWelcomeIsOpen: Bool { welcomeWindow?.isVisible == true }
 
     func closeAll() {
+        settingsSpring?.invalidate()
         settingsWindow?.close()
         welcomeWindow?.close()
         settingsWindow = nil
         settingsNavigation = nil
+        settingsTabs = nil
         welcomeWindow = nil
         closeHistory()
     }

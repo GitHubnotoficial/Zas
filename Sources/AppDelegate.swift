@@ -11,6 +11,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var actionItems: [HotKeyAction: NSMenuItem] = [:]
     private let recentsStrip = RecentsStripView()
     private var lastCaptureRect: CGRect?
+    /// Zona de la última captura en coordenadas de AppKit: donde se firma.
+    private var captureZone: CGRect?
     private var lastSelection: Selection?
     private var trimWindows: [VideoTrimWindow] = []
     private var scrollStitcher: ScrollStitcher?
@@ -254,29 +256,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(recents)
         menu.delegate = self
         menu.addItem(.separator())
-        addItem("Historial", symbol: nil, #selector(openHistory))
-        addItem("Abrir proyecto…", symbol: nil, #selector(chooseProject))
-        desktopCoverItem = addItem("Ocultar iconos del escritorio", symbol: nil, #selector(toggleDesktopIcons))
-        let settings = addItem("Ajustes…", symbol: nil, #selector(openSettings))
+        addItem("Historial", #selector(openHistory))
+        addItem("Abrir proyecto…", #selector(chooseProject))
+        desktopCoverItem = addItem("Ocultar iconos del escritorio", #selector(toggleDesktopIcons))
+        let settings = addItem("Ajustes…", #selector(openSettings))
         settings.keyEquivalent = ","
         menu.addItem(.separator())
-        let quit = addItem("Salir de Zas", symbol: nil, #selector(quit))
+        let quit = addItem("Salir de Zas", #selector(quit))
         quit.keyEquivalent = "q"
         statusItem.menu = menu
     }
 
     private func addActionItem(_ action: HotKeyAction, _ selector: Selector) {
-        let item = addItem(action.title, symbol: action.symbol, selector)
-        actionItems[action] = item
+        actionItems[action] = addItem(action.title, selector)
     }
 
+    /// Solo texto y atajo, como los menús del sistema.
     @discardableResult
-    private func addItem(_ title: String, symbol: String?, _ action: Selector) -> NSMenuItem {
+    private func addItem(_ title: String, _ action: Selector) -> NSMenuItem {
         let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
         item.target = self
-        if let symbol {
-            item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
-        }
         menu.addItem(item)
         return item
     }
@@ -391,16 +390,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func captureRegion() {
+        windows.lightWelcomeKey()
         beginSelection(.screenshot)
     }
 
     /// Todas las capturas pasan por aquí: la barra de vidrio puede cambiar el modo a medio camino.
     private func beginSelection(_ mode: SelectionMode) {
         guard canStartCapture(), ensurePermission() else { return }
+        CaptureSignature.shared.cancel()
         thumbnail.suspend()
         overlay.begin(mode: mode) { [weak self] selection in
             guard let self else { return }
             guard let selection else {
+                self.windows.dimWelcomeKey()
                 self.thumbnail.resume()
                 return
             }
@@ -459,6 +461,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func snap(_ selection: Selection) {
         captureInFlight = true
+        // La firma de la captura anterior no puede salir en esta.
+        CaptureSignature.shared.cancel()
+        captureZone = selection.appKitRect
         let arguments = selection.captureArguments
         let pointSize = selection.imagePointSize
         // Una captura de pantalla completa no tiene de dónde "salir".
@@ -496,8 +501,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             showError("No se pudo capturar", "macOS no entregó la imagen. Inténtalo de nuevo.")
             return
         }
-        // Suena al quedar la imagen, no al terminar de prepararla.
+        // Suena y se firma al quedar la imagen, no al terminar de prepararla. Es el mismo instante,
+        // y es después de capturar: por eso la firma nunca puede salir en la imagen.
         Sounds.play(.shutter)
+        if let captureZone {
+            CaptureSignature.shared.play(in: captureZone)
+        }
         Task { @MainActor in
             let prepared = await Capture.prepare(at: url, pointSize: pointSize)
             self.captureInFlight = false
@@ -506,6 +515,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self.showError("No se pudo copiar", "macOS entregó un archivo que no se puede leer. Inténtalo de nuevo.")
                 return
             }
+            self.windows.finishWelcome()
             Capture.publish(prepared.data)
             self.thumbnail.show(image: prepared.image, file: url, kind: .screenshot, from: self.lastCaptureRect, preview: prepared.preview)
         }
@@ -618,6 +628,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 return
             }
             self.lastCaptureRect = nil
+            self.captureZone = selection.appKitRect
             self.finishCapture(url: url, succeeded: true, pointSize: size)
         }
     }
@@ -979,7 +990,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         view.wantsLayer = true
         view.layer?.borderColor = NSColor.systemRed.cgColor
         view.layer?.borderWidth = 2
-        view.layer?.cornerRadius = 3
         panel.contentView = view
         panel.orderFrontRegardless()
         recordingBorder = panel
