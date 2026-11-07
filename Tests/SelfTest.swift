@@ -2165,7 +2165,9 @@ extension SelfTest {
         editor.testKeyDown("a")
         Design.testReduceMotion = nil
 
-        // El zoom con resorte: la etiqueta pasa por los valores de en medio.
+        // El zoom con resorte: la etiqueta pasa por los valores de en medio. La máquina de pruebas
+        // puede tener Reducir movimiento encendido: aquí se pide el movimiento completo.
+        Design.testReduceMotion = false
         let zoomLabels = ValueBox<Set<String>>([])
         editor.testZoomPreset(200)
         _ = await until(1) {
@@ -2370,6 +2372,7 @@ extension SelfTest {
 
         // La firma: acompaña al obturador, nunca entra en una captura y se va sola.
         check(Palette.bolt == NSColor.hex(0xFFCC00), "el amarillo de la firma es el del rayo")
+        Design.testReduceMotion = false
         let signature = CaptureSignature.shared
         let signatureZone = CGRect(x: 200, y: 200, width: 300, height: 200)
         signature.play(in: signatureZone)
@@ -2377,6 +2380,7 @@ extension SelfTest {
         check(signature.testIsHiddenFromCapture, "la firma se esconde de cualquier captura")
         signature.cancel()
         check(!signature.testIsShowing, "una captura nueva cancela la firma anterior")
+        Design.testReduceMotion = nil
         Design.testReduceMotion = true
         signature.play(in: signatureZone)
         check(signature.testIsShowing && !signature.testHasEdge, "con Reducir movimiento la firma es solo un fundido")
