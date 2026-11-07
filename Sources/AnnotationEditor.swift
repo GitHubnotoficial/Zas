@@ -109,6 +109,14 @@ private final class LiveTextPane: NSView {
         overlay.frame = area
     }
 
+    /// La capa de Apple deja pasar lo que no es texto. Aquí se queda: en este modo no se dibuja.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard frame.contains(point) else { return nil }
+        return super.hitTest(point) ?? self
+    }
+
+    override func mouseDown(with event: NSEvent) {}
+
     /// Devuelve `false` si este Mac no ofrece Live Text.
     func analyze() async -> Bool {
         guard let image = imageView.image, let analysis = await LiveText.analysis(of: image) else { return false }
@@ -856,7 +864,9 @@ final class AnnotationEditor: NSObject, NSWindowDelegate, NSPopoverDelegate {
     /// El lienzo llena su zona y la imagen se ajusta dentro; el zoom se aplica encima.
     private func fitCanvas() {
         canvas.setFrameSize(scrollView.contentSize)
-        liveText?.place(in: canvas.displayFrame)
+        if let liveText {
+            liveText.place(in: canvas.convert(canvas.displayFrame, to: liveText))
+        }
         refreshZoomLabel()
     }
 
@@ -1422,9 +1432,11 @@ final class AnnotationEditor: NSObject, NSWindowDelegate, NSPopoverDelegate {
             Toast.shared.show("Texto copiado")
         }
 
-        let pane = LiveTextPane(frame: scrollView.frame, image: snapshot.image, area: canvas.displayFrame)
+        let pane = LiveTextPane(frame: scrollView.frame, image: snapshot.image, area: .zero)
         pane.autoresizingMask = [.width, .height]
         window.contentView?.addSubview(pane, positioned: .above, relativeTo: scrollView)
+        // El lienzo está dentro de la vista con zoom: su sitio se traduce al de la capa.
+        pane.place(in: canvas.convert(canvas.displayFrame, to: pane))
         liveText = pane
         textButton?.isActive = true
         // Al seleccionar, el foco queda en la capa de Apple y Esc nunca llegaría al lienzo.
@@ -1761,7 +1773,10 @@ final class AnnotationEditor: NSObject, NSWindowDelegate, NSPopoverDelegate {
     var testStyleEnabled: Bool { styleButton?.isEnabled == true }
 
     /// Sitio de la imagen en el lienzo y de las dos piezas de Live Text.
-    var testCanvasImageFrame: CGRect { canvas.displayFrame }
+    var testCanvasImageFrame: CGRect {
+        guard let liveText else { return canvas.displayFrame }
+        return canvas.convert(canvas.displayFrame, to: liveText)
+    }
     var testTextPaneFrames: (image: CGRect, overlay: CGRect)? {
         liveText.map { ($0.testImageFrame, $0.testOverlayFrame) }
     }
