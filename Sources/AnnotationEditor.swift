@@ -109,6 +109,13 @@ private final class LiveTextPane: NSView {
     func place(in area: CGRect) {
         imageView.frame = area
         overlay.frame = area
+        overlay.setContentsRectNeedsUpdate()
+    }
+
+    /// Tapa el lienzo: las dos imágenes juntas se verían dobles.
+    override func draw(_ dirtyRect: NSRect) {
+        Palette.canvas.setFill()
+        dirtyRect.fill()
     }
 
     /// La capa de Apple deja pasar lo que no es texto. Aquí se queda: en este modo no se dibuja.
@@ -131,6 +138,11 @@ private final class LiveTextPane: NSView {
     #if ZAS_TEST
     var testImageFrame: CGRect { imageView.frame }
     var testOverlayFrame: CGRect { overlay.frame }
+    /// Qué ve de verdad la capa de Apple: si tiene análisis, su rectángulo y si hay texto en `point`.
+    func testOverlayReport(at point: CGPoint) -> String {
+        let local = convert(point, to: overlay)
+        return "análisis (overlay.analysis != nil), contenido (overlay.contentsRect), capa (overlay.frame), texto en punto (overlay.hasInteractiveItem(at: local))"
+    }
     #endif
 }
 
@@ -1775,6 +1787,12 @@ final class AnnotationEditor: NSObject, NSWindowDelegate, NSPopoverDelegate {
     var testStyleEnabled: Bool { styleButton?.isEnabled == true }
 
     /// Sitio de la imagen en el lienzo y de las dos piezas de Live Text.
+    var testTextPaneReport: String {
+        guard let liveText else { return "sin capa" }
+        let area = canvas.convert(canvas.displayFrame, to: liveText)
+        return liveText.testOverlayReport(at: CGPoint(x: area.midX, y: area.midY))
+    }
+
     var testCanvasImageFrame: CGRect {
         guard let liveText else { return canvas.displayFrame }
         return canvas.convert(canvas.displayFrame, to: liveText)

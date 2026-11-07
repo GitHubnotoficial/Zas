@@ -678,6 +678,7 @@ if !recognized.isEmpty {
         wait(0.6)
         let selected = NSPasteboard.general.string(forType: .string) ?? ""
         print("texto seleccionado con el ratón: [\(selected.replacingOccurrences(of: "\n", with: " | "))]")
+        check(!selected.isEmpty, "arrastrar sobre la imagen selecciona texto y ⌘C lo copia")
     }
     press(kVK_Escape)
     wait(0.4)

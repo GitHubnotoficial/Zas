@@ -1291,6 +1291,7 @@ enum SelfTest {
             }
             editor.testTextMode()
             await wait(1.5)
+            print("capa de texto: \(editor.testTextPaneReport)")
             await shoot("\(label)-07d-seleccion-texto")
             editor.testTextMode()
             editor.testWindow.close()
