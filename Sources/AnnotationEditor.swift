@@ -142,7 +142,7 @@ private final class LiveTextPane: NSView {
     func testOverlayReport(at point: CGPoint) -> String {
         let local = convert(point, to: overlay)
         let found = overlay.analysis?.hasResults(for: .text) ?? false
-        return "análisis \(overlay.analysis != nil), con texto \(found), contenido \(overlay.contentsRect), capa \(overlay.frame), en la ventana \(overlay.window != nil), interacción \(overlay.interactionTypes), oculta \(overlay.isHidden), texto en punto \(overlay.hasInteractiveItem(at: local))"
+        return "análisis \(overlay.analysis != nil), con texto \(found), contenido \(overlay.contentsRect), capa \(overlay.frame), en la ventana \(overlay.window != nil), oculta \(overlay.isHidden), texto en punto \(overlay.hasInteractiveItem(at: local))"
     }
     #endif
 }
