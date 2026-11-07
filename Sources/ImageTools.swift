@@ -134,6 +134,18 @@ enum ImageTools {
         return ImageContext.shared.createCGImage(output, from: extent)
     }
 
+    /// Difuminado con el radio como fracción del ancho: no depende del tamaño de la copia.
+    nonisolated static func blurred(_ image: CGImage, fraction: CGFloat) -> CGImage? {
+        guard let small = reduced(image, longestSide: 320) else { return nil }
+        let source = CIImage(cgImage: small)
+        let filter = CIFilter(name: "CIGaussianBlur", parameters: [
+            kCIInputImageKey: source.clampedToExtent(),
+            kCIInputRadiusKey: fraction * CGFloat(small.width),
+        ])
+        guard let output = filter?.outputImage?.cropped(to: source.extent) else { return nil }
+        return ImageContext.shared.createCGImage(output, from: source.extent)
+    }
+
     /// Copia reducida para enseñarla pequeña.
     nonisolated static func reduced(_ image: CGImage, longestSide: Int) -> CGImage? {
         let factor = min(CGFloat(longestSide) / CGFloat(max(image.width, image.height, 1)), 1)

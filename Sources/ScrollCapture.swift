@@ -200,8 +200,19 @@ extension ScrollStitcher {
 /// Dónde van los controles de la captura con desplazamiento, en coordenadas de AppKit.
 /// Se evita pisar la selección: lo que esté dentro de ella podría acabar en la imagen.
 enum ScrollHUDLayout {
-    /// Misma barra que el selector: margen, radio y botones de sus medidas.
-    static let barSize = CGSize(width: 202, height: Design.actionSize + Design.barPadding * 2)
+    /// Lo único que hay que hacer mientras tanto, a la izquierda de Cancelar.
+    static let hint = "Desplázate hacia abajo"
+    static let hintFontSize: CGFloat = 12
+    static let hintInset: CGFloat = 12
+    static let cancelWidth: CGFloat = 84
+    static let doneWidth: CGFloat = 76
+    static let hintWidth: CGFloat = (hint as NSString)
+        .size(withAttributes: [.font: NSFont.systemFont(ofSize: hintFontSize)]).width.rounded(.up)
+    /// Misma barra que el selector: margen, radio y botones de sus medidas. Ancho par, para centrarla justa.
+    static let barSize: CGSize = {
+        let width = hintInset * 2 + hintWidth + cancelWidth + doneWidth + Design.barPadding * 2
+        return CGSize(width: (width / 2).rounded(.up) * 2, height: Design.actionSize + Design.barPadding * 2)
+    }()
     static let previewWidth: CGFloat = 148
     static let previewMaxHeight: CGFloat = 300
     static let margin: CGFloat = 18
@@ -338,11 +349,19 @@ final class ScrollCaptureHUD: NSObject {
         let size = ScrollHUDLayout.barSize
         let padding = Design.barPadding
         let buttonHeight = size.height - padding * 2
-        let doneWidth: CGFloat = 76
+        let doneWidth = ScrollHUDLayout.doneWidth
+        let cancelWidth = ScrollHUDLayout.cancelWidth
         let glass = GlassView(frame: CGRect(origin: .zero, size: size), radius: Design.barRadius)
 
+        let hint = NSTextField(labelWithString: ScrollHUDLayout.hint)
+        hint.font = .systemFont(ofSize: ScrollHUDLayout.hintFontSize)
+        hint.textColor = Palette.secondaryText
+        hint.sizeToFit()
+        hint.frame.origin = CGPoint(x: ScrollHUDLayout.hintInset, y: ((size.height - hint.frame.height) / 2).rounded())
+        glass.addSubview(hint)
+
         let cancel = ScrollBarButton(
-            frame: CGRect(x: padding, y: padding, width: size.width - padding * 3 - doneWidth, height: buttonHeight),
+            frame: CGRect(x: size.width - padding * 2 - doneWidth - cancelWidth, y: padding, width: cancelWidth, height: buttonHeight),
             title: "Cancelar",
             hint: "Descarta la captura (Esc)",
             isPrimary: false,

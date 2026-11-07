@@ -95,6 +95,47 @@ private enum HistoryMetrics {
     static var step: CGFloat { tile.width + gap }
 }
 
+/// Control segmentado del sistema. El de SwiftUI no deja elegir su color: en este panel, que no activa
+/// la app, se quedaba gris.
+private struct HistoryFilterControl: NSViewRepresentable {
+    @ObservedObject var model: HistoryModel
+
+    final class Coordinator: NSObject {
+        private let model: HistoryModel
+
+        init(model: HistoryModel) {
+            self.model = model
+        }
+
+        @MainActor @objc func changed(_ sender: NSSegmentedControl) {
+            let filters = HistoryFilter.allCases
+            if filters.indices.contains(sender.selectedSegment) {
+                model.select(filters[sender.selectedSegment])
+            }
+        }
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(model: model)
+    }
+
+    func makeNSView(context: Context) -> NSSegmentedControl {
+        let control = NSSegmentedControl(
+            labels: HistoryFilter.allCases.map(\.rawValue),
+            trackingMode: .selectOne,
+            target: context.coordinator,
+            action: #selector(Coordinator.changed(_:))
+        )
+        control.selectedSegmentBezelColor = Palette.accent
+        control.setAccessibilityLabel("Filtrar el historial")
+        return control
+    }
+
+    func updateNSView(_ control: NSSegmentedControl, context: Context) {
+        control.selectedSegment = HistoryFilter.allCases.firstIndex(of: model.filter) ?? 0
+    }
+}
+
 /// Control segmentado, carrusel con la enfocada en el centro y la acción de abrir como texto.
 private struct HistoryView: View {
     @ObservedObject var model: HistoryModel
@@ -143,14 +184,8 @@ private struct HistoryView: View {
     }
 
     private var filters: some View {
-        Picker("Filtrar el historial", selection: Binding(get: { model.filter }, set: { model.select($0) })) {
-            ForEach(HistoryFilter.allCases, id: \.self) { item in
-                Text(item.rawValue).tag(item)
-            }
-        }
-        .pickerStyle(.segmented)
-        .labelsHidden()
-        .fixedSize()
+        HistoryFilterControl(model: model)
+            .fixedSize()
     }
 
     private var carousel: some View {
@@ -364,9 +399,10 @@ final class HistoryController {
     func show() {
         reload()
         let screen = NSScreen.underMouse
+        // Sobre el Dock, no encima: de la franja no debe asomar nada por debajo.
         let frame = CGRect(
             x: screen.frame.minX + Self.inset,
-            y: screen.frame.minY + Self.inset,
+            y: screen.visibleFrame.minY + Self.inset,
             width: screen.frame.width - Self.inset * 2,
             height: Self.height
         )
@@ -378,7 +414,7 @@ final class HistoryController {
         )
         panel.title = "Historial"
         panel.setAccessibilityLabel("Historial")
-        // Por encima del Dock: la franja queda a la misma distancia de los tres bordes.
+        // Por encima de las ventanas y de un Dock lateral.
         panel.level = .statusBar
         panel.isOpaque = false
         panel.backgroundColor = .clear

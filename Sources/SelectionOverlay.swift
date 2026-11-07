@@ -1,13 +1,13 @@
 import AppKit
 import Carbon
-import CoreImage
 
 extension Design {
     /// Cruz y coordenadas que siguen al cursor antes de empezar a arrastrar.
     enum Crosshair {
         static let dim = NSColor.black.withAlphaComponent(0.3)
-        /// Blanco opaco: la mezcla por diferencia lo invierte contra lo que tiene debajo.
-        static let lineColor = NSColor.white
+        /// Dos líneas contiguas de un píxel: una se ve sobre lo oscuro y la otra sobre lo claro.
+        static let lineColor = NSColor.white.withAlphaComponent(0.85)
+        static let lineShade = NSColor.black.withAlphaComponent(0.35)
         static let labelFontSize: CGFloat = 10
         static let labelHeight: CGFloat = 18
         static let labelPadding: CGFloat = 7
@@ -329,7 +329,10 @@ final class SelectionOverlay {
     }
 
     var testCoordinates: String? { testView?.testCoordinates }
-    var testFreezeCaption: String? { testView?.testFreezeCaption }
+    var testFreezeState: String? { testView?.testFreezeState }
+    var testFreezeIsActive: Bool { testView?.testFreezeIsActive ?? false }
+    var testHUDWidth: CGFloat? { testView?.testHUDWidth }
+    var testCrossLines: Int { testView?.testCrossLines ?? 0 }
     var testFrozenImage: CGImage? { testView?.testFrozenImage }
     var testLoupeSide: CGFloat? { testView?.testLoupeSide }
     #endif
@@ -352,6 +355,8 @@ private final class OverlayView: NSView {
     private let loupeShadow = CALayer()
     private let crossHorizontal = CALayer()
     private let crossVertical = CALayer()
+    private let crossHorizontalShade = CALayer()
+    private let crossVerticalShade = CALayer()
     private let loupe = GlassView(
         frame: CGRect(x: 0, y: 0, width: Design.Loupe.side, height: Design.Loupe.side),
         radius: Design.Loupe.side / 2,
@@ -368,7 +373,6 @@ private final class OverlayView: NSView {
     private var hud: GlassView?
     private var modeButtons: [(SelectionMode, GlassButton)] = []
     private weak var freezeButton: GlassButton?
-    private weak var hint: NSTextField?
 
     init(frame: CGRect, screen: NSScreen, windows: [WindowTarget], owner: SelectionOverlay) {
         self.screen = screen
@@ -376,8 +380,6 @@ private final class OverlayView: NSView {
         self.owner = owner
         super.init(frame: frame)
         wantsLayer = true
-        // La cruz se mezcla por diferencia con lo que tiene debajo.
-        layerUsesCoreImageFilters = true
         setAccessibilityElement(true)
         setAccessibilityRole(.group)
         setAccessibilityLabel("Selección de captura. Arrastra para elegir un área.")
@@ -416,16 +418,20 @@ private final class OverlayView: NSView {
         root.addSublayer(frameLayer)
 
         // Un píxel de verdad, sin sombra, en cualquier densidad.
-        let line = 1 / max(screen.backingScaleFactor, 1)
-        crossHorizontal.bounds = CGRect(x: 0, y: 0, width: bounds.width, height: line)
-        crossVertical.bounds = CGRect(x: 0, y: 0, width: line, height: bounds.height)
-        for cross in [crossHorizontal, crossVertical] {
+        for cross in [crossHorizontal, crossHorizontalShade] {
+            cross.bounds = CGRect(x: 0, y: 0, width: bounds.width, height: crossLine)
+        }
+        for cross in [crossVertical, crossVerticalShade] {
+            cross.bounds = CGRect(x: 0, y: 0, width: crossLine, height: bounds.height)
+        }
+        for cross in crossLayers {
             cross.anchorPoint = .zero
             cross.backgroundColor = Design.Crosshair.lineColor.cgColor
-            cross.compositingFilter = CIFilter(name: "CIDifferenceBlendMode")
             cross.isHidden = true
             root.addSublayer(cross)
         }
+        crossHorizontalShade.backgroundColor = Design.Crosshair.lineShade.cgColor
+        crossVerticalShade.backgroundColor = Design.Crosshair.lineShade.cgColor
 
         // La sombra va aparte: el círculo recorta todo lo que tiene dentro.
         let side = Design.Loupe.side
@@ -492,16 +498,11 @@ private final class OverlayView: NSView {
 
     var capturedScreen: NSScreen { screen }
 
-    /// El botón queda activo y lo dice. La barra crece hacia los dos lados para seguir centrada.
+    /// Solo cambia el icono: la barra no se mueve. VoiceOver sigue anunciando el estado.
     func showFrozen() {
-        guard let freezeButton, !freezeButton.isActive, let hud, let hint else { return }
-        let before = freezeButton.frame.width
+        guard let freezeButton, !freezeButton.isActive else { return }
+        freezeButton.activeValue = "Congelada"
         freezeButton.isActive = true
-        freezeButton.show(caption: "Congelada")
-        let growth = freezeButton.frame.width - before
-        hint.frame.origin.x += growth
-        hud.frame.size.width += growth
-        hud.frame.origin.x = ((bounds.width - hud.frame.width) / 2).rounded()
     }
 
     private func crop(_ rect: CGRect) -> CGImage? {
@@ -557,15 +558,17 @@ private final class OverlayView: NSView {
     /// Es parte del panel: se va con él antes de capturar y al congelar.
     private func refreshCrosshair() {
         guard startPoint == nil, let point = mousePoint, hud?.frame.contains(point) != true else {
-            crossHorizontal.isHidden = true
-            crossVertical.isHidden = true
+            crossLayers.forEach { $0.isHidden = true }
             coordinates.isHidden = true
             return
         }
-        crossHorizontal.position = CGPoint(x: 0, y: point.y.rounded(.down))
-        crossVertical.position = CGPoint(x: point.x.rounded(.down), y: 0)
-        crossHorizontal.isHidden = false
-        crossVertical.isHidden = false
+        let x = point.x.rounded(.down)
+        let y = point.y.rounded(.down)
+        crossHorizontal.position = CGPoint(x: 0, y: y)
+        crossHorizontalShade.position = CGPoint(x: 0, y: y + crossLine)
+        crossVertical.position = CGPoint(x: x, y: 0)
+        crossVerticalShade.position = CGPoint(x: x + crossLine, y: 0)
+        crossLayers.forEach { $0.isHidden = false }
 
         // En píxeles, igual que la píldora de tamaño.
         let scale = screen.backingScaleFactor
@@ -583,6 +586,14 @@ private final class OverlayView: NSView {
         )
         coordinatesLabel.frame.origin = CGPoint(x: padding, y: ((height - coordinatesLabel.frame.height) / 2).rounded())
         coordinates.isHidden = false
+    }
+
+    private var crossLayers: [CALayer] {
+        [crossHorizontal, crossHorizontalShade, crossVertical, crossVerticalShade]
+    }
+
+    private var crossLine: CGFloat {
+        1 / max(screen.backingScaleFactor, 1)
     }
 
     private func buildPill() {
@@ -638,7 +649,6 @@ private final class OverlayView: NSView {
 
         hint.frame.origin = CGPoint(x: x, y: ((height - hint.frame.height) / 2).rounded())
         glass.addSubview(hint)
-        self.hint = hint
         let width = x + hint.frame.width + 14
 
         // Por encima del Dock, centrada en la zona visible.
@@ -907,7 +917,11 @@ private final class OverlayView: NSView {
     }
 
     var testCoordinates: String? { coordinates.isHidden ? nil : coordinatesLabel.stringValue }
-    var testFreezeCaption: String? { freezeButton?.testCaption }
+    var testFreezeState: String? { freezeButton?.testActiveValue }
+    var testFreezeIsActive: Bool { freezeButton?.isActive == true }
+    var testHUDWidth: CGFloat? { hud?.frame.width }
+    /// Líneas de la cruz a la vista, sin mezcla: deben leerse sobre cualquier fondo, también en vivo.
+    var testCrossLines: Int { crossLayers.filter { !$0.isHidden && $0.compositingFilter == nil }.count }
     var testFrozenImage: CGImage? { frozenImage }
     var testLoupeSide: CGFloat? { loupe.isHidden ? nil : loupe.frame.width }
     #endif

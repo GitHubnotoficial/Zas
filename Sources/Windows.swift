@@ -3,7 +3,7 @@ import ServiceManagement
 import SwiftUI
 
 /// Captura un atajo nuevo: al hacer clic escucha la siguiente combinación de teclas.
-/// En reposo es texto a la derecha. Solo lleva fondo con el cursor encima o mientras graba.
+/// Campo gris con el atajo. Mientras graba toma la forma de lo activo.
 final class ShortcutRecorderButton: ReactiveButton {
     /// Mientras se elige un atajo, los globales se apagan: si no, se comerían la combinación.
     static var onRecordingChanged: ((Bool) -> Void)?
@@ -45,23 +45,22 @@ final class ShortcutRecorderButton: ReactiveButton {
     override func draw(_ dirtyRect: NSRect) {
         let isRecording = monitor != nil
         let shape = NSBezierPath.continuous(in: bounds, radius: Design.radiusSmall)
-        if isRecording {
-            Palette.activeVeil.setFill()
-            shape.fill()
-        } else if isPressed {
+        (isRecording ? Palette.activeVeil : Palette.field).setFill()
+        shape.fill()
+        if !isRecording, isPressed {
             Palette.pressed.setFill()
             shape.fill()
-        } else if isHovering {
+        } else if !isRecording, isHovering {
             Palette.hover.setFill()
             shape.fill()
         }
         let attributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: Design.SettingsWindow.bodySize),
-            .foregroundColor: isRecording ? Palette.accent : Palette.secondaryText,
+            .foregroundColor: isRecording ? Palette.activeText : Palette.text,
         ]
         let text = shownText as NSString
         let size = text.size(withAttributes: attributes)
-        text.draw(at: CGPoint(x: bounds.maxX - 8 - size.width, y: bounds.midY - size.height / 2), withAttributes: attributes)
+        text.draw(at: CGPoint(x: bounds.midX - size.width / 2, y: bounds.midY - size.height / 2), withAttributes: attributes)
     }
 
     @objc private func beginRecording() {
@@ -158,7 +157,6 @@ extension Design {
         static let sectionGap: CGFloat = 20
         static let rowHeight: CGFloat = 32
         static let rowInset: CGFloat = 12
-        static let titleSize: CGFloat = 15
         static let bodySize: CGFloat = 13
         static let detailSize: CGFloat = 11
         static let sectionSize: CGFloat = 12
@@ -236,7 +234,17 @@ private final class SettingsTabs: NSObject, NSToolbarDelegate {
     }
 }
 
-/// Título discreto y filas agrupadas, sin líneas entre ellas.
+/// Línea entre filas de un grupo. El margen del grupo la sangra 12 a cada lado.
+private struct SettingsSeparator: View {
+    var body: some View {
+        Rectangle()
+            .fill(Color(nsColor: Palette.hairline))
+            .frame(height: Design.lineWidth)
+            .accessibilityHidden(true)
+    }
+}
+
+/// Título discreto y filas agrupadas.
 private struct SettingsSection<Content: View>: View {
     let title: String?
     let content: Content
@@ -353,10 +361,6 @@ private struct SettingsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Design.SettingsWindow.sectionGap) {
-            Text(pane.title)
-                .font(.system(size: Design.SettingsWindow.titleSize, weight: .semibold))
-                .foregroundColor(Color(nsColor: Palette.text))
-                .accessibilityAddTraits(.isHeader)
             switch pane {
             case .general: general
             case .shortcuts: shortcuts
@@ -374,6 +378,7 @@ private struct SettingsView: View {
                 get: { launchAtLogin },
                 set: { setLaunchAtLogin($0) }
             ))
+            SettingsSeparator()
             SettingsToggle(title: "Efectos de sonido", isOn: $settings.soundEffects)
         }
         SettingsSection("Captura") {
@@ -381,6 +386,7 @@ private struct SettingsView: View {
         }
         SettingsSection("Miniaturas") {
             SettingsToggle(title: "Mostrar miniaturas a la izquierda", isOn: $settings.thumbnailsOnLeft)
+            SettingsSeparator()
             SettingsRow("Mostrar miniatura durante", labelled: true) {
                 Picker("Mostrar miniatura durante", selection: $settings.thumbnailSeconds) {
                     Text("3 segundos").tag(3.0)
@@ -393,6 +399,7 @@ private struct SettingsView: View {
         }
         SettingsSection("Guardar") {
             SettingsToggle(title: "Guardar una copia de cada captura", isOn: $settings.saveCaptures)
+            SettingsSeparator()
             SettingsRow("Capturas y videos") {
                 HStack(spacing: 6) {
                     Image(systemName: "folder")
@@ -428,6 +435,9 @@ private struct SettingsView: View {
         SettingsSection {
             ForEach(HotKeyAction.allCases, id: \.self) { action in
                 VStack(alignment: .leading, spacing: 0) {
+                    if action != HotKeyAction.allCases.first {
+                        SettingsSeparator()
+                    }
                     SettingsRow(action.title) {
                         ShortcutField(action: action, settings: settings)
                             .frame(width: 136, height: 22)
@@ -460,6 +470,7 @@ private struct SettingsView: View {
                 }
                 .settingsPicker()
             }
+            SettingsSeparator()
             SettingsRow("Tomar una imagen cada", isEnabled: settings.videoCopiesSummary, labelled: true) {
                 Picker("Tomar una imagen cada", selection: $settings.videoEvery) {
                     Text("1 segundo").tag(1.0)
@@ -472,6 +483,7 @@ private struct SettingsView: View {
                 .settingsPicker()
                 .disabled(!settings.videoCopiesSummary)
             }
+            SettingsSeparator()
             SettingsRow("Detener la grabación a los", labelled: true) {
                 Picker("Detener la grabación a los", selection: $settings.videoLimit) {
                     Text("Sin límite").tag(0.0)
@@ -482,6 +494,7 @@ private struct SettingsView: View {
                 }
                 .settingsPicker()
             }
+            SettingsSeparator()
             SettingsRow("Cuadros por segundo", labelled: true) {
                 Picker("Cuadros por segundo", selection: $settings.videoFPS) {
                     Text("30").tag(30)
@@ -492,12 +505,16 @@ private struct SettingsView: View {
         }
         SettingsSection("Mostrar en el video") {
             SettingsToggle(title: "Cursor", isOn: $settings.videoCursor)
+            SettingsSeparator()
             SettingsToggle(title: "Clics", isOn: $settings.videoClicks)
+            SettingsSeparator()
             SettingsToggle(title: "Teclas", isOn: $settings.videoKeys)
+            SettingsSeparator()
             SettingsToggle(title: "Cámara", isOn: $settings.videoCamera)
         }
         SettingsSection("Sonido") {
             SettingsToggle(title: "Sonido del Mac", isOn: $settings.systemAudio)
+            SettingsSeparator()
             SettingsToggle(
                 title: "Micrófono",
                 isOn: $settings.recordMicrophone,
@@ -566,8 +583,6 @@ private struct WelcomeView: View {
     let dismiss: () -> Void
     @State private var openedSettings = false
 
-    private static let iconShape = RoundedRectangle(cornerRadius: Design.radiusLarge, style: .continuous)
-
     private var keyMotion: Animation? {
         Design.reduceMotion ? nil : .spring(response: Design.slideResponse, dampingFraction: Design.springDamping)
     }
@@ -577,12 +592,11 @@ private struct WelcomeView: View {
             Image(nsImage: NSApp.applicationIconImage)
                 .resizable()
                 .frame(width: 84, height: 84)
-                .overlay(Self.iconShape.strokeBorder(Color(nsColor: Palette.hairline), lineWidth: Design.lineWidth))
                 .padding(.top, 24)
                 .accessibilityHidden(true)
 
             Text(hasPermission ? "Zas está listo" : "Permite grabar la pantalla")
-                .font(.title)
+                .font(.title2.weight(.semibold))
                 .padding(.top, 24)
 
             Text(hasPermission
@@ -593,12 +607,12 @@ private struct WelcomeView: View {
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, 8)
-                .padding(.horizontal, 44)
+                .padding(.horizontal, 32)
 
             if hasPermission {
                 Text(Settings.shared.shortcut(for: .region).displayString)
                     .font(.title2)
-                    .foregroundStyle(state.keyIsLit ? AnyShapeStyle(Color(nsColor: Palette.accent)) : AnyShapeStyle(HierarchicalShapeStyle.primary))
+                    .foregroundStyle(state.keyIsLit ? AnyShapeStyle(Color(nsColor: Palette.activeText)) : AnyShapeStyle(HierarchicalShapeStyle.primary))
                     .padding(.vertical, 10)
                     .padding(.horizontal, 24)
                     .background(
@@ -615,7 +629,7 @@ private struct WelcomeView: View {
             .buttonStyle(.borderedProminent)
             .keyboardShortcut(.defaultAction)
             .controlSize(.large)
-            .padding(.horizontal, 44)
+            .padding(.horizontal, 32)
             .padding(.top, 24)
             .padding(.bottom, 24)
         }
@@ -655,9 +669,9 @@ final class WindowCoordinator: NSObject {
             let bounds = CGRect(x: 0, y: 0, width: width, height: 400)
             // Sin minimizar ni cambiar de tamaño: la ventana mide lo que mide su pestaña.
             let window = NSWindow(contentRect: bounds, styleMask: [.titled, .closable], backing: .buffered, defer: false)
-            // El título no se ve, pero nombra la pestaña para VoiceOver y el menú Ventana.
+            // El título nombra la pestaña. Debe verse: si se oculta, AppKit sube la barra a la fila
+            // del título, centra ahí los semáforos y deja de pintar las etiquetas de las pestañas.
             window.title = SettingsPane.general.title
-            window.titleVisibility = .hidden
             window.isReleasedWhenClosed = false
 
             let navigation = SettingsNavigation()
@@ -802,6 +816,8 @@ final class WindowCoordinator: NSObject {
     var testSettingsRoom: CGFloat?
     var testSettingsContentFits: Bool { settingsNavigation?.contentFits ?? false }
     var testSettingsTabCount: Int { settingsWindow?.toolbar?.items.count ?? 0 }
+    var testSettingsTabLabels: [String] { settingsWindow?.toolbar?.items.map(\.label) ?? [] }
+    var testSettingsToolbarMode: NSToolbar.DisplayMode? { settingsWindow?.toolbar?.displayMode }
     var testWelcomeKeyIsLit: Bool { welcomeState.keyIsLit }
     var testWelcomeIsOpen: Bool { welcomeWindow?.isVisible == true }
 

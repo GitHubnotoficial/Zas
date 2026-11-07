@@ -29,7 +29,9 @@ extension Design {
         static let ink = NSColor.white
         static let hoverWash = NSColor.white.withAlphaComponent(0.12)
         static let pressedWash = NSColor.white.withAlphaComponent(0.2)
-        static let veil = NSColor.black.withAlphaComponent(0.3)
+        /// Sobre la propia captura difuminada: el blanco se lee hasta sobre una captura blanca.
+        static let veil = NSColor.black.withAlphaComponent(0.45)
+        static let veilBlur: CGFloat = 12
         /// Filo interior: separa la tarjeta de una captura del mismo color que el fondo.
         static let rim = NSColor.white.withAlphaComponent(0.12)
         /// Sombra propia, más suave y amplia que la del sistema.
@@ -758,8 +760,10 @@ private final class ThumbnailView: NSView, NSDraggingSource {
     /// Largo del video, cuando ya se leyó.
     private var durationText: String?
 
-    /// Oscurece la captura para que los controles se lean sobre cualquier imagen. La captura se sigue viendo.
+    /// La propia captura, difuminada, para que los controles se lean sobre cualquier imagen.
     private let veil = NSView()
+    /// Negro encima del difuminado. Va aparte: el fondo de una capa queda detrás de su imagen.
+    private let veilShade = NSView()
     private let rim = OutlineView()
     private let outline = OutlineView()
     private let badge = GlassView(frame: .zero, radius: 9, material: .hudWindow, blending: .withinWindow)
@@ -830,6 +834,7 @@ private final class ThumbnailView: NSView, NSDraggingSource {
 
     private func layoutCard() {
         veil.frame = bounds
+        veilShade.frame = veil.bounds
         rim.frame = bounds
         outline.frame = bounds
 
@@ -892,7 +897,11 @@ private final class ThumbnailView: NSView, NSDraggingSource {
 
     private func buildVeil() {
         veil.wantsLayer = true
-        veil.layer?.backgroundColor = Design.Card.veil.cgColor
+        veil.layer?.contentsGravity = .resizeAspectFill
+        veil.layer?.masksToBounds = true
+        veilShade.wantsLayer = true
+        veilShade.layer?.backgroundColor = Design.Card.veil.cgColor
+        veil.addSubview(veilShade)
         veil.alphaValue = 0
         addSubview(veil)
     }
@@ -906,19 +915,33 @@ private final class ThumbnailView: NSView, NSDraggingSource {
         addSubview(rim)
     }
 
-    /// Copia pequeña para no redibujar la captura entera. Se calcula aparte: la tarjeta aparece al instante.
+    /// Copia pequeña para no redibujar la captura entera, y su difuminado para el velo.
+    /// Se calculan aparte: la tarjeta aparece al instante.
     private func prepareImages(needsPreview: Bool) {
-        guard needsPreview, let source = shown.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return }
+        guard let source = shown.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return }
         let box = Unchecked(value: source)
         let size = image.size
+        // El radio se pide en puntos de la tarjeta, que puede recortar la imagen.
+        let blur = Design.Card.veilBlur / max(fillSize(in: cardSize).width, 1)
         Task { @MainActor [weak self] in
-            let small = await Task.detached(priority: .utility) {
-                Unchecked(value: ImageTools.reduced(box.value, longestSide: 640))
+            let ready = await Task.detached(priority: .utility) { () -> Unchecked<(small: CGImage?, blurred: CGImage?)> in
+                let small = needsPreview ? ImageTools.reduced(box.value, longestSide: 640) : nil
+                return Unchecked(value: (small: small, blurred: ImageTools.blurred(small ?? box.value, fraction: blur)))
             }.value
-            guard let self, let reduced = small.value else { return }
-            self.shown = NSImage(cgImage: reduced, size: size)
-            self.needsDisplay = true
+            guard let self else { return }
+            if let reduced = ready.value.small {
+                self.shown = NSImage(cgImage: reduced, size: size)
+                self.needsDisplay = true
+            }
+            self.veil.layer?.contents = ready.value.blurred
         }
+    }
+
+    /// Tamaño con el que la imagen llena `area` sin deformarse.
+    private func fillSize(in area: CGSize) -> CGSize {
+        let imageSize = image.size
+        let ratio = max(area.width / max(imageSize.width, 1), area.height / max(imageSize.height, 1))
+        return CGSize(width: imageSize.width * ratio, height: imageSize.height * ratio)
     }
 
     /// Un archivo que no es un video de verdad se queda con la marca "Video".
@@ -931,7 +954,7 @@ private final class ThumbnailView: NSView, NSDraggingSource {
         }
     }
 
-    var hasVeil: Bool { veil.layer?.backgroundColor != nil }
+    var hasVeil: Bool { veil.layer?.contents != nil && veilShade.layer?.backgroundColor != nil }
 
     /// Ancho en pixeles de lo que la tarjeta redibuja.
     var drawnPixels: Int {
@@ -1249,9 +1272,7 @@ private final class ThumbnailView: NSView, NSDraggingSource {
         bounds.fill()
 
         // La imagen llena la tarjeta sin deformarse. Si es muy alta o muy ancha, recorta antes que dejar bandas.
-        let imageSize = image.size
-        let ratio = max(bounds.width / max(imageSize.width, 1), bounds.height / max(imageSize.height, 1))
-        let drawn = CGSize(width: imageSize.width * ratio, height: imageSize.height * ratio)
+        let drawn = fillSize(in: bounds.size)
         shown.draw(in: CGRect(
             x: (bounds.width - drawn.width) / 2,
             y: (bounds.height - drawn.height) / 2,

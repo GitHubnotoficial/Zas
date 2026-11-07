@@ -55,6 +55,42 @@ private final class DotButton: ReactiveButton {
     }
 }
 
+/// Muestra de "Cualquier color". `NSColorWell` le resta 26 a cada canal en modo claro, dentro de un popover,
+/// y dejaría de coincidir con los puntos de la paleta. Abre el mismo panel de colores del sistema.
+private final class ColorSwatch: ReactiveButton {
+    var color: NSColor {
+        didSet { needsDisplay = true }
+    }
+
+    init(frame: CGRect, color: NSColor, tooltip: String, target: AnyObject, action: Selector) {
+        self.color = color
+        super.init(frame: frame)
+        title = ""
+        isBordered = false
+        toolTip = tooltip
+        self.target = target
+        self.action = action
+        setAccessibilityLabel(tooltip)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) no se usa")
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let shape = NSBezierPath.continuous(in: bounds.insetBy(dx: 0.25, dy: 0.25), radius: Design.radiusSmall)
+        color.setFill()
+        shape.fill()
+        if isPressed || isHovering {
+            (isPressed ? Palette.pressed : Palette.hover).setFill()
+            shape.fill()
+        }
+        Palette.hairline.setStroke()
+        shape.lineWidth = Design.lineWidth
+        shape.stroke()
+    }
+}
+
 /// Análisis de Live Text. La imagen se amplía igual que para copiar y se piden los mismos idiomas:
 /// sin eso, un Mac en inglés leería peor las tildes y una captura 1x perdería letras.
 @MainActor
@@ -262,7 +298,7 @@ private final class ToolStrip: NSView {
     #endif
 }
 
-/// Barra superior o inferior: la de abajo comparte fondo con el lienzo y solo una línea fina las separa.
+/// Barra superior o inferior. Una línea fina las separa del lienzo.
 private final class EditorBar: NSView {
     private let lineAtBottom: Bool
 
@@ -279,7 +315,7 @@ private final class EditorBar: NSView {
     override var mouseDownCanMoveWindow: Bool { lineAtBottom }
 
     override func draw(_ dirtyRect: NSRect) {
-        (lineAtBottom ? Palette.window : Palette.canvas).setFill()
+        (lineAtBottom ? Palette.window : Palette.bottomBar).setFill()
         NSBezierPath(rect: bounds).fill()
         Palette.hairline.setFill()
         NSBezierPath(rect: CGRect(
@@ -319,6 +355,11 @@ private final class CenteringClipView: NSClipView {
 /// Píldora "Arrástrame": al arrastrarla, el archivo con las marcas sale hacia otra app.
 private final class DragPill: NSView, NSDraggingSource {
     var fileProvider: (() -> URL?)?
+
+    /// Miniatura real de la captura, como el icono de un documento en su ventana.
+    var proxy: NSImage? {
+        didSet { needsDisplay = true }
+    }
 
     private var start: CGPoint?
     private var dragged = false
@@ -418,22 +459,35 @@ private final class DragPill: NSView, NSDraggingSource {
             shape.fill()
         }
 
-        // Un solo agarre delante del texto: lo que invita a arrastrar.
+        // La propia captura delante del texto: lo que se ve es lo que se arrastra.
         let attributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 12),
             .foregroundColor: Palette.secondaryText,
         ]
         let title = "Arrástrame" as NSString
         let size = title.size(withAttributes: attributes)
-        let configuration = NSImage.SymbolConfiguration(pointSize: 12, weight: .regular)
-            .applying(NSImage.SymbolConfiguration(paletteColors: [Palette.secondaryText]))
-        let grip = NSImage(systemSymbolName: "line.3.horizontal", accessibilityDescription: nil)?.withSymbolConfiguration(configuration)
-        let gripSize = grip?.size ?? .zero
+        let side = Design.dragProxySize
         let gap: CGFloat = 6
-        var x = bounds.midX - (gripSize.width + gap + size.width) / 2
-        grip?.draw(in: CGRect(x: x, y: bounds.midY - gripSize.height / 2, width: gripSize.width, height: gripSize.height))
-        x += gripSize.width + gap
+        var x = (bounds.midX - (side + gap + size.width) / 2).rounded()
+        drawProxy(in: CGRect(x: x, y: (bounds.midY - side / 2).rounded(), width: side, height: side))
+        x += side + gap
         title.draw(at: CGPoint(x: x, y: bounds.midY - size.height / 2), withAttributes: attributes)
+    }
+
+    /// La imagen llena el cuadrado y recorta lo que sobra. El filo la separa de una barra del mismo color.
+    private func drawProxy(in rect: CGRect) {
+        guard let proxy, proxy.size.width > 0, proxy.size.height > 0 else { return }
+        let shape = NSBezierPath.continuous(in: rect, radius: Design.dragProxyRadius)
+        NSGraphicsContext.saveGraphicsState()
+        shape.addClip()
+        NSGraphicsContext.current?.imageInterpolation = .high
+        let ratio = max(rect.width / proxy.size.width, rect.height / proxy.size.height)
+        let drawn = CGSize(width: proxy.size.width * ratio, height: proxy.size.height * ratio)
+        proxy.draw(in: CGRect(x: rect.midX - drawn.width / 2, y: rect.midY - drawn.height / 2, width: drawn.width, height: drawn.height))
+        NSGraphicsContext.restoreGraphicsState()
+        Palette.hairline.setStroke()
+        shape.lineWidth = Design.lineWidth
+        shape.stroke()
     }
 }
 
@@ -504,7 +558,7 @@ final class AnnotationEditor: NSObject, NSWindowDelegate, NSPopoverDelegate {
 
         var symbol: String {
             switch self {
-            case .pixelate: return "checkerboard.rectangle"
+            case .pixelate: return "eye.slash"
             case .blur: return "drop"
             case .focus: return AnnotationTool.spotlight.symbol
             }
@@ -514,26 +568,8 @@ final class AnnotationEditor: NSObject, NSWindowDelegate, NSPopoverDelegate {
     /// Ancho del botón Estilo: su punto de color y la flecha que avisa del popover.
     private static let styleWidth: CGFloat = 44
 
-    private static let palette: [(String, NSColor)] = [
-        ("Rosa", Palette.markDefault),
-        ("Rojo", .systemRed),
-        ("Anaranjado", .systemOrange),
-        ("Amarillo", .systemYellow),
-        ("Verde", .systemGreen),
-        ("Azul", .systemBlue),
-        ("Morado", .systemPurple),
-        ("Negro", .black),
-        ("Blanco", .white),
-    ]
-    private static let markers: [(String, NSColor)] = [
-        ("Amarillo", NSColor(srgbRed: 1, green: 0.84, blue: 0.04, alpha: 1)),
-        ("Verde", NSColor(srgbRed: 0.19, green: 0.82, blue: 0.35, alpha: 1)),
-        ("Azul", NSColor(srgbRed: 0.39, green: 0.82, blue: 1, alpha: 1)),
-        ("Rosado", NSColor(srgbRed: 1, green: 0.44, blue: 0.68, alpha: 1)),
-        ("Anaranjado", NSColor(srgbRed: 1, green: 0.62, blue: 0.04, alpha: 1)),
-        ("Morado", NSColor(srgbRed: 0.75, green: 0.35, blue: 0.95, alpha: 1)),
-        ("Violeta", NSColor(srgbRed: 0.49, green: 0.48, blue: 1, alpha: 1)),
-    ]
+    private static let palette = Palette.inks
+    private static let markers = Palette.highlighters
     /// Mínimo, máximo y valor inicial del tamaño de cada herramienta.
     private static let sizes: [AnnotationTool: (CGFloat, CGFloat, CGFloat)] = [
         .arrow: (2, 24, 5), .rectangle: (1, 24, 4), .ellipse: (1, 24, 4), .pencil: (1, 40, 5),
@@ -580,6 +616,10 @@ final class AnnotationEditor: NSObject, NSWindowDelegate, NSPopoverDelegate {
     private var isFinishing = false
 
     private var sizeValue: ValueChip?
+    private weak var anySwatch: ColorSwatch?
+    private var dragPill: DragPill?
+    /// De qué imagen sale la miniatura de Arrástrame: rotar o recortar crea otra.
+    private var proxySource: NSImage?
     private var penColor = Palette.markDefault
     private var markerColor = AnnotationEditor.markers[0].1
     private var toolSizes: [AnnotationTool: CGFloat] = [:]
@@ -726,7 +766,7 @@ final class AnnotationEditor: NSObject, NSWindowDelegate, NSPopoverDelegate {
         )
         place(crop)
         cropButton = crop
-        place(PillControl(content: .symbol("photo"), width: size, tooltip: "Imagen: rotar, voltear, tamaño", target: self, action: #selector(imagePressed(_:))))
+        place(PillControl(content: .symbol("rotate.right"), width: size, tooltip: "Imagen: rotar, voltear, tamaño", target: self, action: #selector(imagePressed(_:))))
         let background = PillControl(content: .symbol("photo.artframe"), width: size, tooltip: "Fondo", target: self, action: #selector(backgroundPressed))
         place(background)
         backgroundButton = background
@@ -806,6 +846,7 @@ final class AnnotationEditor: NSObject, NSWindowDelegate, NSPopoverDelegate {
         drag.autoresizingMask = [.minXMargin, .maxXMargin]
         drag.fileProvider = { [weak self] in self?.exportTemporaryFile() }
         bar.addSubview(drag)
+        dragPill = drag
 
         func action(_ symbol: String, tooltip: String, _ selector: Selector) -> PillControl {
             PillControl(content: .symbol(symbol), width: size, tooltip: tooltip, target: self, action: selector)
@@ -890,8 +931,25 @@ final class AnnotationEditor: NSObject, NSWindowDelegate, NSPopoverDelegate {
         undoButton?.isEnabled = canvas.canUndo
         redoButton?.isEnabled = canvas.canRedo
         refreshZoomLabel()
+        refreshDragProxy()
         if panelOpen {
             backgroundPanel.reload(canvas.document.backdrop, capture: canvas.currentImage)
+        }
+    }
+
+    /// La miniatura se reduce aparte: abrir el editor no espera por ella.
+    private func refreshDragProxy() {
+        let source = canvas.currentImage
+        guard source !== proxySource, let pixels = source.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return }
+        proxySource = source
+        let box = Unchecked(value: pixels)
+        let longestSide = Int(Design.dragProxySize * 4)
+        Task { @MainActor [weak self] in
+            let small = await Task.detached(priority: .utility) {
+                Unchecked(value: ImageTools.reduced(box.value, longestSide: longestSide))
+            }.value
+            guard let self, self.proxySource === source, let reduced = small.value else { return }
+            self.dragPill?.proxy = NSImage(cgImage: reduced, size: CGSize(width: reduced.width, height: reduced.height))
         }
     }
 
@@ -1178,6 +1236,7 @@ final class AnnotationEditor: NSObject, NSWindowDelegate, NSPopoverDelegate {
             penColor = color
         }
         canvas.color = color
+        anySwatch?.color = color
         refreshStyleControls()
     }
 
@@ -1247,6 +1306,8 @@ final class AnnotationEditor: NSObject, NSWindowDelegate, NSPopoverDelegate {
             mode.selectedSegment = selected
             mode.controlSize = .small
             mode.segmentDistribution = .fillEqually
+            // Sin esto se pinta gris mientras el foco siga en el lienzo.
+            mode.selectedSegmentBezelColor = Palette.accent
             mode.setAccessibilityLabel(name)
             mode.frame = CGRect(x: side, y: y, width: inner, height: 22)
             view.addSubview(mode)
@@ -1284,12 +1345,9 @@ final class AnnotationEditor: NSObject, NSWindowDelegate, NSPopoverDelegate {
             y += dot + 8
 
             if tool != .highlight {
-                let well = NSColorWell(frame: CGRect(x: side, y: y, width: 34, height: 24))
-                well.color = canvas.color
-                well.target = self
-                well.action = #selector(wellChanged(_:))
-                well.setAccessibilityLabel("Cualquier color")
-                view.addSubview(well)
+                let swatch = ColorSwatch(frame: CGRect(x: side, y: y, width: 34, height: 24), color: canvas.color, tooltip: "Cualquier color", target: self, action: #selector(anyColorPressed))
+                view.addSubview(swatch)
+                anySwatch = swatch
                 addLabel("Cualquier color", x: side + 42, y: y + 3, width: 120)
                 let picker = GlassButton(symbol: "eyedropper", tooltip: "Tomar un color de la pantalla", target: self, action: #selector(sampleColor), size: Design.controlSize)
                 picker.frame.origin = CGPoint(x: width - side - Design.controlSize, y: y - 2)
@@ -1349,7 +1407,18 @@ final class AnnotationEditor: NSObject, NSWindowDelegate, NSPopoverDelegate {
         }
     }
 
-    @objc private func wellChanged(_ sender: NSColorWell) {
+    /// El panel es el del sistema. Sigue apuntando aquí aunque el popover se cierre, hasta que se cierre el editor.
+    @objc private func anyColorPressed() {
+        let colors = NSColorPanel.shared
+        colors.setTarget(self)
+        colors.setAction(#selector(anyColorChanged(_:)))
+        colors.showsAlpha = false
+        colors.isContinuous = true
+        colors.color = canvas.color
+        colors.orderFront(nil)
+    }
+
+    @objc private func anyColorChanged(_ sender: NSColorPanel) {
         setColor(sender.color)
     }
 
@@ -1761,6 +1830,8 @@ final class AnnotationEditor: NSObject, NSWindowDelegate, NSPopoverDelegate {
     func testOpenSizePopover() { testOpenStylePopover() }
 
     var testStylePopoverShown: Bool { stylePopover?.isShown == true }
+    var testHasDragProxy: Bool { dragPill?.proxy != nil }
+    var testAnySwatchColor: NSColor? { anySwatch?.color }
 
     /// Pulsa una de las ocho casillas, en el orden de la barra.
     func testPressSlot(_ index: Int) {

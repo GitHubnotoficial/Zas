@@ -872,8 +872,13 @@ enum SelfTest {
         let freezer = SelectionOverlay()
         freezer.begin(mode: .screenshot) { _ in }
         await wait(0.3)
+        freezer.simulateHover(at: CGPoint(x: 400, y: 300))
+        check(freezer.testCrossLines == 4, "en vivo la cruz son dos pares de líneas, sin mezcla con el fondo")
+        let hudWidth = freezer.testHUDWidth
+        check(hudWidth != nil, "la barra de modos existe")
         freezer.testFreeze()
-        check(freezer.testFreezeCaption == "Congelada", "el botón queda activo y dice Congelada")
+        check(freezer.testFreezeIsActive && freezer.testFreezeState == "Congelada", "el botón queda activo y VoiceOver dice Congelada")
+        check(freezer.testHUDWidth == hudWidth, "congelar no cambia el ancho de la barra")
         check(await until(3) { freezer.testFrozenImage != nil }, "congelar deja la imagen de la pantalla")
         if let frozen = freezer.testFrozenImage {
             let frozenRep = NSBitmapImageRep(cgImage: frozen)
@@ -1014,7 +1019,7 @@ enum SelfTest {
         await wait(0.9)
         check(history.testCanBecomeKey, "el panel del historial puede recibir teclado")
         check(history.testFrame.width == NSScreen.underMouse.frame.width - HistoryController.inset * 2, "el historial ocupa todo el ancho, con su margen a cada lado")
-        check(history.testFrame.minY == NSScreen.underMouse.frame.minY + HistoryController.inset, "el historial queda a su margen del borde inferior")
+        check(history.testFrame.minY == NSScreen.underMouse.visibleFrame.minY + HistoryController.inset, "el historial queda a su margen por encima del Dock")
         history.testKey(124)
         check(history.model.focus == 1, "la flecha derecha pasa a la siguiente tarjeta")
         history.testKey(123)
@@ -1263,6 +1268,9 @@ enum SelfTest {
                 editor.testSelect(tool: tool)
                 editor.testOpenStylePopover()
                 check(editor.testStylePopoverShown, "se abre el popover de \(tool.label)")
+                if tool != .pixelate {
+                    check(editor.testAnySwatchColor == editor.canvas.color, "la muestra de Cualquier color es el color de \(tool.label)")
+                }
                 await shoot("\(label)-\(scene)")
                 editor.testOpenStylePopover()
                 await wait(0.3)
@@ -2115,6 +2123,7 @@ extension SelfTest {
             editor.testKeyDown(tool.key.lowercased())
             check(editor.canvas.tool == tool, "la tecla \(tool.key) elige \(tool.label)")
         }
+        check(await until { editor.testHasDragProxy }, "Arrástrame enseña la miniatura real de la captura")
         let chosen = editor.canvas.tool
         editor.testKeyDown("")
         check(editor.canvas.tool == chosen, "una tecla muerta no elige la herramienta Imagen")
@@ -2354,6 +2363,29 @@ extension SelfTest {
         let glassPressed = glass.testFill
         check(glassHovered != glassResting && glassPressed != glassHovered, "el botón de vidrio cambia al pasar el cursor y al pulsarlo")
 
+        // Lo activo se lee con cualquier acento: blanco en oscuro y el tinte, oscurecido si hace falta, en claro.
+        for hex: UInt32 in [0x007AFF, 0xFFCC00, 0x34C759, 0xFF2D6F, 0x8C8C8C] {
+            let tint = NSColor.hex(hex)
+            let surface = Palette.lightVeilSurface(of: tint)
+            check(Palette.contrast(Palette.legible(tint, minimum: Design.iconContrast), surface) >= Design.iconContrast, "el icono activo llega a 3:1 con el acento \(String(hex, radix: 16))")
+            check(Palette.contrast(Palette.legible(tint, minimum: Design.textContrast), surface) >= Design.textContrast, "el texto activo llega a 4,5:1 con el acento \(String(hex, radix: 16))")
+        }
+        func resolved(_ color: NSColor, _ name: NSAppearance.Name) -> NSColor? {
+            var result: NSColor?
+            NSAppearance(named: name)?.performAsCurrentDrawingAppearance {
+                result = color.usingColorSpace(.sRGB)
+            }
+            return result
+        }
+        check(resolved(Palette.activeIcon, .darkAqua) == NSColor.white.usingColorSpace(.sRGB), "en oscuro, lo activo es blanco")
+        check(abs((resolved(Palette.activeVeil, .darkAqua)?.alphaComponent ?? 0) - Design.activeVeilDark) < 0.001, "en oscuro, el velo de lo activo es del 28 %")
+        check(abs((resolved(Palette.activeVeil, .aqua)?.alphaComponent ?? 0) - Design.activeVeilLight) < 0.001, "en claro, el velo de lo activo es del 12 %")
+
+        // Las tintas no cambian con el modo, y el amarillo del rayo sigue siendo solo del rayo.
+        check(Palette.inks.allSatisfy { resolved($0.1, .aqua) == resolved($0.1, .darkAqua) }, "las tintas son iguales en claro y en oscuro")
+        check(Palette.inks[0].1 == NSColor.hex(0xFF2D6F) && Palette.inks.count == 9, "la paleta conserva sus nueve tintas")
+        check(!Palette.inks.contains { $0.1 == Palette.bolt }, "ninguna tinta usa el amarillo del rayo")
+
         // Un solo resorte, con la duración prometida.
         check(Design.springResponse == 0.42 && Design.springDamping == 0.86, "el resorte de Design es el decidido")
         let steps = ValueBox<[CGFloat]>([])
@@ -2398,6 +2430,9 @@ extension SelfTest {
         await wait(0.3)
         if let window = windows.testSettingsWindow {
             check(windows.testSettingsTabCount == 3, "Ajustes tiene sus tres pestañas en la barra")
+            check(windows.testSettingsTabLabels == ["General", "Atajos", "Video"], "cada pestaña lleva su nombre")
+            check(windows.testSettingsToolbarMode == .iconAndLabel, "las pestañas enseñan icono y nombre")
+            check(window.toolbarStyle == .preference && window.titleVisibility == .visible, "Ajustes muestra su título sobre las pestañas")
             check(window.frame.width == Design.SettingsWindow.width, "Ajustes mide 500 de ancho")
             check(!window.styleMask.contains(.resizable) && !window.styleMask.contains(.miniaturizable), "Ajustes no se estira ni se minimiza, como el Settings del sistema")
             Design.testReduceMotion = true

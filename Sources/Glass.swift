@@ -3,6 +3,9 @@ import AppKit
 /// Única tabla de colores de la interfaz, con su par claro y oscuro.
 /// Lo que no cambia con el modo es un color fijo: sirve igual para capas, marcas y comparaciones.
 enum Palette {
+    /// El lienzo claro: es la superficie más oscura de ese modo.
+    private static let lightCanvas: UInt32 = 0xE4E4E6
+
     private static func pair(
         _ name: String,
         dark: UInt32, darkAlpha: CGFloat = 1,
@@ -15,23 +18,49 @@ enum Palette {
         }
     }
 
-    /// Ventana y barra superior.
-    static let window = pair("zas.ventana", dark: 0x1B1B1D, light: 0xECECEE)
-    /// Zona de la captura. La barra inferior comparte este fondo: solo las separa una línea fina.
-    static let canvas = pair("zas.lienzo", dark: 0x1A1A1B, light: 0xE4E4E6)
+    /// Ventana y barra superior. En oscuro se separa del lienzo, que queda más hondo.
+    static let window = pair("zas.ventana", dark: 0x2A2A2C, light: 0xECECEE)
+    /// Zona de la captura.
+    static let canvas = pair("zas.lienzo", dark: 0x1A1A1B, light: lightCanvas)
+    /// Barra inferior del editor: a juego con la superior en oscuro y con el lienzo en claro.
+    static let bottomBar = pair("zas.barraInferior", dark: 0x2A2A2C, light: lightCanvas)
     static let hairline = pair("zas.lineaFina", dark: 0xFFFFFF, darkAlpha: 0.1, light: 0x000000, lightAlpha: 0.1)
     /// Rectángulos del panel Fondo: un velo apenas visible, nunca una isla.
     static let group = pair("zas.grupo", dark: 0xFFFFFF, darkAlpha: 0.06, light: 0x000000, lightAlpha: 0.04)
     /// Pista de los deslizadores y valores numéricos.
     static let pill = pair("zas.pildora", dark: 0x3A3A3C, light: 0xFFFFFF)
     /// Secciones de Ajustes.
-    static let section = pair("zas.seccion", dark: 0xFFFFFF, darkAlpha: 0.05, light: 0xFFFFFF, lightAlpha: 0.6)
+    static let section = pair("zas.seccion", dark: 0xFFFFFF, darkAlpha: 0.05, light: 0xFFFFFF)
+    /// Campo gris de cada atajo.
+    static let field = pair("zas.campo", dark: 0xFFFFFF, darkAlpha: 0.1, light: 0x000000, lightAlpha: 0.06)
     static let text = pair("zas.texto", dark: 0xF2F2F4, light: 0x1C1C1E)
     static let secondaryText = pair("zas.textoSecundario", dark: 0x8E8E93, light: 0x636368)
     /// El único azul de Zas: el que eligió cada persona en Ajustes del Sistema.
     static let accent = NSColor.controlAccentColor
     /// Color con el que nacen las marcas. Las guardadas conservan el suyo.
     static let markDefault = NSColor.hex(0xFF2D6F)
+    /// Tintas de las marcas: sRGB fijo, para que lo dibujado sea igual en claro, en oscuro y en la imagen.
+    static let inks: [(String, NSColor)] = [
+        ("Rosa", markDefault),
+        ("Rojo", NSColor.hex(0xFF3B30)),
+        ("Anaranjado", NSColor.hex(0xFF9500)),
+        ("Amarillo", NSColor.hex(0xFFD60A)),
+        ("Verde", NSColor.hex(0x34C759)),
+        ("Azul", NSColor.hex(0x007AFF)),
+        ("Morado", NSColor.hex(0xAF52DE)),
+        ("Negro", NSColor.hex(0x000000)),
+        ("Blanco", NSColor.hex(0xFFFFFF)),
+    ]
+    /// Tintas del resaltador.
+    static let highlighters: [(String, NSColor)] = [
+        ("Amarillo", NSColor(srgbRed: 1, green: 0.84, blue: 0.04, alpha: 1)),
+        ("Verde", NSColor(srgbRed: 0.19, green: 0.82, blue: 0.35, alpha: 1)),
+        ("Azul", NSColor(srgbRed: 0.39, green: 0.82, blue: 1, alpha: 1)),
+        ("Rosado", NSColor(srgbRed: 1, green: 0.44, blue: 0.68, alpha: 1)),
+        ("Anaranjado", NSColor(srgbRed: 1, green: 0.62, blue: 0.04, alpha: 1)),
+        ("Morado", NSColor(srgbRed: 0.75, green: 0.35, blue: 0.95, alpha: 1)),
+        ("Violeta", NSColor(srgbRed: 0.49, green: 0.48, blue: 1, alpha: 1)),
+    ]
     /// El rayo del logo. Solo aparece en el instante de la captura.
     static let bolt = NSColor.hex(0xFFCC00)
 
@@ -40,8 +69,68 @@ enum Palette {
     /// Velo sobre un control al pasar el cursor y al pulsarlo.
     static let hover = pair("zas.encima", dark: 0xFFFFFF, darkAlpha: 0.08, light: 0x000000, lightAlpha: 0.06)
     static let pressed = pair("zas.pulsado", dark: 0xFFFFFF, darkAlpha: 0.14, light: 0x000000, lightAlpha: 0.1)
-    /// La única forma de "activo": velo del acento bajo un glifo del acento.
-    static var activeVeil: NSColor { accent.withAlphaComponent(Design.activeVeilOpacity) }
+    /// La única forma de "activo". En oscuro, blanco sobre un velo denso; en claro, el tinte sobre un velo tenue.
+    static let activeVeil = veil(of: accent)
+    static let activeIcon = iconInk(on: accent)
+    static let activeText = textInk(on: accent)
+
+    private static func isDark(_ appearance: NSAppearance) -> Bool {
+        appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+    }
+
+    /// `strength` multiplica el velo: 2 es el estado pulsado.
+    static func veil(of tint: NSColor, strength: CGFloat = 1) -> NSColor {
+        NSColor(name: nil) { appearance in
+            tint.withAlphaComponent((isDark(appearance) ? Design.activeVeilDark : Design.activeVeilLight) * strength)
+        }
+    }
+
+    static func iconInk(on tint: NSColor) -> NSColor {
+        ink(on: tint, minimum: Design.iconContrast)
+    }
+
+    static func textInk(on tint: NSColor) -> NSColor {
+        ink(on: tint, minimum: Design.textContrast)
+    }
+
+    private static func ink(on tint: NSColor, minimum: CGFloat) -> NSColor {
+        NSColor(name: nil) { appearance in
+            isDark(appearance) ? NSColor.white : legible(tint, minimum: minimum)
+        }
+    }
+
+    /// El velo claro ya mezclado con la superficie más oscura sobre la que puede caer: el lienzo.
+    static func lightVeilSurface(of tint: NSColor) -> NSColor {
+        NSColor.hex(lightCanvas).blended(withFraction: Design.activeVeilLight, of: tint) ?? NSColor.hex(lightCanvas)
+    }
+
+    /// El tinte tal cual si se lee; si no, oscurecido lo justo. El acento lo elige cada persona y puede ser amarillo.
+    static func legible(_ tint: NSColor, minimum: CGFloat) -> NSColor {
+        guard let solid = tint.usingColorSpace(.sRGB) else { return tint }
+        let surface = lightVeilSurface(of: solid)
+        var result = solid
+        var darkening: CGFloat = 0
+        while contrast(result, surface) < minimum, darkening < 1 {
+            darkening += 0.05
+            result = solid.blended(withFraction: darkening, of: NSColor.hex(0x000000)) ?? result
+        }
+        return result
+    }
+
+    /// Contraste WCAG entre dos colores opacos.
+    static func contrast(_ first: NSColor, _ second: NSColor) -> CGFloat {
+        let values = [luminance(first), luminance(second)].sorted()
+        return (values[1] + 0.05) / (values[0] + 0.05)
+    }
+
+    private static func luminance(_ color: NSColor) -> CGFloat {
+        guard let rgb = color.usingColorSpace(.sRGB) else { return 0 }
+        func linear(_ value: CGFloat) -> CGFloat {
+            value <= 0.03928 ? value / 12.92 : pow((value + 0.055) / 1.055, 2.4)
+        }
+        return 0.2126 * linear(rgb.redComponent) + 0.7152 * linear(rgb.greenComponent) + 0.0722 * linear(rgb.blueComponent)
+    }
+
     /// Mando de los deslizadores.
     static let knob = pair("zas.mando", dark: 0xE4E4E6, light: 0xFBFBFC)
     /// Filo de lo blanco sobre blanco. En oscuro no hace falta.
@@ -68,7 +157,11 @@ enum Design {
     /// Todo símbolo de la app.
     static let iconSize: CGFloat = 15
     static let lineWidth: CGFloat = 0.5
-    static let activeVeilOpacity: CGFloat = 0.18
+    static let activeVeilDark: CGFloat = 0.28
+    static let activeVeilLight: CGFloat = 0.12
+    /// Contraste mínimo de lo activo.
+    static let iconContrast: CGFloat = 3
+    static let textContrast: CGFloat = 4.5
 
     /// El resorte de toda la app, también en SwiftUI.
     static let springResponse = 0.42
@@ -205,8 +298,10 @@ final class GlassButton: ReactiveButton {
         didSet { refresh() }
     }
 
-    /// Lo que dice el botón junto al glifo, si dice algo.
-    private var caption: String?
+    /// Lo que anuncia VoiceOver cuando está activo. En pantalla basta el icono.
+    var activeValue: String? {
+        didSet { refresh() }
+    }
 
     init(symbol: String, tooltip: String, target: AnyObject?, action: Selector?, size: CGFloat = Design.actionSize) {
         super.init(frame: CGRect(x: 0, y: 0, width: size, height: size))
@@ -229,18 +324,6 @@ final class GlassButton: ReactiveButton {
         fatalError("init(coder:) no se usa")
     }
 
-    /// Ensancha el botón para que diga en qué estado está.
-    func show(caption text: String) {
-        caption = text
-        let font = NSFont.systemFont(ofSize: 13)
-        attributedTitle = NSAttributedString(string: text, attributes: [.font: font, .foregroundColor: activeColor])
-        imagePosition = .imageLeading
-        imageHugsTitle = true
-        let textWidth = (text as NSString).size(withAttributes: [.font: font]).width
-        frame.size.width = (frame.height + textWidth + 8).rounded(.up)
-        refresh()
-    }
-
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
         refresh()
@@ -251,12 +334,12 @@ final class GlassButton: ReactiveButton {
     }
 
     private func refresh() {
-        contentTintColor = isActive ? activeColor : .labelColor
-        setAccessibilityValue(isActive ? (caption ?? "Activo") : nil)
+        contentTintColor = isActive ? Palette.iconInk(on: activeColor) : .labelColor
+        setAccessibilityValue(isActive ? (activeValue ?? "Activo") : nil)
         effectiveAppearance.performAsCurrentDrawingAppearance {
-            var fill: NSColor = isActive ? activeColor.withAlphaComponent(Design.activeVeilOpacity) : .clear
+            var fill: NSColor = isActive ? Palette.veil(of: activeColor) : .clear
             if isPressed, isEnabled {
-                fill = isActive ? activeColor.withAlphaComponent(Design.activeVeilOpacity * 2) : .tertiaryLabelColor
+                fill = isActive ? Palette.veil(of: activeColor, strength: 2) : .tertiaryLabelColor
             } else if isHovering, isEnabled, !isActive {
                 fill = .quaternaryLabelColor
             }
@@ -266,7 +349,7 @@ final class GlassButton: ReactiveButton {
 
     #if ZAS_TEST
     var testFill: CGColor? { layer?.backgroundColor }
-    var testCaption: String? { caption }
+    var testActiveValue: String? { accessibilityValue() as? String }
     #endif
 }
 
@@ -349,6 +432,8 @@ extension Design {
     /// Casilla de cada herramienta: ancho fijo, nada se desplaza al elegir otra.
     static let toolSize: CGFloat = 30
     static let dragPillWidth: CGFloat = 104
+    static let dragProxySize: CGFloat = 16
+    static let dragProxyRadius: CGFloat = 3
     static let barGap: CGFloat = 8
     /// Radio de los rectángulos del panel Fondo.
     static let panelRadius = radiusSmall
@@ -418,7 +503,7 @@ final class PillControl: ReactiveButton {
         didSet { needsDisplay = true }
     }
 
-    /// Velo y glifo del acento.
+    /// La forma única de "activo".
     var isActive = false {
         didSet {
             setAccessibilityValue(isActive ? "Activo" : nil)
@@ -518,7 +603,11 @@ final class PillControl: ReactiveButton {
             path.fill()
         }
 
-        let foreground = tint ?? (isActive ? Palette.accent : (surface == .accent ? Palette.onAccent : Palette.text))
+        var activeInk = Palette.activeText
+        if case .symbol = content {
+            activeInk = Palette.activeIcon
+        }
+        let foreground = tint ?? (isActive ? activeInk : (surface == .accent ? Palette.onAccent : Palette.text))
         // Con flecha, el contenido se aparta hacia la izquierda y deja sitio a los 10 puntos de la derecha.
         let center = CGPoint(x: (bounds.width - (showsChevron ? 10 : 0)) / 2, y: bounds.midY)
         drawContent(at: center, color: foreground)

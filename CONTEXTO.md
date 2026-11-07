@@ -53,19 +53,23 @@ Trampas conocidas:
 
 Manda sobre todo lo anterior donde choquen, también sobre la réplica gráfica de CleanShot. Identidad propia: la da el rayo amarillo, un solo gesto de un instante.
 
-- Medidas y colores solo en `Palette` y `Design`. Un azul: `NSColor.controlAccentColor`. Radios 8, 12 y 18, continuos. Una sola forma de activo: cuadrado de radio 8, velo del acento al 18 % y glifo del acento. Rojo solo para grabar.
+- Medidas y colores solo en `Palette` y `Design`. Un azul: `NSColor.controlAccentColor`. Radios 8, 12 y 18, continuos. Una sola forma de activo: cuadrado de radio 8; en oscuro, icono y texto blancos sobre velo del acento al 28 %; en claro, velo al 12 % y el acento, oscurecido solo si no llega a 3:1 en icono y 4,5:1 en texto (`Palette.legible`). Tintas de las marcas en sRGB fijo (`Palette.inks`). Rojo solo para grabar.
 - SF Symbols regular a 15 en todo. Controles a 13 regular; semibold solo la acción principal. Sin separadores internos.
 - Editor: tres grupos. Recortar, Imagen y Fondo; ocho herramientas fijas de 30 al centro (Mover, Flecha, Forma, Texto, Número, Ocultar, Dibujar, Borrador); Estilo y Listo. Forma reúne cuadro, relleno, círculo y línea; Ocultar reúne pixelado, desenfoque y foco; Dibujar reúne lápiz y resaltador. Toda variante, color y grosor viven en el popover de Estilo, que también se abre pulsando la casilla ya activa. Todas las teclas siguen dando su herramienta real.
-- Barra inferior de 36 con el fondo del lienzo: zoom, deshacer, rehacer, Live Text; Arrástrame; compartir, fijar, copiar, ruta y Guardar como.
-- Tarjeta: velo negro al 30 %, sin desenfoque, y HUD oscuro en los dos modos. Copiar con acento, Guardar en material, Cerrar arriba a la izquierda, fila inferior de iconos sin círculos. En video, reproducir al centro.
-- Ajustes: pestañas del Settings estándar, 500 de ancho, la altura sigue al contenido con resorte. "Acerca de Zas" vive en General: el menú de la app no se ve.
-- Historial: `.hudWindow` con la apariencia del sistema, radio 18, margen 12, control segmentado.
+- Barra inferior de 36: zoom, deshacer, rehacer, Live Text; Arrástrame, con la miniatura real de la captura; compartir, fijar, copiar, ruta y Guardar como. En oscuro las dos barras son #2A2A2C sobre lienzo #1A1A1B; en claro, la inferior lleva el fondo del lienzo.
+- Tarjeta: con el cursor encima, la propia captura difuminada 12 px más negro al 45 %, y HUD oscuro en los dos modos. Copiar con acento, Guardar en material, Cerrar arriba a la izquierda, fila inferior de iconos sin círculos. En video, reproducir al centro.
+- Ajustes: pestañas del Settings estándar con icono y nombre, título visible que sigue a la pestaña, 500 de ancho, la altura sigue al contenido con resorte. Grupos blancos con separador sangrado 12 y cada atajo en un campo gris de 22. "Acerca de Zas" vive en General: el menú de la app no se ve.
+- Historial: `.hudWindow` con la apariencia del sistema, radio 18, a 12 sobre el Dock (`visibleFrame`), control segmentado con el acento.
 - Firma de captura (`Sources/CaptureSignature.swift`): se dispara con el obturador, cuando la imagen ya existe, y se cancela al empezar otra captura. Por eso no puede salir en la imagen. Con Reducir movimiento, solo fundido. El amarillo #FFCC00 no se usa en ninguna otra parte.
 - Congelar: en macOS 14 o más nuevo usa `SCScreenshotManager` y deja fuera solo los paneles de selección. En macOS 13, o si falla, esconde y usa `screencapture`.
 
 Trampas de la 1.2:
 - Live Text: la capa de Apple reparte sus cajas sobre todo su tamaño. Si es mayor que la imagen, cada palabra se resalta mucho más alta que su texto. La imagen y la capa deben medir lo mismo que la imagen en el lienzo. El dibujo del resaltado es del sistema y no hay API pública para cambiarlo.
-- La mezcla por diferencia de la cruz solo ve lo que hay en su propia ventana: con la pantalla congelada invierte de verdad; en vivo, se mezcla con el velo oscuro.
+- La mezcla por diferencia solo ve lo que hay en su propia ventana. Por eso la cruz son dos líneas contiguas de 1 px, blanca al 85 % y negra al 35 %, que se ven sobre cualquier fondo.
+- `titleVisibility = .hidden` sube la barra a la fila del título: los semáforos se centran y las pestañas de Ajustes pierden su nombre.
+- `NSColorWell` en un popover le resta 26 a cada canal en modo claro. "Cualquier color" es una muestra propia que abre el `NSColorPanel` del sistema.
+- `NSPopover` no se hace key a propósito: el foco debe seguir en el lienzo para que las letras de las herramientas y Enter respondan.
+- El material `.withinWindow` sale negro en la máquina virtual: no sirve de velo.
 - `sharingType = .none` no vale para la selección: las escenas se toman con `screencapture` y no saldría.
 
 ## Diseño 1.1 "Estudio" (pedido del dueño: tomar el diseño de CleanShot al detalle)
